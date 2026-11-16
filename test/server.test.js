@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startServer, progressLine } from '../src/app/server.js';
+import { startServer, progressLine, ownWords } from '../src/app/server.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-test-'));
 
@@ -93,7 +93,9 @@ test('chat is relayed to the engine and streamed back; approvals show up meanwhi
   const text = await chat.text();
   assert.match(text, /Slide five /);
   assert.match(text, /event: done/);
-  assert.match(text, /is up, sir \[1\]\./, 'an ordinary bracket in the answer is passed on');
+  // The answer may arrive in differently sized pieces; what counts is the text they add up to.
+  const spoken = [...text.matchAll(/event: delta\ndata: (.*)\n/g)].map((m) => JSON.parse(m[1]).text).join('');
+  assert.equal(spoken.trim(), 'Slide five is up, sir [1].', 'an ordinary bracket in the answer is passed on');
   assert.doesNotMatch(text.split('event: actions')[0], /\[\[d|Opened Quarterly/, 'the "what I did" line is not shown as text');
   assert.deepEqual(JSON.parse(text.split('event: actions\ndata: ')[1].split('\n')[0]).items, ['Opened Quarterly Review', 'Went to slide 5']);
   const relayed = calls.find((c) => c[0] === 'fetch');
@@ -190,4 +192,11 @@ test('installer lines shown during setup are tidy and give nothing away', () => 
   assert.doesNotMatch(progressLine('using key sk-or-v1-abcdef1234567890abcdef'), /abcdef/);
   assert.equal(progressLine('   ----   '), '');
   assert.ok(progressLine('x'.repeat(400)).length <= 140);
+});
+
+test('what Falcon says in the window never names what he runs on', () => {
+  assert.equal(ownWords("a change you'd make in the OpenClaw settings."), "a change you'd make in my own settings.");
+  assert.equal(ownWords('Open the openclaw config'), 'Open my own config');
+  assert.equal(ownWords('OpenClaw refused it'), 'Falcon refused it');
+  assert.equal(ownWords('Nothing to change here.'), 'Nothing to change here.');
 });

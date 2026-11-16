@@ -111,6 +111,14 @@ export function recogniseKey(key) {
 }
 
 /**
+ * A last safety net for what Falcon says in his window. His rules tell him to speak of "my settings" and
+ * never to name what he runs on; a smaller model sometimes slips, so the name is put into his own words here.
+ */
+export function ownWords(text) {
+  return String(text ?? '').replace(/\b(the\s+)?open[- ]?claw\b(?:'s)?/gi, (match, the) => (the ? 'my own' : 'Falcon'));
+}
+
+/**
  * Makes one line of installer output fit to show in the window: no colour codes, no AI keys,
  * no name of the engine, not too long. Returns '' for lines not worth showing.
  */
@@ -302,7 +310,9 @@ export async function startServer({ port = 0, engine = {} } = {}) {
             if (ACTIONS_MARK.startsWith(full.slice(start))) { safe = start; break; }
           }
         }
-        if (safe > passed) { send('delta', { text: full.slice(passed, safe) }); passed = safe; }
+        // Hold back a word that is still arriving, so a name split across two pieces is still caught below.
+        if (!final) safe -= /\S*$/.exec(full.slice(0, safe))[0].length;
+        if (safe > passed) { send('delta', { text: ownWords(full.slice(passed, safe)) }); passed = safe; }
       };
       for await (const chunk of upstream.body) {
         buffer += decoder.decode(chunk, { stream: true });
@@ -321,7 +331,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       const marker = full.indexOf(ACTIONS_MARK);
       if (marker >= 0) {
         const items = full.slice(marker + ACTIONS_MARK.length).split('\n')[0].split('|')
-          .map((item) => item.replace(/[*_`[\]]/g, '').trim()).filter((item) => item.length > 2 && item.length <= 60).slice(0, 3);
+          .map((item) => ownWords(item).replace(/[*_`[\]]/g, '').trim()).filter((item) => item.length > 2 && item.length <= 60).slice(0, 3);
         if (items.length) send('actions', { items });
       }
       send('done', {});

@@ -6,6 +6,8 @@ Speed matters more than commentary. For these requests issue exactly one command
   `"{{NODE}}" "{{SKILLS}}/presentations/slides.mjs" --find "words from the name" --slide 5`
 - Find a file by name (add `--ext pdf` or `--ext docx,doc` when the type is known):
   `"{{NODE}}" "{{SKILLS}}/files/find-files.mjs" --query "words from the name"`
+- Read what is inside a file, to answer questions about its contents (PDF, Word .docx, text; read-only):
+  `"{{NODE}}" "{{SKILLS}}/files/read-file.mjs" --path "<full path>"`
 - Look at the screen (then view the image at the `path` it prints and describe it):
   `"{{NODE}}" "{{SKILLS}}/screen/screenshot.mjs"`
 - The user's day, from this Mac's own Calendar, Mail and Reminders (read-only; `--what calendar|mail|reminders`, and `--day today|tomorrow` for the calendar):

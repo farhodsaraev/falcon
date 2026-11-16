@@ -39,7 +39,11 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.ok(once.includes('config set gateway.http.endpoints.chatCompletions.enabled true'));
   assert.ok(once.some((c) => c.startsWith('approvals set --gateway --stdin')));
   assert.match(calls.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').input, /"ask": "on-miss"/);
-  assert.equal(once.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'mac' ? 4 : 3);
+  assert.equal(once.filter((c) => c.startsWith('approvals allowlist add')).length, 5);
+  // The reader for PDF, Word and text files is shared by Mac and Windows, and may run without asking.
+  assert.ok(fs.existsSync(path.join(ws, 'skills', 'files', 'read-file.mjs')));
+  assert.ok(once.some((c) => c.startsWith('approvals allowlist add') && c.includes('read-file.mjs')));
+  assert.match(agents, /read-file.(mjs|ps1)/);
   fs.rmSync(ws, { recursive: true, force: true });
 });
 

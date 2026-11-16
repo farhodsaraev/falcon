@@ -119,6 +119,9 @@ export async function installFalcon({
     const source = variant && path.join(here, `skills-${variant}`, name);
     if (!source || !fs.existsSync(source)) continue;
     fs.cpSync(source, target, { recursive: true });
+    // Parts of a skill that are the same on every kind of computer
+    const shared = path.join(here, 'skills-common', name);
+    if (fs.existsSync(shared)) fs.cpSync(shared, target, { recursive: true });
     for (const file of fs.readdirSync(target)) {
       const full = path.join(target, file);
       if (file === 'SKILL.md') fs.writeFileSync(full, fill(read(full), target));

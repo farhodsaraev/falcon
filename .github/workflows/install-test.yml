@@ -97,6 +97,12 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q '"ok":true' && echo "$OUT" | grep -qi 'Invoice'
 
+      - name: Mac skill - read what is inside the sample invoice
+        run: |
+          OUT="$(node "$HOME/.openclaw/workspace/skills/files/read-file.mjs" --path "$HOME/Documents/Falcon Samples/Invoice October 2026.pdf")"
+          echo "$OUT"
+          echo "$OUT" | grep -q '"ok":true' && echo "$OUT" | grep -q '4,800.00'
+
       - name: Mac skill - find a presentation by name (no app needed)
         run: |
           OUT="$(node "$HOME/.openclaw/workspace/skills/presentations/slides.mjs" --find "zzz-no-such-deck" --slide 2)"
@@ -182,6 +188,14 @@ jobs:
           $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\find-files.ps1" -Query "invoice" -Ext "pdf"
           $out
           if ($out -notmatch '"ok":true' -or $out -notmatch 'Invoice') { exit 1 }
+
+      - name: Windows skill - read what is inside the sample invoice
+        shell: powershell
+        run: |
+          $found = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\find-files.ps1" -Query "invoice" -Ext "pdf" | ConvertFrom-Json
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\read-file.ps1" -Path $found.files[0].path
+          $out
+          if ($out -notmatch '"ok":true' -or $out -notmatch '4,800.00') { exit 1 }
 
       - name: Unit checks
         shell: powershell

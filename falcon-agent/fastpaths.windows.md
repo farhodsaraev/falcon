@@ -6,6 +6,8 @@ Speed matters more than commentary. For these requests issue exactly one command
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\presentations\slides.ps1" -Find "words from the name" -Slide 5`
 - Find a file by name (add `-Ext "pdf"` or `"docx,doc"` when the type is known):
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\find-files.ps1" -Query "words from the name"`
+- Read what is inside a file, to answer questions about its contents (PDF, Word .docx, text; read-only):
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\read-file.ps1" -Path "<full path>"`
 - Look at the screen (then view the image at the `path` it prints and describe it):
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\screen\screenshot.ps1"`
 - Open a file or folder in its usual app: `Start-Process "<full path>"`
