@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.env
+.claude/
+# internal planning notes, not part of the product
+Jarvis*Spec.md
+~$*

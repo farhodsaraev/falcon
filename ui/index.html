@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <title>Falcon</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar"><span class="brand">F A L C O N</span></header>
+
+  <!-- Waking up -->
+  <section id="screen-loading" class="screen">
+    <div class="orb small" data-state="thinking"><div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div>
+    <p class="status">One moment, sir.</p>
+  </section>
+
+  <!-- First launch -->
+  <section id="screen-setup" class="screen" hidden>
+    <div class="orb small" data-state="idle"><div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div>
+    <h1>Good day, sir.</h1>
+    <p class="lead">I am Falcon. Paste your AI key and I shall be at your service. It stays on this computer.</p>
+    <label for="setup-key">AI key</label>
+    <input id="setup-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
+    <label class="check">
+      <input id="setup-accept" type="checkbox">
+      <span>I understand Falcon can open apps, read files, use the browser and run commands on this computer, and that he asks before sending, deleting or running anything unfamiliar.</span>
+    </label>
+    <p id="setup-message" class="message" role="status"></p>
+    <button id="setup-start" class="primary wide">Start</button>
+  </section>
+
+  <!-- Main -->
+  <section id="screen-main" class="screen" hidden>
+    <div id="orb" class="orb" data-state="idle">
+      <div class="ring r1"></div><div class="ring r2"></div><div class="core"></div>
+    </div>
+    <div id="talk" class="talk" aria-live="polite">
+      <p id="said" class="said"></p>
+      <p id="reply" class="reply">At your service, sir.</p>
+    </div>
+    <form id="ask" class="ask" autocomplete="off">
+      <input id="ask-text" type="text" placeholder="Ask Falcon…" aria-label="Message for Falcon">
+      <button id="ask-send" class="primary" aria-label="Send">➤</button>
+    </form>
+  </section>
+
+  <!-- Approval -->
+  <div id="approval" class="overlay" hidden>
+    <div class="card" role="alertdialog" aria-labelledby="approval-title" aria-describedby="approval-text">
+      <p id="approval-title" class="card-title">Shall I proceed, sir?</p>
+      <p class="card-note">Falcon wants to run:</p>
+      <p id="approval-text" class="card-text"></p>
+      <div class="row">
+        <button id="deny" class="ghost">Don't allow</button>
+        <button id="allow" class="primary">Allow once</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="bridge.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+:root {
+  --bg: #05080f;
+  --panel: #0c1320;
+  --line: #1c2a40;
+  --text: #dbe7f5;
+  --muted: #7d8da3;
+  --glow: #4fd8ff;
+  --glow-deep: #1479c9;
+  --warn: #ffb454;
+  --ok: #6fe3a5;
+  --bad: #ff7a7a;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: radial-gradient(120% 80% at 50% 0%, #0b1626 0%, var(--bg) 60%);
+  color: var(--text);
+  font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  overflow: hidden;
+}
+
+.bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 40px;
+  padding: 0 8px 0 16px;
+  -webkit-app-region: drag;
+}
+.brand { font-size: 11px; letter-spacing: 0.32em; color: var(--muted); }
+.bar-buttons { -webkit-app-region: no-drag; }
+.icon {
+  background: none; border: 0; color: var(--muted);
+  width: 32px; height: 28px; border-radius: 6px; font-size: 14px; cursor: pointer;
+}
+.icon:hover { background: var(--panel); color: var(--text); }
+
+.screen {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 8px 28px 24px; height: calc(100% - 40px);
+  width: 100%; max-width: 400px; margin: 0 auto;
+}
+
+h1 { font-size: 24px; font-weight: 300; margin: 12px 0 4px; letter-spacing: 0.02em; }
+h2 { font-size: 18px; font-weight: 400; margin: 4px 0 12px; align-self: flex-start; }
+.lead { color: var(--muted); text-align: center; margin: 0 0 20px; }
+
+/* ---- Orb ---- */
+.orb { position: relative; width: 190px; height: 190px; margin: 28px 0 22px; flex: none; }
+.orb.small { width: 110px; height: 110px; margin: 22px 0 10px; }
+.core {
+  position: absolute; inset: 22%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #e9fbff 0%, var(--glow) 28%, var(--glow-deep) 62%, #07304f 100%);
+  box-shadow: 0 0 38px 6px rgba(79, 216, 255, 0.45), 0 0 110px 26px rgba(20, 121, 201, 0.28);
+  animation: breathe 4.2s ease-in-out infinite;
+}
+.ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1px solid rgba(79, 216, 255, 0.28);
+}
+.ring.r1 { inset: 9%; border-top-color: transparent; border-bottom-color: transparent; animation: spin 14s linear infinite; }
+.ring.r2 { border-left-color: transparent; border-right-color: transparent; animation: spin 22s linear infinite reverse; }
+
+.orb[data-state="listening"] .core { animation: pulse 0.9s ease-in-out infinite; }
+.orb[data-state="thinking"] .ring.r1 { animation-duration: 1.6s; }
+.orb[data-state="thinking"] .ring.r2 { animation-duration: 2.4s; }
+.orb[data-state="thinking"] .core { filter: saturate(0.7) brightness(0.85); }
+.orb[data-state="speaking"] .core { animation: speak 0.42s ease-in-out infinite alternate; }
+
+@keyframes breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.03); } }
+@keyframes pulse { 0%, 100% { transform: scale(0.94); } 50% { transform: scale(1.12); } }
+@keyframes speak { from { transform: scale(0.97); } to { transform: scale(1.09); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .core, .ring { animation: none !important; }
+}
+
+.status { font-size: 16px; text-align: center; min-height: 46px; margin: 0; }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px; text-align: center; }
+
+.practice {
+  margin-top: auto; width: 100%;
+  display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--line); padding-top: 12px;
+}
+
+/* ---- Forms ---- */
+label { align-self: flex-start; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+.state { color: var(--ok); margin-left: 6px; }
+input, textarea {
+  width: 100%; padding: 9px 11px;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  font: inherit; user-select: text; resize: none;
+}
+input:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--glow); outline-offset: 1px; }
+
+.row { display: flex; gap: 10px; width: 100%; margin-top: 14px; }
+.row button { flex: 1; }
+button.primary, button.ghost {
+  padding: 10px 14px; border-radius: 8px; font: inherit; cursor: pointer;
+}
+button.primary { background: var(--glow); color: #03121c; border: 1px solid var(--glow); font-weight: 600; }
+button.primary:hover { background: #7fe4ff; }
+button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+button.ghost:hover { border-color: var(--glow); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.link { background: none; border: 0; color: var(--muted); margin-top: 14px; cursor: pointer; font: inherit; text-decoration: underline; }
+
+.message { min-height: 20px; margin: 8px 0 0; font-size: 13px; align-self: flex-start; }
+.message.ok { color: var(--ok); }
+.message.bad { color: var(--bad); }
+
+button.wide { width: 100%; margin-top: 6px; }
+
+.check {
+  display: flex; gap: 10px; align-items: flex-start;
+  margin: 16px 0 0; font-size: 12px; line-height: 1.45; color: var(--muted); cursor: pointer;
+}
+.check input { width: 16px; height: 16px; flex: none; margin: 2px 0 0; padding: 0; accent-color: var(--glow); }
+
+/* ---- Conversation ---- */
+.talk {
+  flex: 1; width: 100%; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  text-align: center; padding: 4px 2px 12px;
+}
+.said { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.said:not(:empty)::before { content: "“"; }
+.said:not(:empty)::after { content: "”"; }
+.reply { margin: 0; font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
+.reply.bad { color: var(--warn); }
+
+.ask { display: flex; gap: 8px; width: 100%; flex: none; }
+.ask input { flex: 1; border-radius: 999px; padding: 11px 16px; }
+.ask button { border-radius: 999px; width: 44px; height: 44px; padding: 0; flex: none; }
+
+/* ---- Allow prompt ---- */
+.overlay {
+  position: fixed; inset: 0; display: flex; align-items: flex-end;
+  justify-content: center;
+  background: rgba(2, 5, 10, 0.72); padding: 16px;
+}
+.card {
+  width: 100%; max-width: 368px; background: var(--panel);
+  border: 1px solid var(--warn); border-radius: 14px; padding: 18px;
+  box-shadow: 0 0 40px rgba(255, 180, 84, 0.18);
+}
+.card-title { margin: 0 0 6px; color: var(--warn); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
+.card-note { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+.card-text {
+  margin: 0; font: 13px/1.45 Consolas, "Cascadia Mono", monospace; overflow-wrap: anywhere;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+  max-height: 140px; overflow-y: auto; user-select: text;
+}
