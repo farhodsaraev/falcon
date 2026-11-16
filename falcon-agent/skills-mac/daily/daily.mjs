@@ -13,7 +13,7 @@ function args() {
   return out;
 }
 const osa = (lines, argv = []) => execFileSync('osascript', [...lines.flatMap((l) => ['-e', l]), ...argv],
-  { encoding: 'utf8', timeout: 45000 }).trim();
+  { encoding: 'utf8', timeout: 30000 }).trim();
 const rows = (text) => text.split('\n').filter(Boolean).map((line) => line.split('\t').map((v) => (v === 'missing value' ? '' : v.trim())));
 const clock = (iso) => iso.slice(11, 16);
 
@@ -96,7 +96,7 @@ try {
   console.log(JSON.stringify({ ok: true, what, ...result }));
 } catch (err) {
   const text = String(err.stderr || err.message || err).trim().split('\n').pop().replace(/^.*execution error: /, '');
-  const hint = /-1743|not authori[sz]ed|not allowed|-1712|timed out/i.test(text)
-    ? ' macOS has not yet allowed Falcon to read this app. The user can allow it in System Settings, Privacy and Security, Automation.' : '';
+  const hint = /-1743|not authori[sz]ed|not allowed|-1712|timed out|ETIMEDOUT/i.test(text)
+    ? ' The app did not answer. Most likely macOS is showing a permission prompt, or has not yet allowed Falcon to read this app: the user can click OK on the prompt, or allow it in System Settings, Privacy and Security, Automation, then ask again.' : '';
   console.log(JSON.stringify({ ok: false, error: text + hint }));
 }
