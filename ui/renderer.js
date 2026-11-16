@@ -6,7 +6,7 @@ function showScreen(name) {
   $('open-connections').hidden = name !== 'main';
   $('status-dots').hidden = name !== 'main';
   if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); }
-  if (name !== 'main' && window.falconVoice.active()) window.falconVoice.stop();
+  if (name !== 'main' && voice && voice.active()) voice.stop();
   if (name === 'connections') refreshConnections();
 }
 
@@ -32,10 +32,7 @@ async function refreshDots() {
 async function refreshConnections() {
   showCurrentModel();
   $('about-callme').textContent = callMe;
-  $('voice-state').textContent = voiceReady ? '✓ ready' : '';
-  $('voice-text').textContent = voiceReady
-    ? 'Falcon can speak and listen. Press the microphone in his window and just talk; you can interrupt him.'
-    : 'Falcon speaks and listens through OpenAI’s live voice service. It needs an OpenAI key, saved above.';
+  showVoiceSetting();
   $('chrome-state').textContent = chromeKnown ? '✓ connected' : '';
   await refreshDots();
   try { showBriefing(await window.falcon.briefing()); } catch { /* leave as is */ }
@@ -368,40 +365,93 @@ for (const chip of document.querySelectorAll('[data-ask]')) {
 }
 
 // ---- Voice ----
-// The microphone button starts and ends a live conversation. While it is on, the orb shows whether
-// Falcon is listening, working or speaking, and what is said appears as text too.
-let voiceReady = false;
+// Falcon has two voices. The built-in one is free, needs no key and works with any AI provider.
+// The live one (OpenAI's Realtime service) is smoother and can be interrupted by simply speaking,
+// but needs an OpenAI key; it is switched on in Settings. If the live voice cannot start, the
+// built-in one takes over.
+let voiceReady = false;                 // an OpenAI key for the live voice is saved
+let liveVoice = true;                   // use the live voice whenever an OpenAI key is saved
+try { liveVoice = localStorage.getItem('falcon-live-voice') !== 'off'; } catch { /* storage unavailable */ }
+let voice = null;                       // the voice in use while a conversation is on
+window.falconAddress = () => callMe;
+window.falconPlain = (text) => plainSpeech(text);
+
 async function refreshVoice() {
   try { voiceReady = (await window.falcon.voiceStatus()).available; } catch { voiceReady = false; }
-  $('mic').classList.toggle('needs-key', !voiceReady);
-  $('mic').title = voiceReady ? 'Talk to Falcon' : 'Voice needs an OpenAI key. Add one in Settings.';
-  setDot('dot-voice', voiceReady, voiceReady ? 'Voice: ready' : 'Voice: needs an OpenAI key');
+  const builtIn = window.falconSpeech.supported();
+  const any = builtIn || voiceReady;
+  $('mic').classList.toggle('needs-key', !any);
+  $('mic').title = any ? 'Talk to Falcon' : 'Voice is not available in this browser.';
+  setDot('dot-voice', any, !any ? 'Voice: not available in this browser'
+    : (liveVoice && voiceReady ? 'Voice: live voice' : 'Voice: ready'));
 }
 function voiceNote(text, kind = '') { $('voice-note').textContent = text; $('voice-note').className = `hint ${kind}`; }
 
-window.falconVoice.on('state', (state) => {
+function onVoiceState(state) {
   const on = state !== 'off';
   $('mic').classList.toggle('on', on);
   $('mic').classList.toggle('busy', state === 'connecting');
   $('mic').setAttribute('aria-pressed', String(on));
   $('orb').classList.toggle('live', on);
-  if (!on) $('orb').style.setProperty('--level', '0');
+  if (!on) { $('orb').style.setProperty('--level', '0'); voice = null; }
   setOrb({ off: 'idle', connecting: 'thinking', listening: 'listening', thinking: 'thinking', speaking: 'speaking' }[state] || 'idle');
   voiceNote({ connecting: 'Connecting the voice…', listening: 'Listening. Just speak; press the microphone again to end.', thinking: 'One moment…', speaking: '', off: '' }[state] ?? '');
+}
+for (const engine of [window.falconVoice, window.falconSpeech]) {
+  engine.on('state', onVoiceState);
+  engine.on('heard', (text) => { archiveExchange(); $('examples').hidden = true; $('said').textContent = text; $('reply').textContent = ''; });
+  engine.on('said', (text) => { $('reply').classList.remove('bad', 'waiting'); $('reply').textContent = plainSpeech(text); scrollTalk(); });
+  engine.on('actions', (items) => showActions(items));
+  // The orb follows the loudness: the user's voice while listening, Falcon's while he speaks.
+  engine.on('level', (level) => { $('orb').style.setProperty('--level', level.toFixed(3)); });
+}
+window.falconSpeech.on('error', (message) => voiceNote(message, 'bad'));
+window.falconVoice.on('note', (message) => voiceNote(message));
+// If the live voice fails, carry on with the built-in one instead of leaving the user in silence.
+window.falconVoice.on('error', (message) => {
+  if (window.falconSpeech.supported() && !window.falconSpeech.active()) {
+    voiceNote('The live voice is not available just now, so I am using my built-in voice.');
+    voice = window.falconSpeech;
+    setTimeout(() => window.falconSpeech.start(), 400);
+  } else {
+    voiceNote(message, 'bad');
+  }
 });
-window.falconVoice.on('heard', (text) => { archiveExchange(); $('examples').hidden = true; $('said').textContent = text; $('reply').textContent = ''; });
-window.falconVoice.on('said', (text) => { $('reply').classList.remove('bad', 'waiting'); $('reply').textContent = plainSpeech(text); scrollTalk(); });
-window.falconVoice.on('error', (message) => voiceNote(message, 'bad'));
-window.falconVoice.on('actions', (items) => showActions(items));
-// The orb follows the real loudness: the user's voice while listening, Falcon's while he speaks.
-window.falconVoice.on('level', (level) => { $('orb').style.setProperty('--level', level.toFixed(3)); });
 
 $('mic').addEventListener('click', () => {
-  if (window.falconVoice.active()) return window.falconVoice.stop();
-  if (!voiceReady) return voiceNote('Voice needs an OpenAI key. Add one in Settings (the gear icon), then try again.', 'bad');
+  if (voice && voice.active()) {
+    // While he is speaking, the first press cuts him off and listens; otherwise it ends the conversation.
+    if (voice.interrupt && voice.interrupt()) return;
+    return voice.stop();
+  }
   if (busy) return voiceNote('One moment, I am still working on the last request.');
   $('examples').hidden = true;
-  window.falconVoice.start();
+  voice = liveVoice && voiceReady ? window.falconVoice : window.falconSpeech;
+  if (voice === window.falconSpeech && !voice.supported()) {
+    if (voiceReady) voice = window.falconVoice;
+    else return voiceNote('This browser has no built-in speech. Open Falcon in Chrome or Edge, or add an OpenAI key in Settings.', 'bad');
+  }
+  voice.start();
+});
+
+// Settings: choose the voice.
+function showVoiceSetting() {
+  const builtIn = window.falconSpeech.supported();
+  $('voice-state').textContent = liveVoice && voiceReady ? '✓ live voice' : (builtIn ? '✓ built-in voice' : '');
+  $('voice-text').textContent = liveVoice && voiceReady
+    ? 'Falcon is using OpenAI’s live voice: smoother, and you can interrupt him just by speaking. It uses your OpenAI credit.'
+    : (builtIn
+      ? 'Falcon is using his built-in voice, which works with any AI key. With an OpenAI key saved above he switches to the smoother live voice. Press the microphone and talk.'
+      : 'This browser has no built-in speech. Add an OpenAI key above to use the live voice.');
+  $('voice-live').hidden = !voiceReady;
+  $('voice-live').textContent = liveVoice ? 'Use the built-in voice instead' : 'Use OpenAI’s live voice';
+  $('voice-live-note').textContent = voiceReady ? '' : 'The live voice becomes available when an OpenAI key is saved above.';
+}
+$('voice-live').addEventListener('click', () => {
+  liveVoice = !liveVoice;
+  try { localStorage.setItem('falcon-live-voice', liveVoice ? 'on' : 'off'); } catch { /* storage unavailable */ }
+  showVoiceSetting();
+  refreshVoice();
 });
 
 // ---- Introduction: who Falcon serves ----

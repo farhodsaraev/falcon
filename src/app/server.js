@@ -38,7 +38,9 @@ const ACTIONS_NOTE = '[Note from your own window, not from the user: this window
 // ---- Voice: OpenAI's Realtime API, the live listen-and-speak connection ----
 // The smaller realtime model: about a third of the price. The thinking is done by Falcon's own engine,
 // so the voice model only has to converse and pass requests on.
-const VOICE_MODEL = 'gpt-realtime-2.1-mini';
+// Tried in this order. The first is the economical one; the others are fallbacks in case an account
+// does not have it.
+const VOICE_MODELS = ['gpt-realtime-2.1-mini', 'gpt-realtime-2.1', 'gpt-realtime-mini', 'gpt-realtime'];
 const VOICE_NAME = 'cedar';
 const VOICE_INSTRUCTIONS = [
   'You are the voice of Falcon, a private assistant in the manner of a calm, impeccably competent British butler.',
@@ -571,32 +573,59 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         if (!offer.startsWith('v=')) return send(400, { error: 'Bad connection offer.' });
         let callMe = 'sir';
         try { callMe = JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { /* default */ }
-        const form = new FormData();
-        form.set('sdp', offer);
-        form.set('session', JSON.stringify({
-          type: 'realtime',
-          model: VOICE_MODEL,
-          instructions: VOICE_INSTRUCTIONS.replaceAll('{{CALL_ME}}', callMe),
-          audio: { output: { voice: VOICE_NAME } },
-          tools: VOICE_TOOLS,
-          tool_choice: 'auto',
-        }));
-        let upstream;
-        try {
-          upstream = await api.fetch('https://api.openai.com/v1/realtime/calls', {
-            method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(30000),
-          });
-        } catch {
-          return send(502, { error: 'The voice service could not be reached. Check the internet connection.' });
+        const instructions = VOICE_INSTRUCTIONS.replaceAll('{{CALL_ME}}', callMe);
+        // Nobody could try this against the live service before release, so do not rely on one exact
+        // request being accepted. Try the preferred voice model with the full settings; if the service
+        // refuses the settings, connect with the bare minimum and let the window send the rest once the
+        // line is open; if it refuses the model, try the next one.
+        const attempts = [];
+        for (const model of VOICE_MODELS) {
+          attempts.push({ model, full: true }, { model, full: false });
         }
-        const answer = await upstream.text();
-        if (!upstream.ok) {
-          const reason = upstream.status === 401 ? 'OpenAI did not accept the key.'
-            : upstream.status === 429 ? 'The OpenAI account is out of credit or over its limit.'
-              : 'The voice service refused the connection.';
-          return send(502, { error: reason });
+        let lastStatus = 0;
+        let lastText = '';
+        for (const attempt of attempts) {
+          const session = { type: 'realtime', model: attempt.model, audio: { output: { voice: VOICE_NAME } } };
+          if (attempt.full) Object.assign(session, { instructions, tools: VOICE_TOOLS, tool_choice: 'auto' });
+          const form = new FormData();
+          form.set('sdp', offer);
+          form.set('session', JSON.stringify(session));
+          let upstream;
+          try {
+            upstream = await api.fetch('https://api.openai.com/v1/realtime/calls', {
+              method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(30000),
+            });
+          } catch {
+            return send(502, { error: 'The voice service could not be reached. Check the internet connection.' });
+          }
+          const text = await upstream.text();
+          if (upstream.ok) {
+            // Tell the window whether it still has to send Falcon's voice settings itself.
+            res.writeHead(200, {
+              'Content-Type': 'application/sdp', 'Cache-Control': 'no-store',
+              'X-Falcon-Voice-Model': attempt.model,
+              'X-Falcon-Voice-Setup': attempt.full ? 'done' : 'pending',
+            });
+            return res.end(text);
+          }
+          lastStatus = upstream.status;
+          lastText = text;
+          // A wrong key or an empty account will not get better by trying again.
+          if ([401, 403, 429].includes(upstream.status)) break;
         }
-        return send(200, answer, 'application/sdp');
+        let detail = '';
+        try { detail = String(JSON.parse(lastText).error?.message || '').slice(0, 160); } catch { /* not JSON */ }
+        const reason = lastStatus === 401 || lastStatus === 403 ? 'OpenAI did not accept the key for the live voice.'
+          : lastStatus === 429 ? 'The OpenAI account is out of credit or over its limit.'
+            : `The live voice service refused the connection${detail ? ` (${detail})` : ''}.`;
+        return send(502, { error: reason });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/voice/setup') {
+        if (!sameToken(req.headers['x-falcon-token'])) return send(401, { error: 'Unauthorized' });
+        let callMe = 'sir';
+        try { callMe = JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { /* default */ }
+        return send(200, { instructions: VOICE_INSTRUCTIONS.replaceAll('{{CALL_ME}}', callMe), tools: VOICE_TOOLS });
+
       }
       if (req.method === 'POST' && url.pathname === '/api/chat') {
         const body = await readJson(req);

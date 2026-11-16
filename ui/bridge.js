@@ -16,10 +16,11 @@
     setup: (key, accepted, model) => call('POST', '/api/setup', { key, accepted, model }),
     inspectKey: (key) => call('POST', '/api/key/inspect', { key }),
     voiceStatus: () => call('GET', '/api/voice'),
+    voiceSetup: () => call('GET', '/api/voice/setup'),
     // Sends the window's connection offer; the server adds the key and Falcon's voice settings.
     async voiceSession(sdp) {
       const response = await fetch('/api/voice/session', { method: 'POST', headers: { 'Content-Type': 'application/sdp', 'X-Falcon-Token': token }, body: sdp });
-      if (response.ok) return { ok: true, sdp: await response.text() };
+      if (response.ok) return { ok: true, sdp: await response.text(), setupPending: response.headers.get('X-Falcon-Voice-Setup') === 'pending' };
       let error = 'The voice could not be started.';
       try { error = (await response.json()).error || error; } catch { /* keep the default */ }
       return { ok: false, error };

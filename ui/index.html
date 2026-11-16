@@ -37,7 +37,7 @@
     <input id="setup-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
     <p id="setup-key-kind" class="message" role="status"></p>
     <div id="setup-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
-    <p class="hint left-hint">An <b>OpenAI</b> key gives Falcon both his mind and his voice, so one key is enough. Anthropic and OpenRouter keys also work for thinking; a voice key can be added later in Settings.</p>
+    <p class="hint left-hint">An <b>OpenAI</b> key gives Falcon both his mind and his voice, so one key is enough. Anthropic and OpenRouter keys also work for thinking; the live voice can be switched on later in Settings.</p>
     <label class="check">
       <input id="setup-accept" type="checkbox">
       <span>I understand Falcon can open apps, read files, use the browser and run commands on this computer, and that he asks before sending, deleting or running anything unfamiliar.</span>
@@ -126,7 +126,9 @@
       </div>
       <div class="panel">
         <p class="panel-title">Voice <span id="voice-state" class="state"></span></p>
-        <p id="voice-text" class="panel-text">Falcon speaks and listens through OpenAI's live voice service. It needs an OpenAI key, saved above.</p>
+        <p id="voice-text" class="panel-text">Falcon has a built-in voice that is free and works with any AI key.</p>
+        <div class="row tight"><button id="voice-live" class="ghost" hidden>Use OpenAI’s live voice (beta)</button></div>
+        <p id="voice-live-note" class="panel-text"></p>
       </div>
     </div>
 

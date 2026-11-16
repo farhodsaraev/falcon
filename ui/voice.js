@@ -3,7 +3,10 @@
 // When the user asks for something to be done, the voice calls Falcon's hands through the same
 // chat path the typed box uses, then speaks the result.
 (() => {
-  const listeners = { state: () => {}, heard: () => {}, said: () => {}, error: () => {}, actions: () => {}, level: () => {} };
+  const listeners = { state: () => {}, heard: () => {}, said: () => {}, error: () => {}, note: () => {}, actions: () => {}, level: () => {} };
+  const handled = new Set();
+  let bufferReports = false;
+  const actOnce = (call) => { if (!call.call_id || handled.has(call.call_id)) return; handled.add(call.call_id); actFor(call); };
   let pc = null;
   let channel = null;
   let mic = null;
@@ -84,18 +87,30 @@
     switch (event.type) {
       case 'input_audio_buffer.speech_started': listeners.state('listening'); break;
       case 'input_audio_buffer.speech_stopped': listeners.state('thinking'); break;
-      case 'output_audio_buffer.started': speaking = true; listeners.state('speaking'); break;
+      case 'output_audio_buffer.started': bufferReports = true; // falls through
+      case 'response.output_audio.delta':
+      case 'response.audio.delta': if (!speaking) { speaking = true; listeners.state('speaking'); } break;
       case 'output_audio_buffer.stopped':
       case 'output_audio_buffer.cleared': speaking = false; listeners.state('listening'); break;
+      case 'response.output_item.done':
+        // Some versions report a finished function call here as well; handle each call only once.
+        if (event.item?.type === 'function_call' && event.item.name === 'ask_falcon') actOnce(event.item);
+        break;
       case 'conversation.item.input_audio_transcription.completed': if (event.transcript) listeners.heard(event.transcript.trim()); break;
       case 'response.created': spoken = ''; break;
-      case 'response.output_audio_transcript.delta': spoken += event.delta || ''; listeners.said(spoken); break;
+      case 'response.output_audio_transcript.delta':
+      case 'response.audio_transcript.delta': spoken += event.delta || ''; listeners.said(spoken); break;
+      case 'response.output_audio_transcript.done':
+      case 'response.audio_transcript.done': if (event.transcript) { spoken = event.transcript; listeners.said(spoken); } break;
       case 'response.done':
         for (const item of event.response?.output || []) {
-          if (item.type === 'function_call' && item.name === 'ask_falcon') actFor(item);
+          if (item.type === 'function_call' && item.name === 'ask_falcon') actOnce(item);
         }
+        // Normally the end of his speech is reported separately. If this service version never sends
+        // that report, do not leave the orb "speaking" for ever: fall back to listening after a moment.
+        if (speaking && !bufferReports) setTimeout(() => { if (speaking && pc) { speaking = false; listeners.state('listening'); } }, 1500);
         break;
-      case 'error': listeners.error(event.error?.message || 'The voice connection reported a problem.'); break;
+      case 'error': listeners.note(event.error?.message || 'The voice connection reported a problem.'); break;
       default: break;
     }
   }
@@ -127,11 +142,19 @@
       pc.addEventListener('connectionstatechange', () => {
         if (pc && ['failed', 'disconnected', 'closed'].includes(pc.connectionState)) { stop(); listeners.error('The voice connection was lost.'); }
       });
+      const watchdog = setTimeout(() => { if (pc && pc.connectionState !== 'connected') { stop(); listeners.error('The live voice did not connect.'); } }, 20000);
+      pc.addEventListener('connectionstatechange', () => { if (pc && pc.connectionState === 'connected') clearTimeout(watchdog); });
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       const answer = await window.falcon.voiceSession(offer.sdp);
       if (!answer.ok) throw new Error(answer.error);
       await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
+      if (answer.setupPending) {
+        // The service accepted only a bare connection: send Falcon's manner and his one function now.
+        const setup = await window.falcon.voiceSetup();
+        const sendSetup = () => send({ type: 'session.update', session: { type: 'realtime', instructions: setup.instructions, tools: setup.tools, tool_choice: 'auto' } });
+        if (channel.readyState === 'open') sendSetup(); else channel.addEventListener('open', sendSetup, { once: true });
+      }
       if (sound) startMeters();
       chime(true);
       listeners.state('listening');
@@ -161,5 +184,137 @@
     stop,
     active: () => Boolean(pc),
     on: (name, handler) => { listeners[name] = handler; },
+  };
+})();
+
+// ---------------------------------------------------------------------------------------------
+// Falcon's built-in voice: free, needs no key, works with any AI provider.
+// It uses the speech the browser already has: speech recognition to hear, speech synthesis to speak.
+// One turn at a time: he listens, works, speaks, then listens again. Press the microphone to stop;
+// pressing it while he speaks cuts him off.
+// ---------------------------------------------------------------------------------------------
+(() => {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const synth = window.speechSynthesis;
+  const listeners = { state: () => {}, heard: () => {}, said: () => {}, error: () => {}, actions: () => {}, level: () => {} };
+  let on = false;
+  let recognition = null;
+  let lang = 'en-GB';
+  let pulse = null;
+  let turn = 0;
+
+  const isRussian = (text) => /[а-яё]/i.test(text);
+  const address = () => (window.falconAddress ? window.falconAddress() : 'sir');
+
+  // The calmest British voice this computer offers; a Russian one for Russian replies.
+  function pickVoice(russian) {
+    const voices = synth ? synth.getVoices() : [];
+    if (russian) return voices.find((v) => /^ru/i.test(v.lang)) || null;
+    const british = voices.filter((v) => /^en[-_]GB/i.test(v.lang));
+    const preferred = ['Ryan', 'George', 'Daniel', 'Oliver', 'Arthur', 'UK English Male', 'Thomas'];
+    for (const name of preferred) { const hit = british.find((v) => v.name.includes(name)); if (hit) return hit; }
+    return british[0] || voices.find((v) => /^en/i.test(v.lang)) || null;
+  }
+
+  function stopPulse() { clearInterval(pulse); pulse = null; listeners.level(0); }
+  function startPulse() {
+    stopPulse();
+    let t = 0;
+    // There is no sound stream to measure here, so the orb follows a speaking rhythm instead.
+    pulse = setInterval(() => { t += 1; listeners.level(0.35 + 0.3 * Math.abs(Math.sin(t / 2.1)) + 0.2 * Math.abs(Math.sin(t / 0.9))); }, 70);
+  }
+
+  function speak(text) {
+    return new Promise((resolve) => {
+      if (!synth || !text) return resolve();
+      const utterance = new SpeechSynthesisUtterance(text);
+      const russian = isRussian(text);
+      const voice = pickVoice(russian);
+      if (voice) utterance.voice = voice;
+      utterance.lang = voice ? voice.lang : (russian ? 'ru-RU' : 'en-GB');
+      utterance.rate = 1.0;
+      utterance.pitch = 0.92;
+      utterance.onstart = () => { listeners.state('speaking'); startPulse(); };
+      utterance.onend = utterance.onerror = () => { stopPulse(); resolve(); };
+      synth.speak(utterance);
+    });
+  }
+
+  async function handle(text) {
+    const mine = ++turn;
+    listeners.heard(text);
+    listeners.state('thinking');
+    lang = isRussian(text) ? 'ru-RU' : 'en-GB';
+    // Say a holding phrase if the answer is not ready quickly.
+    const holding = setTimeout(() => { if (on && mine === turn) speak(isRussian(text) ? `Одну минуту, ${address()}.` : `One moment, ${address()}.`); }, 2200);
+    let answer = '';
+    try {
+      await window.falcon.chat(text, {
+        onDelta: (piece) => { answer += piece; },
+        onActions: (items) => listeners.actions(items),
+        onError: (message) => { answer = message; },
+      });
+    } catch {
+      answer = `I have lost my connection, ${address()}. Please try again in a moment.`;
+    }
+    clearTimeout(holding);
+    if (!on || mine !== turn) return;
+    synth.cancel();                       // drop the holding phrase if it is still being said
+    listeners.said(answer);
+    await speak(window.falconPlain ? window.falconPlain(answer) : answer);
+    if (on && mine === turn) listen();
+  }
+
+  function listen() {
+    if (!on) return;
+    recognition = new Recognition();
+    recognition.lang = lang;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    let got = false;
+    recognition.onstart = () => listeners.state('listening');
+    recognition.onresult = (event) => {
+      const text = event.results[0][0].transcript.trim();
+      if (text) { got = true; handle(text); }
+    };
+    recognition.onerror = (event) => {
+      if (event.error === 'no-speech' || event.error === 'aborted') return;
+      on = false;
+      listeners.state('off');
+      listeners.error({
+        'not-allowed': 'I cannot hear you: the microphone is not allowed. Allow it for Falcon and try again.',
+        'service-not-allowed': 'Speech recognition is switched off on this computer.',
+        'audio-capture': 'I cannot find a microphone on this computer.',
+        network: 'I could not reach the speech service. Check the internet connection and try again.',
+      }[event.error] || 'I could not hear you just now. Please try again.');
+    };
+    recognition.onend = () => { if (on && !got) listen(); };   // silence: keep listening
+    try { recognition.start(); } catch { /* already starting */ }
+  }
+
+  window.falconSpeech = {
+    supported: () => Boolean(Recognition && synth),
+    start() {
+      if (on) return;
+      if (!this.supported()) return listeners.error('This browser has no built-in speech. Open Falcon in Chrome or Edge, or add an OpenAI key for the live voice.');
+      on = true;
+      synth.getVoices();                  // ask early; some browsers load the list lazily
+      listen();
+    },
+    stop() {
+      on = false;
+      turn++;
+      try { recognition?.abort(); } catch { /* not running */ }
+      if (synth) synth.cancel();
+      stopPulse();
+      listeners.state('off');
+    },
+    // Cut him off mid-sentence and listen again.
+    interrupt() { if (on && synth?.speaking) { turn++; synth.cancel(); stopPulse(); listen(); return true; } return false; },
+    active: () => on,
+    on: (name, handler) => { listeners[name] = handler; },
+    // For checks only: act as if this sentence had just been heard.
+    simulateHeard(text) { on = true; return handle(text); },
+    voiceFor: (russian) => { const v = pickVoice(russian); return v ? `${v.name} (${v.lang})` : null; },
   };
 })();

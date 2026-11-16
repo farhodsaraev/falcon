@@ -9,6 +9,63 @@ import { createVoiceKeyStore } from '../src/app/voicekey.js';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-voice-'));
 const KEY = 'sk-proj-voicetestkey0123456789abcdefghij';
 
+// Nobody could try the live voice against the real service before release, so the request must
+// survive a refusal: of the settings, or of the voice model.
+function voiceServer(respond) {
+  const sent = [];
+  return startServer({ engine: {
+    voiceKey: { get: async () => KEY, set: async () => {} },
+    profileFile: () => path.join(tmp, 'none.json'),
+    readGateway: () => ({ port: 1, token: 'gw' }),
+    fetch: async (url, options) => {
+      const session = JSON.parse(options.body.get('session'));
+      sent.push(session);
+      return respond(session, sent.length);
+    },
+  } }).then((server) => ({ server, sent }));
+}
+const offer = (server) => fetch(`http://127.0.0.1:${server.port}/api/voice/session`, {
+  method: 'POST', headers: { 'Content-Type': 'application/sdp', 'X-Falcon-Token': server.token }, body: 'v=0\r\no=- offer\r\n' });
+
+test('live voice: if the settings are refused, it connects bare and hands the settings to the window', async () => {
+  const { server, sent } = await voiceServer((session) => (session.instructions
+    ? new Response(JSON.stringify({ error: { message: 'Unknown parameter: tools' } }), { status: 400 })
+    : new Response('v=0\r\n', { status: 200 })));
+  const r = await offer(server);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('X-Falcon-Voice-Setup'), 'pending');
+  assert.equal(sent.length, 2);
+  assert.deepEqual(Object.keys(sent[1]).sort(), ['audio', 'model', 'type']);
+  const setup = await (await fetch(`http://127.0.0.1:${server.port}/api/voice/setup`, { headers: { 'X-Falcon-Token': server.token } })).json();
+  assert.equal(setup.tools[0].name, 'ask_falcon');
+  assert.match(setup.instructions, /British/);
+  assert.notEqual((await fetch(`http://127.0.0.1:${server.port}/api/voice/setup`)).status, 200, 'not without the window\'s secret token');
+  await server.close();
+});
+
+test('live voice: if a voice model is not available, the next one is tried', async () => {
+  const { server, sent } = await voiceServer((session) => (session.model === 'gpt-realtime-2.1'
+    ? new Response('v=0\r\n', { status: 200 })
+    : new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 })));
+  const r = await offer(server);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('X-Falcon-Voice-Model'), 'gpt-realtime-2.1');
+  assert.equal(r.headers.get('X-Falcon-Voice-Setup'), 'done');
+  assert.deepEqual(sent.map((s) => s.model), ['gpt-realtime-2.1-mini', 'gpt-realtime-2.1-mini', 'gpt-realtime-2.1']);
+  await server.close();
+});
+
+test('live voice: a refused key or an empty account stops at once with a plain reason', async () => {
+  for (const [status, words] of [[401, /did not accept the key/], [429, /out of credit/]]) {
+    const { server, sent } = await voiceServer(() => new Response('{}', { status }));
+    const r = await offer(server);
+    assert.equal(r.status, 502);
+    assert.match((await r.json()).error, words);
+    assert.equal(sent.length, 1, 'no pointless retries');
+    await server.close();
+  }
+});
+
 test('the voice key is stored unreadable on Windows, private to the user elsewhere, and comes back intact', async () => {
   const file = path.join(tmp, 'voice.key');
   await createVoiceKeyStore(file).set(KEY);
