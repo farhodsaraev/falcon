@@ -18,16 +18,23 @@ async function refreshConnections() {
   } catch { /* leave as is */ }
 }
 
+// Shows a spinner in the pressed button until the job is finished.
 async function withButton(button, work) {
   button.disabled = true;
-  try { await work(); } finally { button.disabled = false; }
+  button.classList.add('busy');
+  button.setAttribute('aria-busy', 'true');
+  try { await work(); } finally {
+    button.disabled = false;
+    button.classList.remove('busy');
+    button.removeAttribute('aria-busy');
+  }
 }
 
 $('open-connections').addEventListener('click', () => showScreen('connections'));
 $('connections-back').addEventListener('click', () => showScreen('main'));
 
 $('tg-connect').addEventListener('click', () => withButton($('tg-connect'), async () => {
-  note('tg-message', 'Connecting…');
+  note('tg-message', 'Connecting to Telegram, this can take half a minute', 'working');
   try {
     const r = await window.falcon.telegramConnect($('tg-token').value);
     if (!r.ok) return note('tg-message', r.error, 'bad');
@@ -38,7 +45,7 @@ $('tg-connect').addEventListener('click', () => withButton($('tg-connect'), asyn
 }));
 
 $('tg-pair').addEventListener('click', () => withButton($('tg-pair'), async () => {
-  note('tg-message', 'Checking the code…');
+  note('tg-message', 'Checking the code', 'working');
   try {
     const r = await window.falcon.telegramPair($('tg-code').value);
     if (!r.ok) return note('tg-message', r.error, 'bad');
@@ -53,7 +60,7 @@ $('chrome-copy').addEventListener('click', async () => {
 });
 
 $('chrome-test').addEventListener('click', () => withButton($('chrome-test'), async () => {
-  note('chrome-message', 'Asking Chrome… click Allow if it asks.');
+  note('chrome-message', 'Asking Chrome. Click Allow if it asks', 'working');
   try {
     const r = await window.falcon.chromeTest();
     $('chrome-state').textContent = r.ok ? '✓ connected' : '';
@@ -74,16 +81,20 @@ $('setup-start').addEventListener('click', async () => {
   const key = $('setup-key').value.trim();
   if (!key) return setMessage('Paste your AI key first.', 'bad');
   if (!$('setup-accept').checked) return setMessage('Please tick the box to continue.', 'bad');
-  $('setup-start').disabled = true;
-  setMessage('Starting…');
-  try {
-    const result = await window.falcon.setup(key, true);
-    if (result.ok) { $('setup-key').value = ''; return showScreen('main'); }
-    setMessage(result.error || 'Something went wrong.', 'bad');
-  } catch {
-    setMessage('Setup was interrupted. Please try again.', 'bad');
-  }
-  $('setup-start').disabled = false;
+  // Setup takes a few minutes: spin the button and the orb, and show each step as it happens.
+  const smallOrb = $('screen-setup').querySelector('.orb');
+  smallOrb.dataset.state = 'thinking';
+  await withButton($('setup-start'), async () => {
+    setMessage('Starting', 'working');
+    try {
+      const result = await window.falcon.setup(key, true);
+      if (result.ok) { $('setup-key').value = ''; return showScreen('main'); }
+      setMessage(result.error || 'Something went wrong.', 'bad');
+    } catch {
+      setMessage('Setup was interrupted. Please try again.', 'bad');
+    }
+  });
+  smallOrb.dataset.state = 'idle';
 });
 
 // ---- Talking to Falcon ----
@@ -166,7 +177,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') answerAppr
 
 window.falcon.listen({
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
-  setup: (progress) => setMessage(progress.text),
+  setup: (progress) => setMessage(progress.text.replace(/…$/, ''), 'working'),
 });
 
 // ---- Start ----
@@ -189,6 +200,12 @@ if (screens.includes(query.get('screen'))) {
 if (query.get('preview') === 'allow') {
   approvalQueue.push({ id: 'preview', summary: 'powershell -Command "Remove-Item C:\\Users\\you\\Desktop\\old-report.docx"' });
   nextApproval();
+}
+if (query.get('preview') === 'busy') {
+  $('tg-connect').classList.add('busy');
+  note('tg-message', 'Connecting to Telegram, this can take half a minute', 'working');
+  $('chrome-test').classList.add('busy');
+  note('chrome-message', 'Asking Chrome. Click Allow if it asks', 'working');
 }
 if (query.get('preview') === 'talk') {
   $('said').textContent = 'Good morning, Falcon.';

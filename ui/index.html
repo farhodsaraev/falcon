@@ -58,15 +58,22 @@
       <p class="panel-title">Telegram <span id="tg-state" class="state"></span></p>
       <p class="panel-text">Talk to Falcon from your phone.</p>
       <ol class="steps">
-        <li>In Telegram, open <b>@BotFather</b>, send <b>/newbot</b> and follow it. Copy the token it gives you.</li>
-        <li>Paste the token here and press Connect.</li>
+        <li>Open <b>Telegram</b> on your phone or computer.</li>
+        <li>In the search box type <b>BotFather</b> and open the one with the blue tick.</li>
+        <li>Press <b>Start</b>, then send the message <b class="copy">/newbot</b></li>
+        <li>It asks for a <b>name</b>. Type anything, for example <b>Falcon</b>.</li>
+        <li>It asks for a <b>username</b>. It must be unique and end in <b>bot</b>, for example <b>anna_falcon_bot</b>. If it is taken, try another.</li>
+        <li>BotFather replies with a long line that looks like <b>123456789:AAE…</b>. That is the token. Copy it and keep it private.</li>
+        <li>Paste the token here and press <b>Connect</b>.</li>
       </ol>
       <div class="row tight">
         <input id="tg-token" type="password" placeholder="123456789:AAE…" autocomplete="off" spellcheck="false" aria-label="Telegram bot token">
         <button id="tg-connect" class="primary">Connect</button>
       </div>
-      <ol class="steps" start="3">
-        <li>Send your new bot any message. It replies with a short code. Type the code here.</li>
+      <ol class="steps" start="8">
+        <li>Back in Telegram, search for the <b>username</b> you just chose and open your new bot.</li>
+        <li>Press <b>Start</b> and send it any message, for example <b>hello</b>.</li>
+        <li>The bot replies with a short <b>code</b>. Type that code here and press <b>Confirm</b>. From then on, Falcon answers you in that chat.</li>
       </ol>
       <div class="row tight">
         <input id="tg-code" type="text" placeholder="Code from your bot" autocomplete="off" spellcheck="false" aria-label="Telegram pairing code">
