@@ -19,15 +19,15 @@ window.FALCON_LINES = {
     'I live on Mac and Windows computers. Open this page on yours, and installing me takes one line and a few minutes. The steps for both are below.',
   ],
   what: [
-    'I open presentations on the slide you ask for, find files, describe what is on your screen, work in the browser, and operate the apps on your desktop.',
-    'You may also reach me from your phone through Telegram, and each morning I can send you the weather, your meetings and your important mail. I answer in English or Russian.',
+    'I open presentations on the slide you ask for, find files, describe what is on your screen, work in the browser, and remember what you tell me.',
+    'You may also reach me from your phone through Telegram, and each morning I can send you the weather and the headlines of the day. When you ask, I look through your calendar and your mail. I answer in English or Russian.',
   ],
   need: [
     'A Mac, or a PC with Windows 10 or 11, and an AI key from OpenAI, Anthropic or OpenRouter.',
     'An OpenAI key gives me both my mind and my voice, so one key is enough.',
   ],
   safe: [
-    'Your AI key stays on your computer. I never type your passwords. Installing me needs no administrator password.',
+    'Your AI key stays on your computer. Passwords I leave to you: I fill in the rest and ask you to type them yourself. Installing me needs no administrator password.',
     'And before I send, delete or run anything unfamiliar, I show you exactly what I intend, and I wait. If nobody answers, I refuse.',
   ],
   copiedMac: ['Copied. Now click inside Terminal, paste the line, and press Return.'],

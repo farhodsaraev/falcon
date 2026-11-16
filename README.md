@@ -1,6 +1,6 @@
 # Falcon
 
-A private assistant that lives on your Windows PC. Falcon answers like a calm British butler, in English or Russian, and he gets things done: opens presentations on the slide you ask for, finds files, describes what is on your screen, works in the browser and operates desktop apps. He asks before sending, deleting or running anything unfamiliar.
+A private assistant that lives on your Mac or Windows PC. Falcon answers like a calm British butler, in English or Russian, and he gets things done: opens presentations on the slide you ask for, finds files, describes what is on your screen, works in the browser and operates desktop apps. He asks before sending, deleting or running anything unfamiliar.
 
 ## Install
 
