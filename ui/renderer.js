@@ -118,12 +118,13 @@ async function showCurrentModel() {
 
 $('key-save').addEventListener('click', () => withButton($('key-save'), async () => {
   if (!$('key-value').value.trim()) return note('key-message', 'Paste the key first.', 'bad');
-  note('key-message', 'Saving, this can take half a minute', 'working');
+  note('key-message', 'Saving. With an OpenRouter key this also sets up web search and can take a minute or two', 'working');
   try {
     const r = await window.falcon.saveKey($('key-value').value, panelKey.model());
     if (!r.ok) return note('key-message', r.error, 'bad');
     $('key-value').value = '';
     panelKey.reset();
+    refreshSearch();
     note('key-message', r.thinking ? `Saved. Falcon now thinks with ${r.thinking}, on your ${r.provider} key.` : `Saved. Falcon can now use your ${r.provider} key.`, 'ok');
     showCurrentModel();
     await refreshVoice();
@@ -133,7 +134,11 @@ $('key-save').addEventListener('click', () => withButton($('key-save'), async ()
 
 async function refreshSearch() {
   try {
-    $('search-state').textContent = (await window.falcon.searchStatus()).google ? '✓ on' : '';
+    const { via } = await window.falcon.searchStatus();
+    $('search-state').textContent = via === 'google' ? '✓ on' : '';
+    $('web-search-now').textContent = via === 'google' ? 'on, through Google'
+      : via === 'openrouter' ? 'on, through your OpenRouter key'
+        : 'off. Save an OpenRouter key above, or add a Google key below, to switch it on';
   } catch { /* leave as it was */ }
 }
 refreshSearch();

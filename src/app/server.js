@@ -500,7 +500,11 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     // ---- Google search: a free Google AI Studio key lets Falcon search Google itself, instead of
     // clicking through a browser that Google often blocks. The key goes in the engine's own private
     // settings file, never on a command line.
-    'GET /api/search': async () => ({ google: Boolean(readEnvKey(api.envFile(), 'GEMINI_API_KEY')) }),
+    'GET /api/search': async () => {
+      const google = Boolean(readEnvKey(api.envFile(), 'GEMINI_API_KEY'));
+      const openrouter = Boolean(readEnvKey(api.envFile(), 'OPENROUTER_API_KEY'));
+      return { google, via: google ? 'google' : openrouter ? 'openrouter' : null };
+    },
     'POST /api/search': async (body) => {
       const key = String(body.key || '').trim();
       if (!GOOGLE_KEY_SHAPE.test(key)) return { ok: false, error: 'That does not look like a Google key. It starts with AIza.' };

@@ -156,6 +156,7 @@ test('an OpenRouter key also switches on web search, and stays off the command l
   assert.equal(r.ok, true);
   assert.match(fs.readFileSync(path.join(tmp, 'engine.env'), 'utf8'), new RegExp(`^OPENROUTER_API_KEY=${key}$`, 'm'));
   assert.ok(calls.some((c) => c.join(' ') === 'config set tools.web.search.provider perplexity'));
+  assert.equal((await (await call('GET', '/api/search')).json()).via, 'openrouter');
   assert.ok(!JSON.stringify(calls).includes(key), 'the key is not among the command arguments');
 });
 
