@@ -163,7 +163,8 @@ export async function installFalcon({
     return ok;
   };
   log('Applying settings...');
-  await step('fast replies', ['config', 'set', 'agents.defaults.thinkingDefault', 'off']);
+  // A little thinking: with none, Falcon stopped after the first step of browser tasks (opened a site and answered).
+  await step('think before acting', ['config', 'set', 'agents.defaults.thinkingDefault', 'low']);
   await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m']);
   await step('local chat for the Falcon window', ['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
   await setupSearch({ step, envFile });

@@ -35,7 +35,7 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   }
 
   const once = calls.slice(0, calls.length / 2).map((c) => c.args.join(' '));
-  assert.ok(once.includes('config set agents.defaults.thinkingDefault off'));
+  assert.ok(once.includes('config set agents.defaults.thinkingDefault low'));
   assert.ok(once.includes('config set gateway.http.endpoints.chatCompletions.enabled true'));
   assert.ok(once.some((c) => c.startsWith('approvals set --gateway --stdin')));
   assert.match(calls.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').input, /"ask": "on-miss"/);
