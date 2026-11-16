@@ -1,0 +1,167 @@
+name: Install test
+
+# Installs Falcon from scratch on a clean Mac and a clean Windows machine and checks that it comes up.
+# No AI key is used, so this covers everything up to (not including) Falcon actually thinking.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System
+        run: sw_vers && uname -m && (node -v || true)
+
+      - name: Run the Falcon installer
+        env:
+          FALCON_NO_LAUNCH: "1"
+        run: bash installer/install.sh || (cat "${TMPDIR:-/tmp}/falcon-install.log"; exit 1)
+
+      - name: Installed files and app
+        run: |
+          APP="$HOME/Library/Application Support/Falcon/app"
+          test -f "$APP/src/app/launch.js"
+          test -f "$APP/falcon-agent/install-falcon.mjs"
+          test -x "$HOME/Applications/Falcon.app/Contents/MacOS/Falcon"
+          cat "$HOME/Applications/Falcon.app/Contents/MacOS/Falcon"
+          plutil -lint "$HOME/Applications/Falcon.app/Contents/Info.plist"
+          ls -la "$HOME/Applications/Falcon.app/Contents/Resources" "$HOME/Desktop" "$HOME/Documents/Falcon Samples"
+
+      - name: Put the launcher's tools on PATH for the next steps
+        run: |
+          LINE="$(grep '^export PATH=' "$HOME/Applications/Falcon.app/Contents/MacOS/Falcon")"
+          eval "$LINE"
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+          which node openclaw && node -v && openclaw --version
+
+      - name: Window comes up before any setup
+        run: node scripts/ci-check.mjs "$HOME/Library/Application Support/Falcon/app"
+
+      - name: Engine setup without a key
+        run: |
+          openclaw onboard --non-interactive --accept-risk --mode local --auth-choice skip \
+            --gateway-bind loopback --gateway-auth token --install-daemon --agent-name Falcon
+          openclaw gateway start || true
+          for i in $(seq 1 30); do openclaw gateway status >/dev/null 2>&1 && break; sleep 2; done
+          openclaw gateway status || true
+
+      - name: Install the Falcon pack with settings
+        run: node "$HOME/Library/Application Support/Falcon/app/falcon-agent/install-falcon.mjs"
+
+      - name: Falcon's rules landed in the workspace
+        run: |
+          grep -c "falcon:start" "$HOME/.openclaw/workspace/AGENTS.md"
+          grep "this is a Mac" "$HOME/.openclaw/workspace/AGENTS.md"
+          grep "slides.mjs" "$HOME/.openclaw/workspace/AGENTS.md"
+          ls -R "$HOME/.openclaw/workspace/skills"
+          openclaw approvals get --gateway | grep -E "Defaults|mjs" || true
+
+      - name: Window sees the engine
+        run: node scripts/ci-check.mjs "$HOME/Library/Application Support/Falcon/app" --expect-ready
+
+      - name: Mac skill - find a file
+        run: |
+          OUT="$(node "$HOME/.openclaw/workspace/skills/files/find-files.mjs" --query "invoice" --ext pdf)"
+          echo "$OUT"
+          echo "$OUT" | grep -q '"ok":true' && echo "$OUT" | grep -qi 'Invoice'
+
+      - name: Mac skill - find a presentation by name (no app needed)
+        run: |
+          OUT="$(node "$HOME/.openclaw/workspace/skills/presentations/slides.mjs" --find "zzz-no-such-deck" --slide 2)"
+          echo "$OUT"
+          echo "$OUT" | grep -q "No presentation with"
+
+      - name: Mac skill - open the sample deck (needs Keynote or PowerPoint; informational)
+        continue-on-error: true
+        run: |
+          ls /Applications | grep -iE "keynote|powerpoint" || echo "no presentation app on this machine"
+          node "$HOME/.openclaw/workspace/skills/presentations/slides.mjs" --find "quarterly review" --slide 3
+
+      - name: Mac skill - look at the screen (informational)
+        continue-on-error: true
+        run: node "$HOME/.openclaw/workspace/skills/screen/screenshot.mjs"
+
+      - name: Unit checks
+        run: node --test test/
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the Falcon installer
+        shell: powershell
+        run: |
+          node -v
+          powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 -NoLaunch
+
+      - name: Installed files, Node and shortcuts
+        shell: powershell
+        run: |
+          $app = "$env:LOCALAPPDATA\Falcon\app"
+          if (-not (Test-Path "$app\src\app\launch.js")) { throw "launch.js missing" }
+          if (-not (Test-Path "$app\falcon.ico")) { throw "icon missing" }
+          $link = Join-Path ([Environment]::GetFolderPath("Desktop")) "Falcon.lnk"
+          if (-not (Test-Path $link)) { throw "Desktop shortcut missing" }
+          $s = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+          "shortcut: " + $s.TargetPath + " " + $s.Arguments
+          $node = ($s.Arguments -split '"')[1]
+          & $node -v
+          "FALCON_NODE=$node" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-ChildItem (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Falcon Samples")
+
+      - name: Window comes up before any setup
+        shell: powershell
+        run: |
+          & $env:FALCON_NODE scripts\ci-check.mjs "$env:LOCALAPPDATA\Falcon\app"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Engine install (the step behind the Start button)
+        shell: powershell
+        run: |
+          $env:Path = (Split-Path $env:FALCON_NODE) + ";" + $env:Path
+          & ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
+          & $env:FALCON_NODE -e "import('file:///' + process.argv[1].replace(/\\/g,'/')).then(m => { const e = m.findEngine(); console.log('engine found by Falcon:', JSON.stringify(e)); process.exit(e ? 0 : 1); })" "$env:LOCALAPPDATA\Falcon\app\src\app\engine.js"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Engine setup without a key, then the Falcon pack
+        shell: powershell
+        run: |
+          $env:Path = (Split-Path $env:FALCON_NODE) + ";" + [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
+          openclaw --version
+          openclaw onboard --non-interactive --accept-risk --mode local --auth-choice skip --gateway-bind loopback --gateway-auth token --install-daemon --agent-name Falcon
+          openclaw gateway start
+          foreach ($i in 1..30) { openclaw gateway status *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 2 }
+          & $env:FALCON_NODE "$env:LOCALAPPDATA\Falcon\app\falcon-agent\install-falcon.mjs"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Select-String -Path "$env:USERPROFILE\.openclaw\workspace\AGENTS.md" -Pattern "this is a Windows PC" | Select-Object -First 1
+
+      - name: Window sees the engine
+        shell: powershell
+        run: |
+          & $env:FALCON_NODE scripts\ci-check.mjs "$env:LOCALAPPDATA\Falcon\app" --expect-ready
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Windows skill - find a file
+        shell: powershell
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\find-files.ps1" -Query "invoice" -Ext "pdf"
+          $out
+          if ($out -notmatch '"ok":true' -or $out -notmatch 'Invoice') { exit 1 }
+
+      - name: Unit checks
+        shell: powershell
+        run: |
+          & $env:FALCON_NODE --test test/
+          if ($LASTEXITCODE -ne 0) { exit 1 }

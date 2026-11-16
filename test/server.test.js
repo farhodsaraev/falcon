@@ -10,7 +10,8 @@ const engine = {
   findEngine: () => ({ command: 'node', prefix: [] }),
   readGateway: () => (configured ? { port: 1, token: 'gw' } : null),
   engineReady: async () => configured,
-  runPowerShell: async (args) => { calls.push(['ps', ...args]); return { code: 0, out: '' }; },
+  installEngine: async () => { calls.push(['install-engine']); return { code: 0, out: '' }; },
+  installFalcon: async (options) => { calls.push(['install-falcon', typeof options.runEngine]); return { ok: true }; },
   runEngine: async (args) => {
     calls.push(args);
     if (args[0] === 'onboard') configured = true;
@@ -61,7 +62,8 @@ test('setup connects the key with the right provider and installs Falcon', async
   assert.equal(r.ok, true);
   const onboard = calls.find((c) => c[0] === 'onboard');
   assert.ok(onboard.includes('--accept-risk') && onboard.includes('openrouter-api-key'));
-  assert.ok(calls.some((c) => c[0] === 'ps' && String(c[2]).endsWith('install-falcon.ps1')));
+  assert.ok(calls.some((c) => c[0] === 'install-falcon' && c[1] === 'function'));
+  assert.equal(calls.filter((c) => c[0] === 'install-engine').length, 0);   // engine was already there
   assert.equal((await (await call('GET', '/api/state')).json()).ready, true);
 });
 

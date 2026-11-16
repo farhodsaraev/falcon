@@ -5,8 +5,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { engineReady, findEngine, readGateway, runEngine, runPowerShell } from './engine.js';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -28,7 +28,11 @@ function providerFor(key) {
 
 export async function startServer({ port = 0, engine = {} } = {}) {
   // `engine` lets tests replace the real engine with stand-ins.
-  const api = { engineReady, findEngine, readGateway, runEngine, runPowerShell, fetch, ...engine };
+  const installFalcon = async (options) => {
+    const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
+    return pack.installFalcon(options);
+  };
+  const api = { engineReady, findEngine, installEngine, installFalcon, readGateway, runEngine, fetch, ...engine };
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
@@ -71,8 +75,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
 
     if (!api.findEngine()) {
       step('Installing the engine. This takes a few minutes…');
-      const install = await api.runPowerShell(['-Command',
-        '& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing https://openclaw.ai/install.ps1))) -NoOnboard']);
+      const install = await api.installEngine();
       if (!api.findEngine()) return { ok: false, error: 'The engine could not be installed.', detail: install.out.slice(-600) };
     }
 
@@ -90,11 +93,14 @@ export async function startServer({ port = 0, engine = {} } = {}) {
 
     step('Starting…');
     await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
-    await api.runEngine(['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
 
     step('Teaching Falcon his manners…');
-    const pack = await api.runPowerShell(['-File', path.join(PACK_DIR, 'install-falcon.ps1')]);
-    if (pack.code !== 0) return { ok: false, error: 'Falcon could not be installed.', detail: pack.out.slice(-600) };
+    const notes = [];
+    try {
+      await api.installFalcon({ runEngine: api.runEngine, log: (line) => notes.push(line) });
+    } catch (err) {
+      return { ok: false, error: 'Falcon could not be installed.', detail: `${err.message}\n${notes.join('\n')}`.slice(-600) };
+    }
 
     step('Waking Falcon…');
     for (let i = 0; i < 30; i++) {

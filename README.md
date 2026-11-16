@@ -4,13 +4,19 @@ A private assistant that lives on your Windows PC. Falcon answers like a calm Br
 
 ## Install
 
-Open **PowerShell** (press Start, type "PowerShell", press Enter), paste this line and press Enter:
+**Mac:** open **Terminal** (press ⌘ Space, type "Terminal", press Return), paste this line and press Return:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/farhodsaraev/falcon/main/installer/install.sh | bash
+```
+
+**Windows:** open **PowerShell** (press Start, type "PowerShell", press Enter), paste this line and press Enter:
 
 ```powershell
 irm https://raw.githubusercontent.com/farhodsaraev/falcon/main/installer/install.ps1 | iex
 ```
 
-No administrator rights are needed. The installer puts a **Falcon** icon on your Desktop and opens his window. Paste your AI key there (OpenAI, OpenRouter or Anthropic), tick the box, press **Start**. The key stays on your computer.
+No administrator password is needed. The installer adds a **Falcon** app (Applications and Desktop) and opens his window. Paste your AI key there (OpenAI, OpenRouter or Anthropic), tick the box, press **Start**. The key stays on your computer.
 
 ## Things to try
 
@@ -31,7 +37,9 @@ Falcon has a browser of his own with no logins. For your mail, calendar or docum
 
 ## Status
 
-Early version. Windows 10 and 11. Voice and macOS are in progress.
+Early version for macOS and Windows 10/11. Every change is installed from scratch on a clean Mac and a clean Windows machine by an automatic test. Voice is in progress.
+
+On a Mac, the first time Falcon looks at the screen or controls Keynote, macOS asks for permission (Screen Recording, Automation). Click Allow, or switch it on in System Settings → Privacy & Security.
 
 ## Credits
 

@@ -1,9 +1,11 @@
 // Talks to the engine Falcon runs on: finds it, runs its commands, reads its local address.
+// Works on Windows and macOS.
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+const WINDOWS = process.platform === 'win32';
 const ENGINE_HOME = path.join(os.homedir(), '.openclaw');
 const SAFE_ARG = /^[\w@:\\/.=,~+\- ]*$/;
 
@@ -17,26 +19,46 @@ export function readGateway() {
   }
 }
 
+// The window may have started before the engine was installed, so its PATH can be stale:
+// besides PATH, look in the places a per-user install normally lands.
 function candidateDirs() {
   const dirs = [];
-  try {
-    const found = execFileSync('where.exe', ['openclaw.cmd'], { encoding: 'utf8', windowsHide: true });
-    for (const line of found.split(/\r?\n/)) if (line.trim()) dirs.push(path.dirname(line.trim()));
-  } catch { /* not on PATH */ }
-  // The window may have started before the engine was installed, so its PATH can be stale:
-  // also look in the places a per-user install normally lands.
-  dirs.push(
-    path.dirname(process.execPath),
-    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'nodejs'),
-    path.join(os.homedir(), '.local', 'bin'),
-    path.join(process.env.APPDATA || '', 'npm'),
-    path.join(ENGINE_HOME, 'bin'),
-  );
-  return dirs;
+  const home = os.homedir();
+  if (WINDOWS) {
+    try {
+      const found = execFileSync('where.exe', ['openclaw.cmd'], { encoding: 'utf8', windowsHide: true });
+      for (const line of found.split(/\r?\n/)) if (line.trim()) dirs.push(path.dirname(line.trim()));
+    } catch { /* not on PATH */ }
+    dirs.push(
+      path.dirname(process.execPath),
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'nodejs'),
+      path.join(home, '.local', 'bin'),
+      path.join(process.env.APPDATA || '', 'npm'),
+      path.join(ENGINE_HOME, 'bin'),
+    );
+  } else {
+    dirs.push(
+      ...(process.env.PATH || '').split(':').filter(Boolean),
+      path.dirname(process.execPath),
+      path.join(ENGINE_HOME, 'bin'),
+      path.join(home, '.local', 'bin'),
+      path.join(home, '.npm-global', 'bin'),
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+    );
+  }
+  return [...new Set(dirs)];
 }
 
-/** How to start the engine's command line: directly through Node when possible (no shell involved). */
+/** How to start the engine's command line, without a shell wherever possible. */
 export function findEngine() {
+  if (!WINDOWS) {
+    for (const dir of candidateDirs()) {
+      const file = path.join(dir, 'openclaw');
+      if (fs.existsSync(file)) return { command: file, prefix: [], pathDirs: candidateDirs() };
+    }
+    return null;
+  }
   for (const dir of candidateDirs()) {
     const entry = path.join(dir, 'node_modules', 'openclaw', 'dist', 'index.js');
     if (fs.existsSync(entry)) return { command: process.execPath, prefix: [entry] };
@@ -49,40 +71,42 @@ export function findEngine() {
   return null;
 }
 
-/** Runs one engine command and resolves with its exit code and output. Never rejects. */
-export function runEngine(args, { input, timeoutMs = 180000 } = {}) {
+function childEnv(extraDirs = []) {
+  const env = { ...process.env, NODE_NO_WARNINGS: '1' };
+  if (!WINDOWS) env.PATH = [...new Set([path.dirname(process.execPath), ...extraDirs, ...(env.PATH || '').split(':')])].join(':');
+  return env;
+}
+
+function collect(child, timeoutMs, input) {
   return new Promise((resolve) => {
-    const engine = findEngine();
-    if (!engine) return resolve({ code: -1, out: 'The engine is not installed.' });
-    if (engine.viaShell && !args.every((a) => SAFE_ARG.test(a))) {
-      return resolve({ code: -1, out: 'Refused to run a command with unusual characters.' });
-    }
-    const child = spawn(engine.command, [...engine.prefix, ...args], {
-      windowsHide: true,
-      env: { ...process.env, NODE_NO_WARNINGS: '1' },
-    });
     let out = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);
     child.stdout.on('data', (chunk) => { out += chunk; });
     child.stderr.on('data', (chunk) => { out += chunk; });
     child.on('error', (err) => { clearTimeout(timer); resolve({ code: -1, out: err.message }); });
     child.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? -1, out }); });
-    if (input !== undefined) child.stdin.end(input); else child.stdin.end();
+    child.stdin.end(input ?? '');
   });
 }
 
-/** Runs a PowerShell script file (used for the engine installer and the Falcon pack). */
-export function runPowerShell(args, { timeoutMs = 900000 } = {}) {
-  return new Promise((resolve) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args],
-      { windowsHide: true });
-    let out = '';
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.stderr.on('data', (chunk) => { out += chunk; });
-    child.on('error', (err) => { clearTimeout(timer); resolve({ code: -1, out: err.message }); });
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? -1, out }); });
-  });
+/** Runs one engine command and resolves with its exit code and output. Never rejects. */
+export function runEngine(args, { input, timeoutMs = 180000 } = {}) {
+  const engine = findEngine();
+  if (!engine) return Promise.resolve({ code: -1, out: 'The engine is not installed.' });
+  if (engine.viaShell && !args.every((a) => SAFE_ARG.test(a))) {
+    return Promise.resolve({ code: -1, out: 'Refused to run a command with unusual characters.' });
+  }
+  const child = spawn(engine.command, [...engine.prefix, ...args], { windowsHide: true, env: childEnv(engine.pathDirs) });
+  return collect(child, timeoutMs, input);
+}
+
+/** Downloads and runs the engine's official installer for this kind of computer. */
+export function installEngine({ timeoutMs = 1200000 } = {}) {
+  const child = WINDOWS
+    ? spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+      '& ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard'], { windowsHide: true })
+    : spawn('/bin/bash', ['-c', 'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'], { env: childEnv() });
+  return collect(child, timeoutMs);
 }
 
 /** True when the engine answers on its local chat address. */
