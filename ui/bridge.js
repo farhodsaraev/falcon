@@ -15,6 +15,8 @@
     state: () => call('GET', '/api/state'),
     setup: (key, accepted) => call('POST', '/api/setup', { key, accepted }),
     answerApproval: (id, decision) => call('POST', '/api/approval', { id, decision }),
+    profile: () => call('GET', '/api/profile'),
+    saveProfile: (profile) => call('POST', '/api/profile', profile),
     connections: () => call('GET', '/api/connections'),
     telegramConnect: (token) => call('POST', '/api/telegram/connect', { token }),
     telegramPair: (code) => call('POST', '/api/telegram/pair', { code }),

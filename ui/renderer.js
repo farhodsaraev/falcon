@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const screens = ['loading', 'setup', 'main', 'connections'];
+const screens = ['loading', 'setup', 'intro', 'main', 'connections'];
 
 function showScreen(name) {
   for (const s of screens) $(`screen-${s}`).hidden = s !== name;
@@ -88,7 +88,7 @@ $('setup-start').addEventListener('click', async () => {
     setMessage('Starting', 'working');
     try {
       const result = await window.falcon.setup(key, true);
-      if (result.ok) { $('setup-key').value = ''; return showScreen('main'); }
+      if (result.ok) { $('setup-key').value = ''; return enterFalcon(); }
       setMessage(result.error || 'Something went wrong.', 'bad');
     } catch {
       setMessage('Setup was interrupted. Please try again.', 'bad');
@@ -115,11 +115,31 @@ function archiveExchange() {
   scrollTalk();
 }
 
-$('ask').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const text = $('ask-text').value.trim();
+// The answer usually arrives in one piece after the wait. Reveal it a few letters at a time,
+// the way speech arrives, instead of dropping a block of text.
+function createReveal(element) {
+  let target = '';
+  let shown = 0;
+  let timer = null;
+  let finish = null;
+  const instant = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const tick = () => {
+    const behind = target.length - shown;
+    shown = instant ? target.length : Math.min(target.length, shown + Math.max(2, Math.ceil(behind / 30)));
+    element.textContent = target.slice(0, shown);
+    scrollTalk();
+    if (shown >= target.length) { clearInterval(timer); timer = null; if (finish) { finish(); finish = null; } }
+  };
+  return {
+    add(piece) { target += piece; if (!timer) timer = setInterval(tick, 24); },
+    done() { return new Promise((resolve) => { if (!timer) return resolve(); finish = resolve; }); },
+  };
+}
+
+async function sendToFalcon(text) {
   if (!text || busy) return;
   busy = true;
+  $('examples').hidden = true;
   $('ask-text').value = '';
   $('ask-send').disabled = true;
   archiveExchange();
@@ -128,29 +148,83 @@ $('ask').addEventListener('submit', async (event) => {
   $('reply').classList.remove('bad', 'waiting');
   setOrb('thinking');
   let answer = '';
+  const reveal = createReveal($('reply'));
   // If the answer takes a moment, say so instead of sitting silent.
+  const russian = /[а-яё]/i.test(text);
   const patience = setTimeout(() => {
-    if (!answer) { $('reply').textContent = /[а-яё]/i.test(text) ? 'Одну минуту, сэр.' : 'One moment, sir.'; $('reply').classList.add('waiting'); }
+    if (!answer) {
+      $('reply').textContent = russian ? `Одну минуту, ${addressRu()}.` : `One moment, ${address()}.`;
+      $('reply').classList.add('waiting');
+    }
   }, 2500);
-  const clearWaiting = () => { clearTimeout(patience); $('reply').classList.remove('waiting'); };
+  const clearWaiting = () => {
+    clearTimeout(patience);
+    if ($('reply').classList.contains('waiting')) { $('reply').classList.remove('waiting'); $('reply').textContent = ''; }
+  };
+  const fail = (message) => { clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); };
   try {
     await window.falcon.chat(text, {
-      onDelta: (piece) => { clearWaiting(); answer += piece; $('reply').textContent = answer; setOrb('speaking'); scrollTalk(); },
-      onError: (message) => { clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); },
+      onDelta: (piece) => { clearWaiting(); answer += piece; reveal.add(piece); setOrb('speaking'); },
+      onError: fail,
     });
+    await reveal.done();
   } catch {
-    clearWaiting();
-    answer = 'I have lost my connection, sir. Please try again in a moment.';
-    $('reply').textContent = answer;
-    $('reply').classList.add('bad');
+    fail(`I have lost my connection, ${address()}. Please try again in a moment.`);
   }
   clearWaiting();
-  if (!answer) $('reply').textContent = 'Done, sir.';
+  if (!answer) $('reply').textContent = `Done, ${address()}.`;
   setOrb('idle');
   busy = false;
   $('ask-send').disabled = false;
   $('ask-text').focus();
-});
+}
+
+$('ask').addEventListener('submit', (event) => { event.preventDefault(); sendToFalcon($('ask-text').value.trim()); });
+for (const chip of document.querySelectorAll('[data-ask]')) {
+  chip.addEventListener('click', () => sendToFalcon(chip.dataset.ask));
+}
+
+// ---- Introduction: who Falcon serves ----
+let callMe = 'sir';
+const address = () => callMe;
+const addressRu = () => ({ sir: 'сэр', madam: 'мадам', boss: 'босс' }[callMe.toLowerCase()] || callMe);
+
+function applyProfile(profile) {
+  callMe = profile?.callMe || 'sir';
+  $('reply').textContent = `At your service, ${address()}.`;
+}
+
+for (const chip of document.querySelectorAll('[data-call]')) {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('[data-call]').forEach((c) => c.classList.toggle('on', c === chip));
+  });
+}
+
+async function saveIntro(skipped) {
+  const name = $('intro-name').value.trim();
+  const choice = document.querySelector('[data-call].on')?.dataset.call || 'sir';
+  if (!skipped && choice === 'name' && !name) return note('intro-message', 'Tell me your name first, or choose another form of address.', 'bad');
+  await withButton($(skipped ? 'intro-skip' : 'intro-save'), async () => {
+    try {
+      const saved = await window.falcon.saveProfile(skipped ? { skipped: true }
+        : { name, callMe: choice === 'name' ? name : choice, about: $('intro-about').value });
+      applyProfile(saved);
+      showScreen('main');
+    } catch { note('intro-message', 'That could not be saved. Please try again.', 'bad'); }
+  });
+}
+$('intro-save').addEventListener('click', () => saveIntro(false));
+$('intro-skip').addEventListener('click', () => saveIntro(true));
+
+// Once Falcon is awake: introduce yourself the first time, otherwise go straight to him.
+async function enterFalcon() {
+  try {
+    const profile = await window.falcon.profile();
+    if (!profile.done) return showScreen('intro');
+    applyProfile(profile);
+  } catch { /* no profile: carry on with the defaults */ }
+  showScreen('main');
+}
 
 // ---- Approval prompt ----
 const approvalQueue = [];
@@ -188,7 +262,7 @@ if (screens.includes(query.get('screen'))) {
 } else {
   const wake = (attempt = 0) => window.falcon.state()
     .then((s) => {
-      if (s.ready) return showScreen('main');
+      if (s.ready) return enterFalcon();
       if (!s.configured) return showScreen('setup');
       // Set up before but still waking (for example right after the PC started): keep trying for a while.
       if (attempt < 20) return setTimeout(() => wake(attempt + 1), 3000);

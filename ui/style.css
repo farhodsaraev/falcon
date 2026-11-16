@@ -120,6 +120,19 @@ button.link { background: none; border: 0; color: var(--muted); margin-top: 14px
 
 button.wide { width: 100%; margin-top: 6px; }
 
+/* ---- Chips: choices and example requests ---- */
+.chip {
+  background: transparent; color: var(--text); border: 1px solid var(--line);
+  border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.chip:hover { border-color: var(--glow); }
+.chip.on { background: var(--glow); border-color: var(--glow); color: #03121c; font-weight: 600; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.optional { opacity: 0.7; }
+.examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; padding-bottom: 12px; flex: none; }
+.examples .hint { width: 100%; margin: 0 0 2px; }
+#screen-intro h1 { font-size: 21px; text-align: center; }
+
 /* ---- "Working" animation: a spinner inside the pressed button and moving dots after the message ---- */
 button.busy { position: relative; color: transparent !important; pointer-events: none; }
 button.busy::after {

@@ -4,6 +4,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
@@ -17,6 +18,7 @@ const UI_FILES = {
   '/renderer.js': ['renderer.js', 'text/javascript; charset=utf-8'],
   '/bridge.js': ['bridge.js', 'text/javascript; charset=utf-8'],
 };
+const PROFILE_FILE = path.join(os.homedir(), '.falcon', 'profile.json');
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,300}$/;
 const SESSION_KEY = 'falcon-window';
 
@@ -32,7 +34,8 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
     return pack.installFalcon(options);
   };
-  const api = { engineReady, findEngine, installEngine, installFalcon, readGateway, runEngine, fetch, ...engine };
+  const workspaceDir = () => path.join(os.homedir(), '.openclaw', 'workspace');
+  const api = { engineReady, findEngine, installEngine, installFalcon, readGateway, runEngine, fetch, workspaceDir, profileFile: () => PROFILE_FILE, ...engine };
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
@@ -169,6 +172,41 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       setupRunning = true;
       try { return await setup(body); } finally { setupRunning = false; }
     },
+    // ---- Who Falcon serves: a short profile he reads at the start of every conversation ----
+    'GET /api/profile': async () => {
+      try { return { done: true, ...JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')) }; } catch { return { done: false }; }
+    },
+    'POST /api/profile': async (body) => {
+      const clean = (value, max) => String(value || '').replace(/[\r\n]+/g, ' ').replace(/<!--|-->|[<>`]|falcon-profile:(start|end)/gi, '').trim().slice(0, max);
+      const profile = {
+        name: clean(body.name, 60),
+        callMe: clean(body.callMe, 30) || 'sir',
+        language: ['English', 'Russian'].includes(body.language) ? body.language : 'auto',
+        about: clean(body.about, 400),
+        skipped: body.skipped === true,
+      };
+      const lines = [];
+      if (!profile.skipped) {
+        const stamp = `<!-- observed: ${new Date().toISOString().slice(0, 10)} | status: active -->`;
+        if (profile.name) lines.push(stamp, '', `- The user's name is ${profile.name}.`, '');
+        lines.push(stamp, '', profile.callMe.toLowerCase() === 'sir'
+          ? '- Always address the user as "sir" (in Russian: «сэр»).'
+          : `- Always address the user as "${profile.callMe}" instead of "sir", in every language.`, '');
+        if (profile.language !== 'auto') lines.push(stamp, '', `- Prefer ${profile.language} when the user's message does not make the language clear.`, '');
+        if (profile.about) lines.push(stamp, '', `- About the user and his work, in his own words: ${profile.about}`, '');
+      }
+      const userFile = path.join(api.workspaceDir(), 'USER.md');
+      if (fs.existsSync(path.dirname(userFile))) {
+        const existing = fs.existsSync(userFile) ? fs.readFileSync(userFile, 'utf8') : '# USER.md\n';
+        const without = existing.replace(/\r?\n*<!-- falcon-profile:start -->[\s\S]*?<!-- falcon-profile:end -->\r?\n*/g, '\n');
+        const block = lines.length ? `\n\n<!-- falcon-profile:start -->\n## From the user's own introduction\n\n${lines.join('\n').trim()}\n<!-- falcon-profile:end -->\n` : '\n';
+        fs.writeFileSync(userFile, without.trimEnd() + block);
+      }
+      fs.mkdirSync(path.dirname(api.profileFile()), { recursive: true });
+      fs.writeFileSync(api.profileFile(), JSON.stringify(profile, null, 2));
+      return { ok: true, callMe: profile.callMe };
+    },
+
     // ---- Connections ----
     'GET /api/connections': async () => {
       const { code, out } = await api.runEngine(['channels', 'list', '--json'], { timeoutMs: 40000 });

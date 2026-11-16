@@ -34,6 +34,27 @@
     <button id="setup-start" class="primary wide">Start</button>
   </section>
 
+  <!-- Introduction: Falcon learns who he serves -->
+  <section id="screen-intro" class="screen" hidden>
+    <div class="orb small" data-state="idle"><div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div>
+    <h1>A moment to get acquainted.</h1>
+    <p class="lead">Three quick questions, so I can serve you properly. I shall remember the answers.</p>
+    <label for="intro-name">Your name</label>
+    <input id="intro-name" type="text" placeholder="For example: Anna" autocomplete="off" maxlength="60">
+    <label for="intro-call">How shall I address you?</label>
+    <div class="choices" id="intro-call-choices">
+      <button type="button" class="chip on" data-call="sir">sir</button>
+      <button type="button" class="chip" data-call="madam">madam</button>
+      <button type="button" class="chip" data-call="boss">boss</button>
+      <button type="button" class="chip" data-call="name">by name</button>
+    </div>
+    <label for="intro-about">What do you mostly do on this computer? <span class="optional">(optional)</span></label>
+    <textarea id="intro-about" rows="2" maxlength="400" placeholder="For example: I run a small agency; lots of email, presentations and spreadsheets."></textarea>
+    <p id="intro-message" class="message" role="status"></p>
+    <button id="intro-save" class="primary wide">Pleased to meet you</button>
+    <button id="intro-skip" class="link">Skip</button>
+  </section>
+
   <!-- Main -->
   <section id="screen-main" class="screen" hidden>
     <div id="orb" class="orb" data-state="idle">
@@ -43,6 +64,14 @@
       <div id="history" class="history"></div>
       <p id="said" class="said"></p>
       <p id="reply" class="reply">At your service, sir.</p>
+    </div>
+    <div id="examples" class="examples" aria-label="Things to try">
+      <p class="hint">Things to try</p>
+      <button type="button" class="chip" data-ask="What can you do for me?">What can you do?</button>
+      <button type="button" class="chip" data-ask="Find last month's invoice.">Find last month's invoice</button>
+      <button type="button" class="chip" data-ask="Open my quarterly review presentation and go to slide 5.">Open my presentation, slide 5</button>
+      <button type="button" class="chip" data-ask="What's on my screen right now?">What's on my screen?</button>
+      <button type="button" class="chip" data-ask="Open bbc.com/news and tell me the top headline.">Top news headline</button>
     </div>
     <form id="ask" class="ask" autocomplete="off">
       <input id="ask-text" type="text" placeholder="Ask Falcon…" aria-label="Message for Falcon">
