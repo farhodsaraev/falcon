@@ -27,10 +27,43 @@ const BRIEFING_NAME = 'falcon-morning-briefing';
 // these followed Falcon's safety rules every time (never typing a dictated password, asking before
 // deleting). The engine's own default for an OpenAI key costs about ten times more, and OpenAI's
 // cheapest model typed a password it was told not to. The engine's default stays as the fallback.
-function providerFor(key) {
-  if (key.startsWith('sk-or-')) return ['openrouter-api-key', '--openrouter-api-key', 'openrouter/anthropic/claude-haiku-5.5'];
-  if (key.startsWith('sk-ant-')) return ['apiKey', '--anthropic-api-key', null];
-  return ['openai-api-key', '--openai-api-key', 'openai/gpt-6.1-terra'];
+//
+// A key says which company it belongs to (by how it starts), never which model. So the user picks the
+// model from a short list, with the tested one preselected. `id` is the name at the provider itself and
+// is used to check the model really exists for this key; `model` is the engine's name for it.
+const PROVIDERS = {
+  openai: {
+    name: 'OpenAI', authChoice: 'openai-api-key', keyFlag: '--openai-api-key', voice: true,
+    models: [
+      { id: 'gpt-6.1-terra', model: 'openai/gpt-6.1-terra', label: 'GPT-6.1 Terra', note: 'Recommended. Passed every safety and quality check.', tested: true },
+      { id: 'gpt-6.1-sol', model: 'openai/gpt-6.1-sol', label: 'GPT-6.1 Sol', note: 'More capable, about twice the price. Not yet put through the checks.' },
+      { id: 'gpt-6-luna', model: 'openai/gpt-6-luna', label: 'GPT-6 Luna', note: 'Cheapest. Less careful: in testing it typed a password it was told not to.' },
+    ],
+  },
+  anthropic: {
+    name: 'Anthropic', authChoice: 'apiKey', keyFlag: '--anthropic-api-key', voice: false,
+    models: [
+      { id: 'claude-haiku-5-5', model: 'anthropic/claude-haiku-5-5', label: 'Claude Haiku 5.5', note: 'Recommended. Low cost; followed the safety rules in testing.', tested: true },
+      { id: 'claude-sonnet-5-5', model: 'anthropic/claude-sonnet-5-5', label: 'Claude Sonnet 5.5', note: 'More capable, about twenty times the price. Not yet put through the checks.' },
+      { id: 'claude-opus-5-5', model: 'anthropic/claude-opus-5-5', label: 'Claude Opus 5.5', note: 'Most capable and most expensive. Not yet put through the checks.' },
+    ],
+  },
+  openrouter: {
+    name: 'OpenRouter', authChoice: 'openrouter-api-key', keyFlag: '--openrouter-api-key', voice: false,
+    models: [
+      { id: 'anthropic/claude-haiku-5.5', model: 'openrouter/anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5', note: 'Recommended. Low cost; followed the safety rules in testing.', tested: true },
+      { id: 'openai/gpt-6.1-terra', model: 'openrouter/openai/gpt-6.1-terra', label: 'GPT-6.1 Terra', note: 'Crisper answers, about ten times the price. Passed every check.', tested: true },
+      { id: 'anthropic/claude-sonnet-5.5', model: 'openrouter/anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5', note: 'More capable, about twenty times the price. Not yet put through the checks.' },
+    ],
+  },
+};
+
+/** Which company a key belongs to, from how it starts. */
+export function recogniseKey(key) {
+  if (/^sk-or-/.test(key)) return 'openrouter';
+  if (/^sk-ant-/.test(key)) return 'anthropic';
+  if (/^sk-/.test(key)) return 'openai';
+  return null;
 }
 
 export async function startServer({ port = 0, engine = {} } = {}) {
@@ -109,7 +142,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
   }
 
   // ---- First-time setup ----
-  async function setup({ key, accepted }) {
+  async function setup({ key, accepted, model }) {
     const step = (text) => broadcast('setup', { text });
     if (!accepted) return { ok: false, error: 'Please tick the box to continue.' };
 
@@ -122,14 +155,16 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     if (!api.readGateway()) {
       if (!KEY_SHAPE.test(key || '')) return { ok: false, error: 'That does not look like an API key.' };
       step('Connecting your AI key…');
-      const [choice, flag, preferred] = providerFor(key);
+      const provider = PROVIDERS[recogniseKey(key)];
+      if (!provider) return { ok: false, error: 'I do not recognise this kind of key. OpenAI, Anthropic and OpenRouter keys are supported.' };
+      const preferred = (provider.models.find((m) => m.model === model) || provider.models[0]).model;
       const onboard = await api.runEngine(['onboard', '--non-interactive', '--accept-risk', '--mode', 'local',
-        '--auth-choice', choice, flag, key, '--gateway-bind', 'loopback', '--gateway-auth', 'token',
+        '--auth-choice', provider.authChoice, provider.keyFlag, key, '--gateway-bind', 'loopback', '--gateway-auth', 'token',
         '--install-daemon', '--agent-name', 'Falcon'], { timeoutMs: 600000 });
       if (onboard.code !== 0 || !api.readGateway()) {
         return { ok: false, error: 'The key could not be connected.', detail: onboard.out.slice(-600) };
       }
-      if (preferred) {
+      {
         // Keep whatever the engine picked as the fallback, so Falcon still answers if our choice is refused.
         const current = (await api.runEngine(['models', 'status', '--plain'], { timeoutMs: 60000 })).out.trim().split(/\r?\n/).pop() || '';
         const chosen = await api.runEngine(['models', 'set', preferred], { timeoutMs: 60000 });
@@ -252,11 +287,47 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       return { ok: true, callMe: profile.callMe };
     },
 
+    // ---- What kind of key is this, does its company accept it, and which models can it use? ----
+    // The key is sent only to the company it belongs to, to ask for its list of models.
+    'POST /api/key/inspect': async (body) => {
+      const key = String(body.key || '').trim();
+      const id = KEY_SHAPE.test(key) ? recogniseKey(key) : null;
+      if (!id) return { ok: false, error: 'I do not recognise this key. OpenAI keys start with sk-, Anthropic keys with sk-ant-, OpenRouter keys with sk-or-.' };
+      const provider = PROVIDERS[id];
+      let accepted = null;          // null = could not check (for example, no internet)
+      let available = null;
+      try {
+        const request = {
+          openai: ['https://api.openai.com/v1/models', { Authorization: `Bearer ${key}` }],
+          anthropic: ['https://api.anthropic.com/v1/models?limit=200', { 'x-api-key': key, 'anthropic-version': '2023-06-01' }],
+          openrouter: ['https://openrouter.ai/api/v1/key', { Authorization: `Bearer ${key}` }],
+        }[id];
+        const response = await api.fetch(request[0], { headers: request[1], signal: AbortSignal.timeout(15000) });
+        accepted = response.ok ? true : (response.status === 401 || response.status === 403 ? false : null);
+        if (response.ok && id !== 'openrouter') {
+          available = new Set(((await response.json()).data || []).map((m) => m.id));
+        }
+      } catch { /* leave as "could not check" */ }
+      if (accepted === false) return { ok: false, error: `${provider.name} does not accept this key. Check that it was copied completely.` };
+      // Offer only the models this key can really use; if the list could not be read, offer them all.
+      const models = provider.models.filter((m) => !available || available.has(m.id));
+      return {
+        ok: true, provider: provider.name, checked: accepted === true, voice: provider.voice,
+        models: (models.length ? models : provider.models).map(({ model, label, note, tested }) => ({ model, label, note, tested: Boolean(tested) })),
+      };
+    },
+    'GET /api/model': async () => {
+      const current = (await api.runEngine(['models', 'status', '--plain'], { timeoutMs: 60000 })).out.trim().split(/\r?\n/).pop() || '';
+      const known = Object.values(PROVIDERS).flatMap((p) => p.models).find((m) => m.model === current);
+      return { model: current, label: known ? known.label : current.split('/').pop() };
+    },
+
     // ---- AI keys: add or replace one later. The key travels on standard input, never on a command line. ----
     'POST /api/key': async (body) => {
       const key = String(body.key || '').trim();
       if (!KEY_SHAPE.test(key)) return { ok: false, error: 'That does not look like an API key.' };
-      const provider = key.startsWith('sk-or-') ? 'openrouter' : key.startsWith('sk-ant-') ? 'anthropic' : 'openai';
+      const provider = recogniseKey(key);
+      if (!provider) return { ok: false, error: 'I do not recognise this kind of key.' };
       const save = () => api.runEngine(['models', 'auth', 'paste-api-key', '--provider', provider], { input: `${key}\n`, timeoutMs: 90000 });
       let result = await save();
       if (result.code !== 0) {
@@ -268,8 +339,14 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         await api.runEngine(['gateway', 'restart'], { timeoutMs: 120000 });
       }
       if (result.code !== 0) return { ok: false, error: 'The key could not be saved.' };
-      const names = { openrouter: 'OpenRouter', anthropic: 'Anthropic', openai: 'OpenAI' };
-      return { ok: true, provider: names[provider] };
+      // Optionally make Falcon think with a model from this key straight away.
+      const chosen = PROVIDERS[provider].models.find((m) => m.model === body.model);
+      let thinking = null;
+      if (chosen) {
+        const set = await api.runEngine(['models', 'set', chosen.model], { timeoutMs: 60000 });
+        if (set.code === 0) thinking = chosen.label;
+      }
+      return { ok: true, provider: PROVIDERS[provider].name, thinking };
     },
 
     // ---- Morning briefing: Falcon speaks first, once a day, in Telegram ----

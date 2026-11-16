@@ -122,6 +122,25 @@ button.wide { width: 100%; margin-top: 6px; }
 .hint.left-hint { text-align: left; align-self: stretch; margin: 6px 0 0; line-height: 1.45; }
 .hint.left-hint b { color: var(--text); font-weight: 600; }
 
+/* ---- Model choice ---- */
+.models { display: flex; flex-direction: column; gap: 6px; width: 100%; margin: 10px 0 2px; flex: none; }
+#setup-key-kind, #key-kind { min-height: 0; line-height: 1.4; }
+.model-option {
+  display: flex; gap: 10px; align-items: flex-start; margin: 0; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; color: var(--text);
+}
+.model-option:hover { border-color: var(--glow); }
+.model-option:has(input:checked) { border-color: var(--glow); background: rgba(79, 216, 255, 0.07); }
+.model-option input { width: 15px; height: 15px; flex: none; margin: 2px 0 0; padding: 0; accent-color: var(--glow); }
+.model-option span { display: block; font-size: 13px; line-height: 1.4; }
+.model-option b { font-weight: 600; }
+.model-option em {
+  font-style: normal; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ok); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 8px;
+}
+.model-option small { display: block; color: var(--muted); font-size: 11.5px; }
+#screen-setup { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
 /* ---- Chips: choices and example requests ---- */
 .chip {
   background: transparent; color: var(--text); border: 1px solid var(--line);

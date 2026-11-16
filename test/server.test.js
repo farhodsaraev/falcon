@@ -27,6 +27,11 @@ const engine = {
     return { code: 0, out: '{}' };
   },
   fetch: async (url, options) => {
+    if (String(url).includes('api.openai.com')) {
+      if (options.headers.Authorization.includes('rejected')) return new Response('{}', { status: 401 });
+      return new Response(JSON.stringify({ data: [{ id: 'gpt-6.1-terra' }, { id: 'gpt-6-luna' }, { id: 'gpt-4o' }] }), { status: 200 });
+    }
+    if (String(url).includes('api.anthropic.com')) throw new Error('offline');
     calls.push(['fetch', url, options.headers.Authorization, JSON.parse(options.body).messages[0].content]);
     const sse = ['Slide five ', 'is up, sir.'].map((t) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
     await new Promise((r) => setTimeout(r, 2500));          // long enough for one approvals poll
@@ -132,6 +137,28 @@ test('a later key goes in on standard input, never on the command line', async (
   assert.equal(r.provider, 'OpenAI');
   assert.deepEqual(calls[0].args ?? calls[0], ['models', 'auth', 'paste-api-key', '--provider', 'openai']);
   assert.ok(!JSON.stringify(calls).includes(key), 'the key is not among the command arguments');
+});
+
+test('a pasted key is recognised by its shape, checked with its own company, and offers only models it can use', async () => {
+  const inspect = async (key) => (await call('POST', '/api/key/inspect', { key })).json();
+  const openai = await inspect('sk-proj-abcdefghijklmnopqrstuvwxyz012345');
+  assert.equal(openai.provider, 'OpenAI');
+  assert.equal(openai.checked, true);
+  assert.equal(openai.voice, true);
+  assert.deepEqual(openai.models.map((m) => m.label), ['GPT-6.1 Terra', 'GPT-6 Luna'], 'a model this key cannot use is not offered');
+  assert.equal(openai.models[0].tested, true);
+
+  const refused = await inspect('sk-proj-rejected-abcdefghijklmnopqrstuvwxyz');
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /OpenAI does not accept this key/);
+
+  const offline = await inspect('sk-ant-abcdefghijklmnopqrstuvwxyz012345');
+  assert.equal(offline.provider, 'Anthropic');
+  assert.equal(offline.checked, false, 'no internet: still recognised, all models offered');
+  assert.equal(offline.models.length, 3);
+  assert.equal(offline.voice, false);
+
+  assert.equal((await inspect('AIzaSyNotOneOfOurs0000000000000000')).ok, false);
 });
 
 test('Telegram: a well-formed token and code are passed on; malformed ones never reach the engine', async () => {

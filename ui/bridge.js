@@ -13,11 +13,13 @@
 
   window.falcon = {
     state: () => call('GET', '/api/state'),
-    setup: (key, accepted) => call('POST', '/api/setup', { key, accepted }),
+    setup: (key, accepted, model) => call('POST', '/api/setup', { key, accepted, model }),
+    inspectKey: (key) => call('POST', '/api/key/inspect', { key }),
+    currentModel: () => call('GET', '/api/model'),
     answerApproval: (id, decision) => call('POST', '/api/approval', { id, decision }),
     profile: () => call('GET', '/api/profile'),
     saveProfile: (profile) => call('POST', '/api/profile', profile),
-    saveKey: (key) => call('POST', '/api/key', { key }),
+    saveKey: (key, model) => call('POST', '/api/key', { key, model }),
     briefing: () => call('GET', '/api/briefing'),
     setBriefing: (enabled, time) => call('POST', '/api/briefing', { enabled, time }),
     briefingNow: () => call('POST', '/api/briefing/now'),

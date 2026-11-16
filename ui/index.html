@@ -26,7 +26,9 @@
     <p class="lead">I am Falcon. Paste your AI key and I shall be at your service. It stays on this computer.</p>
     <label for="setup-key">AI key</label>
     <input id="setup-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
-    <p class="hint left-hint">An <b>OpenAI</b> key gives Falcon both his mind and his voice, so one key is enough. OpenRouter and Anthropic keys also work for thinking; a voice key can be added later under the gear icon.</p>
+    <p id="setup-key-kind" class="message" role="status"></p>
+    <div id="setup-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
+    <p class="hint left-hint">An <b>OpenAI</b> key gives Falcon both his mind and his voice, so one key is enough. Anthropic and OpenRouter keys also work for thinking; a voice key can be added later under the gear icon.</p>
     <label class="check">
       <input id="setup-accept" type="checkbox">
       <span>I understand Falcon can open apps, read files, use the browser and run commands on this computer, and that he asks before sending, deleting or running anything unfamiliar.</span>
@@ -85,12 +87,14 @@
     <h2>Connections</h2>
 
     <div class="panel">
-      <p class="panel-title">AI key</p>
-      <p class="panel-text">Add another key or replace the current one. OpenAI, OpenRouter and Anthropic keys are recognised by their shape. An OpenAI key is also what gives Falcon his voice. Keys stay on this computer.</p>
+      <p class="panel-title">AI key and model</p>
+      <p class="panel-text">Falcon is thinking with <b id="model-now">…</b>. To change the model or the key, paste a key: Falcon recognises whose it is and shows the models it can use. An OpenAI key also gives Falcon his voice. Keys stay on this computer.</p>
       <div class="row tight">
         <input id="key-value" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="AI key">
         <button id="key-save" class="primary">Save</button>
       </div>
+      <p id="key-kind" class="message" role="status"></p>
+      <div id="key-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
       <p id="key-message" class="message" role="status"></p>
     </div>
 

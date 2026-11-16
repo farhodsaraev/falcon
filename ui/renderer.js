@@ -16,6 +16,7 @@ async function refreshConnections() {
     const c = await window.falcon.connections();
     $('tg-state').textContent = c.telegram ? '✓ connected' : '';
     showBriefing(await window.falcon.briefing());
+    showCurrentModel();
   } catch { /* leave as is */ }
 }
 
@@ -34,40 +35,68 @@ async function withButton(button, work) {
 $('open-connections').addEventListener('click', () => showScreen('connections'));
 $('connections-back').addEventListener('click', () => showScreen('main'));
 
+// ---- Recognising a pasted key and choosing the model ----
+// A key tells whose it is (OpenAI, Anthropic, OpenRouter) but not which model, so the user picks one.
+function keyHelper(inputId, kindId, modelsId) {
+  let timer = null;
+  let latest = 0;
+  const clear = () => { $(modelsId).hidden = true; $(modelsId).replaceChildren(); };
+  async function inspect() {
+    const key = $(inputId).value.trim();
+    const mine = ++latest;
+    if (key.length < 20) { clear(); return note(kindId, ''); }
+    note(kindId, 'Looking at the key', 'working');
+    let info;
+    try { info = await window.falcon.inspectKey(key); } catch { info = { ok: false, error: 'Falcon could not be reached.' }; }
+    if (mine !== latest) return;             // a newer paste has replaced this one
+    show(info);
+  }
+  function show(info) {
+    if (!info.ok) { clear(); return note(kindId, info.error, 'bad'); }
+    note(kindId, `${info.provider} key recognised${info.checked ? ' and accepted' : ''}. ${info.voice ? 'It covers thinking and voice.' : 'It covers thinking; voice needs an OpenAI key.'} Choose the model:`, 'ok');
+    $(modelsId).replaceChildren(...info.models.map((m, i) => {
+      const option = document.createElement('label');
+      option.className = 'model-option';
+      const radio = Object.assign(document.createElement('input'), { type: 'radio', name: modelsId, value: m.model, checked: i === 0 });
+      const text = document.createElement('span');
+      const title = document.createElement('b');
+      title.textContent = m.label;
+      text.append(title);
+      if (m.tested) { const badge = document.createElement('em'); badge.textContent = 'tested'; text.append(badge); }
+      const about = document.createElement('small');
+      about.textContent = m.note;
+      text.append(about);
+      option.append(radio, text);
+      return option;
+    }));
+    $(modelsId).hidden = false;
+  }
+  $(inputId).addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(inspect, 500); });
+  return {
+    model: () => document.querySelector(`#${modelsId} input:checked`)?.value || '',
+    reset: () => { latest++; clear(); note(kindId, ''); },
+    show,
+  };
+}
+const setupKey = keyHelper('setup-key', 'setup-key-kind', 'setup-models');
+const panelKey = keyHelper('key-value', 'key-kind', 'key-models');
+
+async function showCurrentModel() {
+  try { $('model-now').textContent = (await window.falcon.currentModel()).label || 'the default model'; }
+  catch { $('model-now').textContent = 'the default model'; }
+}
+
 $('key-save').addEventListener('click', () => withButton($('key-save'), async () => {
   if (!$('key-value').value.trim()) return note('key-message', 'Paste the key first.', 'bad');
-  note('key-message', 'Saving the key, this can take half a minute', 'working');
+  note('key-message', 'Saving, this can take half a minute', 'working');
   try {
-    const r = await window.falcon.saveKey($('key-value').value);
+    const r = await window.falcon.saveKey($('key-value').value, panelKey.model());
     if (!r.ok) return note('key-message', r.error, 'bad');
     $('key-value').value = '';
-    note('key-message', `Saved. Falcon can now use your ${r.provider} key.`, 'ok');
+    panelKey.reset();
+    note('key-message', r.thinking ? `Saved. Falcon now thinks with ${r.thinking}, on your ${r.provider} key.` : `Saved. Falcon can now use your ${r.provider} key.`, 'ok');
+    showCurrentModel();
   } catch { note('key-message', 'Falcon could not be reached. Please try again.', 'bad'); }
-}));
-
-function showBriefing(b) {
-  $('brief-state').textContent = b.enabled ? `✓ daily at ${b.time}` : '';
-  if (b.time) $('brief-time').value = b.time;
-}
-async function setBriefing(button, enabled) {
-  await withButton(button, async () => {
-    note('brief-message', enabled ? 'Scheduling' : 'Switching off', 'working');
-    try {
-      const r = await window.falcon.setBriefing(enabled, $('brief-time').value);
-      if (!r.ok) return note('brief-message', r.error, 'bad');
-      showBriefing({ enabled: r.enabled, time: $('brief-time').value });
-      note('brief-message', r.enabled ? `Done. Falcon will write to you in Telegram every day at ${$('brief-time').value}.` : 'Switched off.', 'ok');
-    } catch { note('brief-message', 'Falcon could not be reached. Please try again.', 'bad'); }
-  });
-}
-$('brief-on').addEventListener('click', () => setBriefing($('brief-on'), true));
-$('brief-off').addEventListener('click', () => setBriefing($('brief-off'), false));
-$('brief-now').addEventListener('click', () => withButton($('brief-now'), async () => {
-  note('brief-message', 'Falcon is preparing your briefing, this can take a minute', 'working');
-  try {
-    const r = await window.falcon.briefingNow();
-    note('brief-message', r.ok ? 'Sent. Look at Telegram.' : r.error, r.ok ? 'ok' : 'bad');
-  } catch { note('brief-message', 'Falcon could not be reached. Please try again.', 'bad'); }
 }));
 
 $('tg-connect').addEventListener('click', () => withButton($('tg-connect'), async () => {
@@ -124,7 +153,7 @@ $('setup-start').addEventListener('click', async () => {
   await withButton($('setup-start'), async () => {
     setMessage('Starting', 'working');
     try {
-      const result = await window.falcon.setup(key, true);
+      const result = await window.falcon.setup(key, true, setupKey.model());
       if (result.ok) { $('setup-key').value = ''; return enterFalcon(); }
       setMessage(result.error || 'Something went wrong.', 'bad');
     } catch {
@@ -330,6 +359,15 @@ if (screens.includes(query.get('screen'))) {
 if (query.get('preview') === 'allow') {
   approvalQueue.push({ id: 'preview', summary: 'powershell -Command "Remove-Item C:\\Users\\you\\Desktop\\old-report.docx"' });
   nextApproval();
+}
+if (query.get('preview') === 'models') {
+  const sample = { ok: true, provider: 'OpenAI', checked: true, voice: true, models: [
+    { model: 'a', label: 'GPT-6.1 Terra', note: 'Recommended. Passed every safety and quality check.', tested: true },
+    { model: 'b', label: 'GPT-6.1 Sol', note: 'More capable, about twice the price. Not yet put through the checks.' },
+    { model: 'c', label: 'GPT-6 Luna', note: 'Cheapest. Less careful: in testing it typed a password it was told not to.' }] };
+  $('setup-key').value = 'sk-proj-preview-preview-preview';
+  setupKey.show(sample);
+  panelKey.show({ ...sample, provider: 'Anthropic', voice: false });
 }
 if (query.get('preview') === 'busy') {
   $('tg-connect').classList.add('busy');
