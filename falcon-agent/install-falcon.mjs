@@ -165,6 +165,9 @@ export async function installFalcon({
   log('Applying settings...');
   // A little thinking: with none, Falcon stopped after the first step of browser tasks (opened a site and answered).
   await step('think before acting', ['config', 'set', 'agents.defaults.thinkingDefault', 'low']);
+  // One browser: the user's own Chrome. Smaller models forgot to name it on every step, so their next
+  // step went to the engine's separate, empty browser and found nothing.
+  await step('browser is his Chrome', ['config', 'set', 'browser.defaultProfile', 'user']);
   await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m']);
   await step('local chat for the Falcon window', ['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
   await setupSearch({ step, envFile });
