@@ -47,7 +47,11 @@ node_major() { "$1" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo
 OPENCLAW="$(find_tool openclaw)"
 if [ -z "$OPENCLAW" ]; then
   say "Installing the engine (a few minutes)..."
-  curl -fsSL https://openclaw.ai/install-cli.sh | /bin/bash -s -- --no-onboard >>"$LOG" 2>&1 </dev/null || fail "the engine did not install"
+  ENGINE_INSTALLER="$(mktemp "${TMPDIR:-/tmp}/falcon-engine.XXXXXX")"
+  curl -fsSL https://openclaw.ai/install-cli.sh -o "$ENGINE_INSTALLER" >>"$LOG" 2>&1 || fail "the engine installer could not be downloaded"
+  # Run it from a file with nothing on its input, so it can never sit waiting for an answer nobody sees.
+  /bin/bash "$ENGINE_INSTALLER" --no-onboard >>"$LOG" 2>&1 </dev/null || { rm -f "$ENGINE_INSTALLER"; fail "the engine did not install"; }
+  rm -f "$ENGINE_INSTALLER"
   OPENCLAW="$(find_tool openclaw)"
   [ -n "$OPENCLAW" ] || fail "the engine was installed but cannot be found"
 fi
