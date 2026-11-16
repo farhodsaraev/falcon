@@ -37,7 +37,9 @@ Falcon has a browser of his own with no logins. For your mail, calendar or docum
 
 ## Status
 
-Early version for macOS and Windows 10/11. Every change is installed from scratch on a clean Mac and a clean Windows machine by an automatic test. Voice is in progress.
+Early version for macOS and Windows 10/11. Every change is installed from scratch on a clean Mac and a clean Windows machine by an automatic test.
+
+**Voice:** press the microphone in Falcon's window and just talk; you can interrupt him. Voice uses OpenAI's Realtime API and needs an OpenAI key (add it on the welcome screen or under the gear icon).
 
 On a Mac, the first time Falcon looks at the screen or controls Keynote, macOS asks for permission (Screen Recording, Automation). Click Allow, or switch it on in System Settings → Privacy & Security.
 

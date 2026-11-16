@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
+import { createVoiceKeyStore } from './voicekey.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -17,11 +18,40 @@ const UI_FILES = {
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/renderer.js': ['renderer.js', 'text/javascript; charset=utf-8'],
   '/bridge.js': ['bridge.js', 'text/javascript; charset=utf-8'],
+  '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'],
 };
 const PROFILE_FILE = path.join(os.homedir(), '.falcon', 'profile.json');
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,300}$/;
 const SESSION_KEY = 'falcon-window';
 const BRIEFING_NAME = 'falcon-morning-briefing';
+
+// ---- Voice: OpenAI's Realtime API, the live listen-and-speak connection ----
+const VOICE_MODEL = 'gpt-realtime-2.1';
+const VOICE_NAME = 'cedar';
+const VOICE_INSTRUCTIONS = [
+  'You are the voice of Falcon, a private assistant in the manner of a calm, impeccably competent British butler.',
+  'Speak with a refined British accent, unhurried, with dry understated wit used sparingly. Never sound like a cheerful chatbot.',
+  'Address the user as "{{CALL_ME}}" (in Russian: the natural equivalent). Keep every reply to one or two short sentences.',
+  'Reply in the language the user just spoke: English or Russian. Keep the same character in both.',
+  '',
+  'You have one way to act: the ask_falcon function. It reaches your own hands and memory: files, presentations, the screen, the browser, calendar, mail, reminders, the weather, the news, and everything you remember about the user.',
+  'For ANY request that needs doing something, looking something up, or recalling something about the user: first say a brief holding phrase such as "One moment, {{CALL_ME}}.", then call ask_falcon with the request in the user\'s own words and language, then say the result naturally in one or two sentences. Never invent a result and never claim to have done something without calling ask_falcon.',
+  'Only greetings, thanks and light small talk are answered without it.',
+  'If the result says a confirmation is needed, ask the user for a clear yes or no and pass his answer on with ask_falcon.',
+  '',
+  'Never say a password, PIN, card number or code aloud, even if the user says one. Never mention the names of the software, models, providers or tools you run on; if asked what you are, you are Falcon, his private assistant.',
+  'If the user interrupts you, stop and listen.',
+].join('\n');
+const VOICE_TOOLS = [{
+  type: 'function',
+  name: 'ask_falcon',
+  description: 'Do something on the user\'s computer or look something up: files, presentations, screen, browser and web, calendar, mail, reminders, weather, news, memory about the user. Returns what happened, in words.',
+  parameters: {
+    type: 'object',
+    properties: { request: { type: 'string', description: 'The user\'s request, complete and in his own words and language.' } },
+    required: ['request'],
+  },
+}];
 
 // Which AI model Falcon thinks with, per kind of key. Chosen by running scripts/quality-check.mjs:
 // these followed Falcon's safety rules every time (never typing a dictated password, asking before
@@ -73,7 +103,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     return pack.installFalcon(options);
   };
   const workspaceDir = () => path.join(os.homedir(), '.openclaw', 'workspace');
-  const api = { engineReady, findEngine, installEngine, installFalcon, readGateway, runEngine, fetch, workspaceDir, profileFile: () => PROFILE_FILE, ...engine };
+  const api = { engineReady, findEngine, installEngine, installFalcon, readGateway, runEngine, fetch, workspaceDir, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
@@ -157,6 +187,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       step('Connecting your AI key…');
       const provider = PROVIDERS[recogniseKey(key)];
       if (!provider) return { ok: false, error: 'I do not recognise this kind of key. OpenAI, Anthropic and OpenRouter keys are supported.' };
+      if (provider.voice) await api.voiceKey.set(key).catch(() => {});
       const preferred = (provider.models.find((m) => m.model === model) || provider.models[0]).model;
       const onboard = await api.runEngine(['onboard', '--non-interactive', '--accept-risk', '--mode', 'local',
         '--auth-choice', provider.authChoice, provider.keyFlag, key, '--gateway-bind', 'loopback', '--gateway-auth', 'token',
@@ -339,6 +370,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         await api.runEngine(['gateway', 'restart'], { timeoutMs: 120000 });
       }
       if (result.code !== 0) return { ok: false, error: 'The key could not be saved.' };
+      if (PROVIDERS[provider].voice) await api.voiceKey.set(key).catch(() => {});
       // Optionally make Falcon think with a model from this key straight away.
       const chosen = PROVIDERS[provider].models.find((m) => m.model === body.model);
       let thinking = null;
@@ -348,6 +380,9 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       }
       return { ok: true, provider: PROVIDERS[provider].name, thinking };
     },
+
+    // ---- Voice ----
+    'GET /api/voice': async () => ({ available: Boolean(await api.voiceKey.get()) }),
 
     // ---- Morning briefing: Falcon speaks first, once a day, in Telegram ----
     'GET /api/briefing': async () => {
@@ -437,6 +472,15 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     },
   };
 
+  function readText(req) {
+    return new Promise((resolve, reject) => {
+      let raw = '';
+      req.on('data', (chunk) => { raw += chunk; if (raw.length > 200000) req.destroy(); });
+      req.on('end', () => resolve(raw));
+      req.on('error', reject);
+    });
+  }
+
   function readJson(req) {
     return new Promise((resolve, reject) => {
       let raw = '';
@@ -472,8 +516,42 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         return;
       }
       if (!sameToken(req.headers['x-falcon-token'])) {
-        return routes[`${req.method} ${url.pathname}`] || url.pathname === '/api/chat'
+        return routes[`${req.method} ${url.pathname}`] || url.pathname === '/api/chat' || url.pathname === '/api/voice/session'
           ? send(401, { error: 'Unauthorized' }) : send(404, { error: 'Not found' });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/voice/session') {
+        const key = await api.voiceKey.get();
+        if (!key) return send(409, { error: 'Voice needs an OpenAI key. Add one under the gear icon.' });
+        const offer = await readText(req);
+        if (!offer.startsWith('v=')) return send(400, { error: 'Bad connection offer.' });
+        let callMe = 'sir';
+        try { callMe = JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { /* default */ }
+        const form = new FormData();
+        form.set('sdp', offer);
+        form.set('session', JSON.stringify({
+          type: 'realtime',
+          model: VOICE_MODEL,
+          instructions: VOICE_INSTRUCTIONS.replaceAll('{{CALL_ME}}', callMe),
+          audio: { output: { voice: VOICE_NAME } },
+          tools: VOICE_TOOLS,
+          tool_choice: 'auto',
+        }));
+        let upstream;
+        try {
+          upstream = await api.fetch('https://api.openai.com/v1/realtime/calls', {
+            method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(30000),
+          });
+        } catch {
+          return send(502, { error: 'The voice service could not be reached. Check the internet connection.' });
+        }
+        const answer = await upstream.text();
+        if (!upstream.ok) {
+          const reason = upstream.status === 401 ? 'OpenAI did not accept the key.'
+            : upstream.status === 429 ? 'The OpenAI account is out of credit or over its limit.'
+              : 'The voice service refused the connection.';
+          return send(502, { error: reason });
+        }
+        return send(200, answer, 'application/sdp');
       }
       if (req.method === 'POST' && url.pathname === '/api/chat') {
         const body = await readJson(req);

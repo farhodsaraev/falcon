@@ -122,6 +122,20 @@ button.wide { width: 100%; margin-top: 6px; }
 .hint.left-hint { text-align: left; align-self: stretch; margin: 6px 0 0; line-height: 1.45; }
 .hint.left-hint b { color: var(--text); font-weight: 600; }
 
+/* ---- Microphone ---- */
+.mic {
+  flex: none; width: 44px; height: 44px; border-radius: 999px; padding: 0; cursor: pointer;
+  display: grid; place-items: center; background: transparent; color: var(--text); border: 1px solid var(--line);
+}
+.mic:hover { border-color: var(--glow); }
+.mic.needs-key { color: var(--muted); }
+.mic.on { background: var(--glow); border-color: var(--glow); color: #03121c; box-shadow: 0 0 0 0 rgba(79, 216, 255, 0.5); animation: mic-pulse 1.8s ease-out infinite; }
+.mic.busy svg { visibility: hidden; }
+@keyframes mic-pulse { to { box-shadow: 0 0 0 14px rgba(79, 216, 255, 0); } }
+@media (prefers-reduced-motion: reduce) { .mic.on { animation: none; } }
+#voice-note { min-height: 16px; margin: 0; }
+#voice-note.bad { color: var(--warn); }
+
 /* ---- Model choice ---- */
 .models { display: flex; flex-direction: column; gap: 6px; width: 100%; margin: 10px 0 2px; flex: none; }
 #setup-key-kind, #key-kind { min-height: 0; line-height: 1.4; }

@@ -4,7 +4,8 @@ const screens = ['loading', 'setup', 'intro', 'main', 'connections'];
 function showScreen(name) {
   for (const s of screens) $(`screen-${s}`).hidden = s !== name;
   $('open-connections').hidden = name !== 'main';
-  if (name === 'main') $('ask-text').focus();
+  if (name === 'main') { $('ask-text').focus(); refreshVoice(); }
+  if (name !== 'main' && window.falconVoice.active()) window.falconVoice.stop();
   if (name === 'connections') refreshConnections();
 }
 
@@ -269,6 +270,37 @@ for (const chip of document.querySelectorAll('[data-ask]')) {
   chip.addEventListener('click', () => sendToFalcon(chip.dataset.ask));
 }
 
+// ---- Voice ----
+// The microphone button starts and ends a live conversation. While it is on, the orb shows whether
+// Falcon is listening, working or speaking, and what is said appears as text too.
+let voiceReady = false;
+async function refreshVoice() {
+  try { voiceReady = (await window.falcon.voiceStatus()).available; } catch { voiceReady = false; }
+  $('mic').classList.toggle('needs-key', !voiceReady);
+  $('mic').title = voiceReady ? 'Talk to Falcon' : 'Voice needs an OpenAI key. Add one under the gear icon.';
+}
+function voiceNote(text, kind = '') { $('voice-note').textContent = text; $('voice-note').className = `hint ${kind}`; }
+
+window.falconVoice.on('state', (state) => {
+  const on = state !== 'off';
+  $('mic').classList.toggle('on', on);
+  $('mic').classList.toggle('busy', state === 'connecting');
+  $('mic').setAttribute('aria-pressed', String(on));
+  setOrb({ off: 'idle', connecting: 'thinking', listening: 'listening', thinking: 'thinking', speaking: 'speaking' }[state] || 'idle');
+  voiceNote({ connecting: 'Connecting the voice…', listening: 'Listening. Just speak; press the microphone again to end.', thinking: 'One moment…', speaking: '', off: '' }[state] ?? '');
+});
+window.falconVoice.on('heard', (text) => { archiveExchange(); $('examples').hidden = true; $('said').textContent = text; $('reply').textContent = ''; });
+window.falconVoice.on('said', (text) => { $('reply').classList.remove('bad', 'waiting'); $('reply').textContent = plainSpeech(text); scrollTalk(); });
+window.falconVoice.on('error', (message) => voiceNote(message, 'bad'));
+
+$('mic').addEventListener('click', () => {
+  if (window.falconVoice.active()) return window.falconVoice.stop();
+  if (!voiceReady) return voiceNote('Voice needs an OpenAI key. Add one under the gear icon, then try again.', 'bad');
+  if (busy) return voiceNote('One moment, I am still working on the last request.');
+  $('examples').hidden = true;
+  window.falconVoice.start();
+});
+
 // ---- Introduction: who Falcon serves ----
 let callMe = 'sir';
 const address = () => callMe;
@@ -368,6 +400,13 @@ if (query.get('preview') === 'models') {
   $('setup-key').value = 'sk-proj-preview-preview-preview';
   setupKey.show(sample);
   panelKey.show({ ...sample, provider: 'Anthropic', voice: false });
+}
+if (query.get('preview') === 'voice') {
+  $('examples').hidden = true;
+  $('mic').classList.add('on'); setOrb('listening');
+  $('said').textContent = 'Open my quarterly review presentation on slide five.';
+  $('reply').textContent = 'Slide five of the Quarterly Review is up, sir.';
+  voiceNote('Listening. Just speak; press the microphone again to end.');
 }
 if (query.get('preview') === 'busy') {
   $('tg-connect').classList.add('busy');

@@ -14,6 +14,7 @@ let pending = [];
 const engine = {
   findEngine: () => ({ command: 'node', prefix: [] }),
   workspaceDir: () => tmp,
+  voiceKey: { get: async () => null, set: async () => {} },
   profileFile: () => path.join(tmp, 'profile.json'),
   readGateway: () => (configured ? { port: 1, token: 'gw' } : null),
   engineReady: async () => configured,

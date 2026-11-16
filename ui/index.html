@@ -67,6 +67,7 @@
       <div id="history" class="history"></div>
       <p id="said" class="said"></p>
       <p id="reply" class="reply">At your service, sir.</p>
+      <p id="voice-note" class="hint" role="status"></p>
     </div>
     <div id="examples" class="examples" aria-label="Things to try">
       <p class="hint">Things to try</p>
@@ -77,6 +78,9 @@
       <button type="button" class="chip" data-ask="Open bbc.com/news and tell me the top headline.">Top news headline</button>
     </div>
     <form id="ask" class="ask" autocomplete="off">
+      <button id="mic" type="button" class="mic" aria-label="Talk to Falcon" aria-pressed="false" title="Talk to Falcon">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Zm6-3.5a1 1 0 1 0-2 0 4 4 0 0 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.9V20H8.5a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2H13v-2.6a6 6 0 0 0 5-5.9Z"/></svg>
+      </button>
       <input id="ask-text" type="text" placeholder="Ask Falcon…" aria-label="Message for Falcon">
       <button id="ask-send" class="primary" aria-label="Send">➤</button>
     </form>
@@ -172,6 +176,7 @@
   </div>
 
   <script src="bridge.js"></script>
+  <script src="voice.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
