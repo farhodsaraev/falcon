@@ -67,13 +67,28 @@ export async function installFalcon({
   // How the user asked to be addressed. A note in his profile is not enough for smaller models, which copy
   // the "sir" in the examples, so the chosen form is written into the rules and examples themselves.
   let callMe = 'sir';
-  try { callMe = String(JSON.parse(read(profileFile)).callMe || 'sir').replace(/[\r\n"<>`]/g, '').trim().slice(0, 30) || 'sir'; } catch { /* no profile yet */ }
+  let profile = {};
+  try { profile = JSON.parse(read(profileFile)) || {}; } catch { /* no profile yet */ }
+  try { callMe = String(profile.callMe || 'sir').replace(/[\r\n"<>`]/g, '').trim().slice(0, 30) || 'sir'; } catch { /* no profile yet */ }
   const custom = callMe.toLowerCase() !== 'sir';
   const addressRule = custom
     ? `The user has asked to be addressed as "${callMe}". Use "${callMe}" in every reply and in every language. Never call him "sir" or «сэр».`
     : 'Address the user as "sir" (in Russian: «сэр») unless your notes about him give another form of address.';
+  // What the user said about himself when they first met. It goes into the rules themselves because the
+  // notes file is not reliably in front of Falcon in every conversation.
+  const tidy = (value, max) => String(value || '').replace(/[\r\n]+/g, ' ').replace(/[<>`{}]/g, '').trim().slice(0, max);
+  const name = tidy(profile.name, 60);
+  const about = tidy(profile.about, 400);
+  const facts = [
+    name ? `The user's name is ${name}.` : '',
+    about ? `This is what he told you he mostly does on this computer, in his own words: "${about}"` : '',
+  ].filter(Boolean);
+  const userFacts = facts.length
+    ? `What you know about the user from his own introduction: ${facts.join(' ')}`
+    : 'The user has not yet told you about himself. If he does, remember it.';
   const personalise = (text) => (custom ? text.replace(/\bsir\b/g, callMe).replace(/сэр/g, callMe) : text)
-    .replaceAll('{{ADDRESS_RULE}}', addressRule);
+    .replaceAll('{{ADDRESS_RULE}}', addressRule)
+    .replaceAll('{{USER_FACTS}}', userFacts);
   const fill = (text, skillDir = '') => text
     .replaceAll('{{SKILLS}}', skillsDir)
     .replaceAll('{{NODE}}', node)

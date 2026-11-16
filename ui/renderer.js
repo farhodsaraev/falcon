@@ -315,14 +315,15 @@ function createReveal(element) {
   };
 }
 
-async function sendToFalcon(text) {
+// `shown` is what appears as the user's line; pass '' for a request the window makes on its own.
+async function sendToFalcon(text, shown = text) {
   if (!text || busy) return;
   busy = true;
   $('examples').hidden = true;
   $('ask-text').value = '';
   $('ask-send').disabled = true;
   archiveExchange();
-  $('said').textContent = text;
+  $('said').textContent = shown;
   $('reply').textContent = '';
   $('reply').classList.remove('bad', 'waiting');
   setOrb('thinking');
@@ -435,6 +436,13 @@ async function saveIntro(skipped) {
         : { name, callMe: choice === 'name' ? name : choice, about: $('intro-about').value });
       applyProfile(saved);
       showScreen('main');
+      // Let him show that he took it in: his first words refer to what he was just told.
+      if (!skipped) {
+        sendToFalcon('I have just introduced myself to you in your window; what I told you is in your notes about me. ' +
+          'Welcome me in two or three sentences: address me the way I chose, show in your own words that you took in ' +
+          'what I mostly do on this computer, and offer one specific thing you could do for me right now that fits that work. ' +
+          'Do not look anything up and do not act yet.', '');
+      }
     } catch { note('intro-message', 'That could not be saved. Please try again.', 'bad'); }
   });
 }
