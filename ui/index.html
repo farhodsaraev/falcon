@@ -8,7 +8,10 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="bar"><span class="brand">F A L C O N</span></header>
+  <header class="bar">
+    <span class="brand">F A L C O N</span>
+    <button id="open-connections" class="icon" title="Connections" aria-label="Connections" hidden>⚙</button>
+  </header>
 
   <!-- Waking up -->
   <section id="screen-loading" class="screen">
@@ -45,6 +48,49 @@
       <input id="ask-text" type="text" placeholder="Ask Falcon…" aria-label="Message for Falcon">
       <button id="ask-send" class="primary" aria-label="Send">➤</button>
     </form>
+  </section>
+
+  <!-- Connections -->
+  <section id="screen-connections" class="screen left" hidden>
+    <h2>Connections</h2>
+
+    <div class="panel">
+      <p class="panel-title">Telegram <span id="tg-state" class="state"></span></p>
+      <p class="panel-text">Talk to Falcon from your phone.</p>
+      <ol class="steps">
+        <li>In Telegram, open <b>@BotFather</b>, send <b>/newbot</b> and follow it. Copy the token it gives you.</li>
+        <li>Paste the token here and press Connect.</li>
+      </ol>
+      <div class="row tight">
+        <input id="tg-token" type="password" placeholder="123456789:AAE…" autocomplete="off" spellcheck="false" aria-label="Telegram bot token">
+        <button id="tg-connect" class="primary">Connect</button>
+      </div>
+      <ol class="steps" start="3">
+        <li>Send your new bot any message. It replies with a short code. Type the code here.</li>
+      </ol>
+      <div class="row tight">
+        <input id="tg-code" type="text" placeholder="Code from your bot" autocomplete="off" spellcheck="false" aria-label="Telegram pairing code">
+        <button id="tg-pair" class="ghost">Confirm</button>
+      </div>
+      <p id="tg-message" class="message" role="status"></p>
+    </div>
+
+    <div class="panel">
+      <p class="panel-title">Your own Chrome <span id="chrome-state" class="state"></span></p>
+      <p class="panel-text">Lets Falcon work in sites you are already signed in to, such as your mail and calendar. Chrome asks you to allow this yourself.</p>
+      <ol class="steps">
+        <li>In Chrome, open <b class="copy">chrome://inspect/#remote-debugging</b></li>
+        <li>Switch on <b>Allow remote debugging</b>.</li>
+        <li>Press Check below, then click <b>Allow</b> when Chrome asks.</li>
+      </ol>
+      <div class="row tight">
+        <button id="chrome-copy" class="ghost">Copy the address</button>
+        <button id="chrome-test" class="primary">Check</button>
+      </div>
+      <p id="chrome-message" class="message" role="status"></p>
+    </div>
+
+    <button id="connections-back" class="ghost wide">Back to Falcon</button>
   </section>
 
   <!-- Approval -->

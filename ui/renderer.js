@@ -1,10 +1,66 @@
 const $ = (id) => document.getElementById(id);
-const screens = ['loading', 'setup', 'main'];
+const screens = ['loading', 'setup', 'main', 'connections'];
 
 function showScreen(name) {
   for (const s of screens) $(`screen-${s}`).hidden = s !== name;
+  $('open-connections').hidden = name !== 'main';
   if (name === 'main') $('ask-text').focus();
+  if (name === 'connections') refreshConnections();
 }
+
+// ---- Connections ----
+function note(id, text, kind = '') { $(id).textContent = text; $(id).className = `message ${kind}`; }
+
+async function refreshConnections() {
+  try {
+    const c = await window.falcon.connections();
+    $('tg-state').textContent = c.telegram ? '✓ connected' : '';
+  } catch { /* leave as is */ }
+}
+
+async function withButton(button, work) {
+  button.disabled = true;
+  try { await work(); } finally { button.disabled = false; }
+}
+
+$('open-connections').addEventListener('click', () => showScreen('connections'));
+$('connections-back').addEventListener('click', () => showScreen('main'));
+
+$('tg-connect').addEventListener('click', () => withButton($('tg-connect'), async () => {
+  note('tg-message', 'Connecting…');
+  try {
+    const r = await window.falcon.telegramConnect($('tg-token').value);
+    if (!r.ok) return note('tg-message', r.error, 'bad');
+    $('tg-token').value = '';
+    $('tg-state').textContent = '✓ connected';
+    note('tg-message', 'Connected. Now send your bot a message and type the code it replies with.', 'ok');
+  } catch { note('tg-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+}));
+
+$('tg-pair').addEventListener('click', () => withButton($('tg-pair'), async () => {
+  note('tg-message', 'Checking the code…');
+  try {
+    const r = await window.falcon.telegramPair($('tg-code').value);
+    if (!r.ok) return note('tg-message', r.error, 'bad');
+    $('tg-code').value = '';
+    note('tg-message', 'Done. Falcon now answers you in Telegram.', 'ok');
+  } catch { note('tg-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+}));
+
+$('chrome-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText('chrome://inspect/#remote-debugging'); note('chrome-message', 'Copied. Paste it into Chrome’s address bar.', 'ok'); }
+  catch { note('chrome-message', 'Type it into Chrome’s address bar: chrome://inspect/#remote-debugging'); }
+});
+
+$('chrome-test').addEventListener('click', () => withButton($('chrome-test'), async () => {
+  note('chrome-message', 'Asking Chrome… click Allow if it asks.');
+  try {
+    const r = await window.falcon.chromeTest();
+    $('chrome-state').textContent = r.ok ? '✓ connected' : '';
+    note('chrome-message', r.ok ? 'Connected. Falcon can now use your Chrome when you ask him to.'
+      : 'Not connected yet. Check that remote debugging is switched on and that you clicked Allow.', r.ok ? 'ok' : 'bad');
+  } catch { note('chrome-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+}));
 
 function setMessage(text, kind = '') {
   $('setup-message').textContent = text;

@@ -169,6 +169,33 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       setupRunning = true;
       try { return await setup(body); } finally { setupRunning = false; }
     },
+    // ---- Connections ----
+    'GET /api/connections': async () => {
+      const { code, out } = await api.runEngine(['channels', 'list', '--json'], { timeoutMs: 40000 });
+      let telegram = false;
+      if (code === 0) {
+        try { telegram = Boolean(JSON.parse(out.slice(out.indexOf('{'))).chat?.telegram); } catch { /* unknown */ }
+      }
+      return { telegram };
+    },
+    'POST /api/telegram/connect': async (body) => {
+      const botToken = String(body.token || '').trim();
+      if (!/^\d{6,12}:[A-Za-z0-9_-]{30,60}$/.test(botToken)) {
+        return { ok: false, error: 'That does not look like a Telegram bot token. It looks like 123456789:AAE… and comes from @BotFather.' };
+      }
+      const result = await api.runEngine(['channels', 'add', '--channel', 'telegram', '--token', botToken], { timeoutMs: 90000 });
+      return result.code === 0 ? { ok: true } : { ok: false, error: 'Telegram did not accept that token.' };
+    },
+    'POST /api/telegram/pair': async (body) => {
+      const code = String(body.code || '').trim().toUpperCase();
+      if (!/^[A-Z0-9-]{4,20}$/.test(code)) return { ok: false, error: 'That does not look like a pairing code.' };
+      const result = await api.runEngine(['pairing', 'approve', 'telegram', code, '--notify'], { timeoutMs: 60000 });
+      return result.code === 0 ? { ok: true } : { ok: false, error: 'That code was not recognised. Send your bot a new message and use the newest code.' };
+    },
+    'POST /api/chrome/test': async () => {
+      const result = await api.runEngine(['browser', '--browser-profile', 'user', 'tabs'], { timeoutMs: 45000 });
+      return { ok: result.code === 0 };
+    },
     'POST /api/approval': async (body) => {
       if (!/^[\w-]{8,64}$/.test(body.id || '') || !['allow-once', 'deny'].includes(body.decision)) {
         return { ok: false };

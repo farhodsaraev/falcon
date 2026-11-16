@@ -15,6 +15,10 @@
     state: () => call('GET', '/api/state'),
     setup: (key, accepted) => call('POST', '/api/setup', { key, accepted }),
     answerApproval: (id, decision) => call('POST', '/api/approval', { id, decision }),
+    connections: () => call('GET', '/api/connections'),
+    telegramConnect: (token) => call('POST', '/api/telegram/connect', { token }),
+    telegramPair: (code) => call('POST', '/api/telegram/pair', { code }),
+    chromeTest: () => call('POST', '/api/chrome/test'),
     listen: (handlers) => {
       const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
       for (const [name, handler] of Object.entries(handlers)) {

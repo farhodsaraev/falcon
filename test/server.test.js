@@ -87,6 +87,18 @@ test('chat is relayed to the engine and streamed back; approvals show up meanwhi
   pending = [];
 });
 
+test('Telegram: a well-formed token and code are passed on; malformed ones never reach the engine', async () => {
+  calls.length = 0;
+  const post = async (route, body) => (await call('POST', route, body)).json();
+  assert.equal((await post('/api/telegram/connect', { token: 'hello; rm -rf /' })).ok, false);
+  assert.equal((await post('/api/telegram/pair', { code: 'a b"; calc' })).ok, false);
+  assert.equal(calls.length, 0);
+  assert.equal((await post('/api/telegram/connect', { token: '123456789:AAEabcdefghijklmnopqrstuvwxyz0123456' })).ok, true);
+  assert.deepEqual(calls[0].slice(0, 5), ['channels', 'add', '--channel', 'telegram', '--token']);
+  assert.equal((await post('/api/telegram/pair', { code: 'ab12cd34' })).ok, true);
+  assert.deepEqual(calls[1].slice(0, 4), ['pairing', 'approve', 'telegram', 'AB12CD34']);
+});
+
 test('an approval answer is passed on, and odd answers are refused', async () => {
   calls.length = 0;
   assert.equal((await (await call('POST', '/api/approval', { id: 'abcd1234-aaaa', decision: 'allow-once' })).json()).ok, true);
