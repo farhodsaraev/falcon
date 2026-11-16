@@ -10,6 +10,9 @@ Speed matters more than commentary. For these requests issue exactly one command
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\read-file.ps1" -Path "<full path>"`
 - Look at the screen (then view the image at the `path` it prints and describe it):
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\screen\screenshot.ps1"`
+- Scout a person or company: the free sweep, then (after writing `{{SKILLS}}\scout\dossier.json`) the dossier page:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\scout\scout.ps1" -Do sweep -Name "full name" -Type person -Hint "employer, city" -Aliases "other spellings" -Handles "known account names, if any"`
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\scout\scout.ps1" -Do report`
 - Open a file or folder in its usual app: `Start-Process "<full path>"`
 - Open a website the user names: use the browser tool's open/navigate action straight away with the full URL. Do not search for the site first.
 

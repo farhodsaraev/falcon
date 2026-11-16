@@ -6,3 +6,8 @@ dist/
 # internal planning notes, not part of the product
 Jarvis*Spec.md
 ~$*
+
+# Scout working files
+falcon-agent/skills-common/scout/cache/
+falcon-agent/skills-common/scout/last-sweep.json
+falcon-agent/skills-common/scout/dossier.json

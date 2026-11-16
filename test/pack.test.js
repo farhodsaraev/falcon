@@ -28,7 +28,7 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.ok(!fs.existsSync(path.join(ws, 'BOOTSTRAP.md')));
   assert.match(fs.readFileSync(path.join(ws, 'SOUL.md'), 'utf8'), /Falcon/);
 
-  for (const skill of ['files', 'presentations', 'screen', ...(variant === 'mac' ? ['daily'] : [])]) {
+  for (const skill of ['files', 'presentations', 'screen', 'scout', ...(variant === 'mac' ? ['daily'] : [])]) {
     const text = fs.readFileSync(path.join(ws, 'skills', skill, 'SKILL.md'), 'utf8');
     assert.doesNotMatch(text, /\{\{[A-Z_]+\}\}|<folder of this SKILL\.md>/);
     assert.ok(text.includes(path.join(ws, 'skills', skill)));
@@ -38,10 +38,15 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.ok(once.includes('config set agents.defaults.thinkingDefault low'));
   assert.ok(once.includes('config set browser.defaultProfile user'));
   assert.ok(once.includes('config set tools.toolSearch.mode directory'));
+  assert.ok(once.includes('config set agents.defaults.bootstrapMaxChars 60000'));
   assert.ok(once.includes('config set gateway.http.endpoints.chatCompletions.enabled true'));
   assert.ok(once.some((c) => c.startsWith('approvals set --gateway --stdin')));
   assert.match(calls.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').input, /"ask": "on-miss"/);
-  assert.equal(once.filter((c) => c.startsWith('approvals allowlist add')).length, 5);
+  // Windows: 5 earlier scripts + scout.ps1 and its three Node scripts; Mac: 5 + the three Node scripts
+  assert.equal(once.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'windows' ? 9 : 8);
+  assert.ok(fs.existsSync(path.join(ws, 'skills', 'scout', 'scout-sources.mjs')));
+  assert.ok(fs.existsSync(path.join(ws, 'skills', 'scout', 'scout-report.mjs')));
+  assert.match(agents, /scout[\\/]+(scout\.ps1|scout-sources\.mjs)/);
   // The reader for PDF, Word and text files is shared by Mac and Windows, and may run without asking.
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'files', 'read-file.mjs')));
   assert.ok(once.some((c) => c.startsWith('approvals allowlist add') && c.includes('read-file.mjs')));

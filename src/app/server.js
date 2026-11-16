@@ -1,6 +1,7 @@
 // Falcon's window server. Only this PC can reach it.
 // It serves the window, runs first-time setup, relays the chat to the local engine,
 // and shows the engine's approval requests so the user can answer them in the window.
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -167,8 +168,19 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
     return pack.setupSearch(options);
   };
+  const scoutProgressFile = () => path.join(os.homedir(), '.falcon', 'scout-progress.json');
+  const scoutFolder = () => {
+    const desktop = [path.join(os.homedir(), 'Desktop'), path.join(os.homedir(), 'OneDrive', 'Desktop')].find((p) => fs.existsSync(p)) || os.homedir();
+    return path.join(desktop, 'Falcon Scout');
+  };
+  const openPath = (file) => {
+    const child = process.platform === 'win32' ? spawn('explorer.exe', [file], { detached: true, stdio: 'ignore' })
+      : spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [file], { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+  };
   const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
-  const api = { engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  const api = { engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
@@ -312,6 +324,21 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
     chatsInFlight++;
     pollApprovals();
+    // While Falcon scouts, pass the scan's progress on to the window, and the finished dossier.
+    const chatStarted = Date.now();
+    let lastProgress = '';
+    let dossierSent = false;
+    const watchScout = () => {
+      try {
+        const raw = fs.readFileSync(api.scoutProgressFile(), 'utf8');
+        const progress = JSON.parse(raw);
+        if (progress.at < chatStarted || raw === lastProgress) return;
+        lastProgress = raw;
+        send('scout', { name: progress.name, type: progress.type, stage: progress.stage, found: progress.found, sources: progress.sources });
+        if (progress.dossier && !dossierSent) { dossierSent = true; send('dossier', { name: path.basename(progress.dossier) }); }
+      } catch { /* no scout running */ }
+    };
+    const scoutTimer = setInterval(watchScout, 800);
     try {
       const upstream = await api.fetch(`http://127.0.0.1:${gateway.port}/v1/chat/completions`, {
         method: 'POST',
@@ -356,6 +383,8 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         }
       }
       flush(true);
+      clearInterval(scoutTimer);
+      watchScout();
       const marker = full.indexOf(ACTIONS_MARK);
       if (marker >= 0) {
         const items = full.slice(marker + ACTIONS_MARK.length).split('\n')[0].split('|')
@@ -366,6 +395,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     } catch {
       send('error', { text: 'I have lost my connection, sir. Please try again in a moment.' });
     } finally {
+      clearInterval(scoutTimer);
       chatsInFlight--;
       res.end();
     }
@@ -521,6 +551,15 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       return { ok: true };
     },
 
+    // ---- Scout: open a finished dossier. Only a file inside the "Falcon Scout" folder can be opened. ----
+    'POST /api/dossier/open': async (body) => {
+      const name = path.basename(String(body.name || ''));
+      const file = path.join(api.scoutFolder(), name);
+      if (!/\.html$/i.test(name) || !fs.existsSync(file)) return { ok: false, error: 'That dossier is no longer there.' };
+      api.openPath(file);
+      return { ok: true };
+    },
+
     // ---- Voice ----
     'GET /api/voice': async () => ({ available: Boolean(await api.voiceKey.get()) }),
 
@@ -654,6 +693,19 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         clients.add(res);
         req.on('close', () => clients.delete(res));
         return;
+      }
+      // A finished dossier, shown inside Falcon's window. Only a page from the "Falcon Scout" folder;
+      // the window shows it in a sandboxed frame, so the page cannot reach Falcon.
+      if (req.method === 'GET' && url.pathname === '/api/dossier/view') {
+        if (!sameToken(url.searchParams.get('token'))) return send(401, { error: 'Unauthorized' });
+        const name = path.basename(String(url.searchParams.get('name') || ''));
+        const file = path.join(api.scoutFolder(), name);
+        if (!/\.html$/i.test(name) || !fs.existsSync(file)) return send(404, { error: 'Not found' });
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        });
+        return res.end(fs.readFileSync(file));
       }
       if (!sameToken(req.headers['x-falcon-token'])) {
         return routes[`${req.method} ${url.pathname}`] || url.pathname === '/api/chat' || url.pathname === '/api/voice/session'

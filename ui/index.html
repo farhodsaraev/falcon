@@ -69,6 +69,18 @@
     <button id="intro-skip" class="link">Skip</button>
   </section>
 
+  <!-- A finished scout dossier, shown over Falcon's window -->
+  <div id="dossier-view" class="dossier-view" hidden role="dialog" aria-label="Dossier">
+    <div class="dossier-bar">
+      <span>Falcon Scout · Dossier</span>
+      <span class="dossier-tools">
+        <button type="button" id="dossier-browser" class="dossier-small">Open in browser</button>
+        <button type="button" id="dossier-close" class="dossier-small primary">Close</button>
+      </span>
+    </div>
+    <iframe id="dossier-frame" title="Dossier" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"></iframe>
+  </div>
+
   <!-- Main -->
   <section id="screen-main" class="screen main" hidden>
     <div id="orb" class="orb" data-state="idle">
@@ -80,6 +92,16 @@
       <div id="history" class="history"></div>
       <p id="said" class="said"></p>
       <p id="reply" class="reply">At your service.</p>
+      <div id="scout" class="scout" hidden aria-label="Scout in progress">
+        <div class="scout-radar"><div class="scout-sweep"></div><div id="scout-dots"></div><div class="scout-core"></div></div>
+        <div class="scout-body">
+          <div class="scout-brand">Falcon Scout</div>
+          <div id="scout-name" class="scout-name"></div>
+          <div id="scout-stage" class="scout-stage"></div>
+          <ul id="scout-list" class="scout-list"></ul>
+          <div class="scout-count"><b id="scout-found">0</b> findings so far</div>
+        </div>
+      </div>
       <div id="actions" class="actions" aria-label="What Falcon did"></div>
       <p id="voice-note" class="hint" role="status"></p>
     </div>

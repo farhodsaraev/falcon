@@ -302,6 +302,58 @@ function actionCards(items) {
     return card;
   });
 }
+// ---- Scout: the scan, shown while Falcon researches a person or company ----
+const SCOUT_STAGES = ['Sweeping public databases', 'Searching the web and 9 social networks', 'Checking identity and writing the dossier', 'Dossier ready'];
+function showScout(p) {
+  $('scout').hidden = false;
+  $('scout-name').textContent = p.name || '';
+  $('scout-stage').textContent = SCOUT_STAGES[Math.min(3, Number(p.stage) || 0)];
+  $('scout-found').textContent = String(p.found || 0);
+  $('scout-list').replaceChildren(...(p.sources || []).map((src) => {
+    const li = document.createElement('li');
+    li.className = src.state;
+    const dot = document.createElement('i');
+    const name = document.createElement('span');
+    name.textContent = src.name;
+    const what = document.createElement('em');
+    what.textContent = src.state === 'wait' ? 'checking' : src.state === 'error' ? 'unavailable' : src.found ? String(src.found) : '–';
+    li.append(dot, name, what);
+    return li;
+  }));
+  // One glowing dot on the radar for each finding, spread out like a sunflower.
+  const dots = Math.min(24, Number(p.found) || 0);
+  $('scout-dots').replaceChildren(...Array.from({ length: dots }, (_, i) => {
+    const d = document.createElement('span');
+    d.className = 'scout-dot';
+    const r = 42 * Math.sqrt((i + 1) / 25);
+    d.style.left = `${50 + Math.cos(i * 2.39996) * r}%`;
+    d.style.top = `${50 + Math.sin(i * 2.39996) * r}%`;
+    d.style.animationDelay = `${(i * 0.37) % 2}s`;
+    return d;
+  }));
+  scrollTalk();
+}
+function dossierButton(name) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'dossier-button';
+  button.textContent = 'Open dossier';
+  button.title = name;
+  button.addEventListener('click', () => showDossier(name));
+  return button;
+}
+// Shows the dossier inside Falcon's window, over everything, with Close and "Open in browser".
+let dossierShown = '';
+function showDossier(name) {
+  dossierShown = name;
+  $('dossier-frame').src = window.falcon.dossierUrl(name);
+  $('dossier-view').hidden = false;
+  $('dossier-close').focus();
+}
+$('dossier-close').addEventListener('click', () => { $('dossier-view').hidden = true; $('dossier-frame').src = 'about:blank'; });
+$('dossier-browser').addEventListener('click', () => { if (dossierShown) window.falcon.openDossier(dossierShown).catch(() => {}); });
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !$('dossier-view').hidden) $('dossier-close').click(); });
+
 function showActions(items) { $('actions').replaceChildren(...actionCards(items)); scrollTalk(); }
 
 // Moves the finished question, answer and cards up into the dimmer history above.
@@ -378,6 +430,8 @@ async function sendToFalcon(text, shown = text) {
   setOrb('thinking');
   let answer = '';
   let cards = [];
+  let dossier = '';
+  $('scout').hidden = true;
   const reveal = createReveal($('reply'));
   // If the answer takes a moment, say so instead of sitting silent.
   const russian = /[а-яё]/i.test(text);
@@ -396,15 +450,19 @@ async function sendToFalcon(text, shown = text) {
     await window.falcon.chat(text, {
       onDelta: (piece) => { clearWaiting(); answer += piece; reveal.set(plainSpeech(answer)); setOrb('speaking'); },
       onActions: (items) => { cards = items; },
+      onScout: (progress) => { clearWaiting(); showScout(progress); },
+      onDossier: (name) => { dossier = name; },
       onError: fail,
     });
     await reveal.done();
     if (cards.length) showActions(cards);
+    $('scout').hidden = true;
+    if (dossier) { $('actions').append(dossierButton(dossier)); scrollTalk(); showDossier(dossier); }
   } catch {
     fail(`I have lost my connection, ${address()}. Please try again in a moment.`);
   }
   clearWaiting();
-  if (!answer) $('reply').textContent = `Done, ${address()}.`;
+  if (!answer) $('reply').textContent = dossier ? `The dossier is ready, ${address()}.` : `Done, ${address()}.`;
   setOrb('idle');
   busy = false;
   $('ask-send').disabled = false;

@@ -32,6 +32,8 @@
     saveKey: (key, model) => call('POST', '/api/key', { key, model }),
     searchStatus: () => call('GET', '/api/search'),
     saveSearchKey: (key) => call('POST', '/api/search', { key }),
+    openDossier: (name) => call('POST', '/api/dossier/open', { name }),
+    dossierUrl: (name) => `/api/dossier/view?name=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`,
     briefing: () => call('GET', '/api/briefing'),
     setBriefing: (enabled, time) => call('POST', '/api/briefing', { enabled, time }),
     briefingNow: () => call('POST', '/api/briefing/now'),
@@ -46,7 +48,7 @@
       }
     },
     // Sends a message and calls onDelta for each piece of the answer as it arrives.
-    async chat(text, { onDelta, onError, onActions }) {
+    async chat(text, { onDelta, onError, onActions, onScout, onDossier }) {
       const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text }) });
       if (!response.ok || !response.body) return onError('I have lost my connection, sir.');
       const reader = response.body.getReader();
@@ -66,6 +68,8 @@
           const payload = JSON.parse(data);
           if (event === 'delta') onDelta(payload.text);
           if (event === 'actions' && onActions) onActions(payload.items);
+          if (event === 'scout' && onScout) onScout(payload);
+          if (event === 'dossier' && onDossier) onDossier(payload.name);
           if (event === 'error') onError(payload.text);
         }
       }

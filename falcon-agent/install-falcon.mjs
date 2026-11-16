@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const variant = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : null;
-const FALCON_SKILLS = ['files', 'presentations', 'screen', 'daily'];
+const FALCON_SKILLS = ['files', 'presentations', 'screen', 'daily', 'scout'];
 const APPROVALS = '{ "version": 1, "defaults": { "security": "allowlist", "ask": "on-miss", "askFallback": "deny" } }';
 
 const read = (file) => fs.readFileSync(file, 'utf8');
@@ -63,7 +63,7 @@ export async function setupSearch({ step, envFile = path.join(os.homedir(), '.op
     // Without the add-on the engine would not know the search service, so set nothing else if it failed.
     if (!await step('search add-on', ['plugins', 'install', '@openclaw/perplexity-plugin', '--accept-capabilities', '--acknowledge-install-policy-warning'], undefined, { okIf: /already (installed|exists)/i })) return;
     await step('web search', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.baseUrl', 'https://openrouter.ai/api/v1']);
-    await step('web search model', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.model', 'perplexity/sonar-pro']);
+    await step('web search model', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.model', 'perplexity/sonar']);
     await step('web search on', ['config', 'set', 'tools.web.search.provider', 'perplexity']);
   }
 }
@@ -171,6 +171,9 @@ export async function installFalcon({
   // Tools sit in a catalog. In the default mode, calling web search or the browser by name answered
   // "tool not found" and Falcon gave up; in directory mode a call by exact name just works.
   await step('tools callable by name', ['config', 'set', 'tools.toolSearch.mode', 'directory']);
+  // Falcon's rules are longer than the 20,000 characters the engine reads from each file by default;
+  // without this the end of them (the scout steps among them) was cut off.
+  await step('read all of his rules', ['config', 'set', 'agents.defaults.bootstrapMaxChars', '60000']);
   await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m']);
   await step('local chat for the Falcon window', ['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
   await setupSearch({ step, envFile });
