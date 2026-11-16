@@ -16,6 +16,20 @@ const APPROVALS = '{ "version": 1, "defaults": { "security": "allowlist", "ask":
 
 const read = (file) => fs.readFileSync(file, 'utf8');
 
+// The Node.js path written into Falcon's commands must survive updates. A package manager's real
+// path carries the version number (".../node@24/24.22.3/bin/node"), so prefer the stable link to it.
+function stableNode() {
+  if (process.platform === 'win32') return process.execPath;
+  const real = fs.realpathSync(process.execPath);
+  const dirs = ['/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.openclaw', 'bin'),
+    path.join(os.homedir(), '.local', 'bin'), ...(process.env.PATH || '').split(':')];
+  for (const dir of dirs) {
+    const link = path.join(dir, 'node');
+    try { if (dir && fs.realpathSync(link) === real) return link; } catch { /* not here */ }
+  }
+  return process.execPath;
+}
+
 /** Default way to run an engine command when no runner is passed in. */
 function defaultRunEngine(args, { input } = {}) {
   return new Promise((resolve) => {
@@ -48,9 +62,10 @@ export async function installFalcon({
 } = {}) {
   if (!fs.existsSync(workspace)) throw new Error(`Workspace not found at ${workspace}. Set up the engine first.`);
   const skillsDir = path.join(workspace, 'skills');
+  const node = stableNode();
   const fill = (text, skillDir = '') => text
     .replaceAll('{{SKILLS}}', skillsDir)
-    .replaceAll('{{NODE}}', process.execPath)
+    .replaceAll('{{NODE}}', node)
     .replaceAll('{{SKILL_DIR}}', skillDir)
     .replaceAll('<folder of this SKILL.md>', skillDir);
 

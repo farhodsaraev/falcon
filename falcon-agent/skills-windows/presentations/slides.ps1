@@ -12,11 +12,13 @@ try {
     $where = @("(System.FileExtension = '.pptx' OR System.FileExtension = '.ppt')")
     foreach ($word in ($Find -split '\s+' | Where-Object { $_ })) { $where += "System.FileName LIKE '%$(Esc $word)%'" }
     $where += "SCOPE='file:$(Esc ($env:USERPROFILE -replace '\\','/'))'"
-    $c = New-Object -ComObject ADODB.Connection
-    $c.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';")
-    $rs = $c.Execute("SELECT TOP 1 System.ItemPathDisplay FROM SYSTEMINDEX WHERE " + ($where -join " AND ") + " ORDER BY System.DateModified DESC")
-    if (-not $rs.EOF) { $Path = [string]$rs.Fields.Item(0).Value }
-    $c.Close()
+    try {
+      $c = New-Object -ComObject ADODB.Connection
+      $c.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';")
+      $rs = $c.Execute("SELECT TOP 1 System.ItemPathDisplay FROM SYSTEMINDEX WHERE " + ($where -join " AND ") + " ORDER BY System.DateModified DESC")
+      if (-not $rs.EOF) { $Path = [string]$rs.Fields.Item(0).Value }
+      $c.Close()
+    } catch { $Path = "" }   # Windows Search is switched off on some PCs: the folder search below covers it
     if (-not $Path) {
       # The index can lag behind new files or be switched off: look in the usual folders directly.
       $words = @($Find -split '\s+' | Where-Object { $_ })

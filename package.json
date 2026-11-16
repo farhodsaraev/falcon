@@ -7,7 +7,7 @@
   "main": "src/app/launch.js",
   "scripts": {
     "start": "node src/app/launch.js",
-    "test": "node --test test/",
+    "test": "node --test",
     "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-package.ps1",
     "demo:files": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-demo-files.ps1"
   }

@@ -91,7 +91,7 @@ jobs:
         run: node "$HOME/.openclaw/workspace/skills/screen/screenshot.mjs"
 
       - name: Unit checks
-        run: node --test test/
+        run: node --test "test/*.test.js"
 
   windows:
     runs-on: windows-latest
@@ -163,5 +163,5 @@ jobs:
       - name: Unit checks
         shell: powershell
         run: |
-          & $env:FALCON_NODE --test test/
+          & $env:FALCON_NODE --test (Get-ChildItem test*.test.js | ForEach-Object FullName)
           if ($LASTEXITCODE -ne 0) { exit 1 }

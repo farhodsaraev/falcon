@@ -23,19 +23,21 @@ try {
   $where += "(" + ($scopes -join " OR ") + ")"
   $sql = "SELECT TOP $Max System.ItemPathDisplay, System.DateModified, System.Size FROM SYSTEMINDEX WHERE " +
          ($where -join " AND ") + " ORDER BY System.DateModified DESC"
-  $c = New-Object -ComObject ADODB.Connection
-  $c.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';")
-  $rs = $c.Execute($sql)
   $files = @()
-  while (-not $rs.EOF) {
-    $files += @{
-      path     = [string]$rs.Fields.Item(0).Value
-      modified = ([datetime]$rs.Fields.Item(1).Value).ToLocalTime().ToString("yyyy-MM-dd HH:mm")
-      sizeKb   = [int]([double]$rs.Fields.Item(2).Value / 1kb)
+  try {
+    $c = New-Object -ComObject ADODB.Connection
+    $c.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';")
+    $rs = $c.Execute($sql)
+    while (-not $rs.EOF) {
+      $files += @{
+        path     = [string]$rs.Fields.Item(0).Value
+        modified = ([datetime]$rs.Fields.Item(1).Value).ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+        sizeKb   = [int]([double]$rs.Fields.Item(2).Value / 1kb)
+      }
+      $rs.MoveNext()
     }
-    $rs.MoveNext()
-  }
-  $c.Close()
+    $c.Close()
+  } catch { $files = @() }   # Windows Search is switched off on some PCs: the folder search below covers it
   $source = "index"
   if ($files.Count -eq 0) {
     # The index can lag behind new files or be switched off: look in the folders directly.
