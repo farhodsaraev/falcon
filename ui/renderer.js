@@ -175,6 +175,32 @@ function setMessage(text, kind = '') {
   $('setup-message').className = `message ${kind}`;
 }
 
+// While setup runs: the last few real lines from the installers, and how long it has taken.
+const setupLog = {
+  lines: [], started: 0, clock: 0, until: 0,
+  start() {
+    this.lines = []; this.started = Date.now(); this.until = 0;
+    $('setup-log-lines').textContent = ''; $('setup-log').hidden = false;
+    clearInterval(this.clock);
+    const tick = () => {
+      const s = Math.floor((Date.now() - this.started) / 1000);
+      const left = this.until ? Math.round((this.until - Date.now()) / 1000) : null;
+      const about = left === null ? '' : left > 90 ? `about ${Math.round(left / 60)} minutes left` : left > 30 ? 'about a minute left'
+        : left > -20 ? 'almost done' : 'taking a little longer than usual';
+      $('setup-log-time').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} so far${about ? `, ${about}` : ''}. Please keep this window open.`;
+    };
+    tick(); this.clock = setInterval(tick, 1000);
+  },
+  eta(seconds) { if (this.started && seconds > 0) this.until = Date.now() + seconds * 1000; },
+  add(line) {
+    if (!this.started || line === this.lines[this.lines.length - 1]) return;
+    this.lines.push(line);
+    if (this.lines.length > 5) this.lines.shift();
+    $('setup-log-lines').textContent = this.lines.join('\n');
+  },
+  stop() { clearInterval(this.clock); this.started = 0; $('setup-log').hidden = true; },
+};
+
 const setOrb = (state) => { $('orb').dataset.state = state; };
 
 // ---- First launch ----
@@ -187,6 +213,7 @@ $('setup-start').addEventListener('click', async () => {
   smallOrb.dataset.state = 'thinking';
   await withButton($('setup-start'), async () => {
     setMessage('Starting', 'working');
+    setupLog.start();
     try {
       const result = await window.falcon.setup(key, true, setupKey.model());
       if (result.ok) { $('setup-key').value = ''; return enterFalcon(); }
@@ -194,6 +221,7 @@ $('setup-start').addEventListener('click', async () => {
     } catch {
       setMessage('Setup was interrupted. Please try again.', 'bad');
     }
+    setupLog.stop();
   });
   smallOrb.dataset.state = 'idle';
 });
@@ -564,7 +592,11 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') answerAppr
 
 window.falcon.listen({
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
-  setup: (progress) => setMessage(progress.text.replace(/…$/, ''), 'working'),
+  setup: (progress) => {
+    if (progress.detail) return setupLog.add(progress.detail);
+    setMessage(progress.text.replace(/…$/, ''), 'working');
+    setupLog.eta(progress.left);
+  },
 });
 
 // ---- Start ----

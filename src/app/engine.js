@@ -77,12 +77,21 @@ function childEnv(extraDirs = []) {
   return env;
 }
 
-function collect(child, timeoutMs, input) {
+function collect(child, timeoutMs, input, onLine) {
   return new Promise((resolve) => {
     let out = '';
+    let tail = '';
+    // Hands each finished line to onLine as it arrives, so the window can show what is happening.
+    const take = (chunk) => {
+      out += chunk;
+      if (!onLine) return;
+      const lines = (tail + chunk).split(/\r\n|\r|\n/);
+      tail = lines.pop();
+      for (const line of lines) { try { onLine(line); } catch { /* a display problem must not stop the work */ } }
+    };
     const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.stderr.on('data', (chunk) => { out += chunk; });
+    child.stdout.on('data', take);
+    child.stderr.on('data', take);
     child.on('error', (err) => { clearTimeout(timer); resolve({ code: -1, out: err.message }); });
     child.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? -1, out }); });
     child.stdin.end(input ?? '');
@@ -90,23 +99,23 @@ function collect(child, timeoutMs, input) {
 }
 
 /** Runs one engine command and resolves with its exit code and output. Never rejects. */
-export function runEngine(args, { input, timeoutMs = 180000 } = {}) {
+export function runEngine(args, { input, timeoutMs = 180000, onLine } = {}) {
   const engine = findEngine();
   if (!engine) return Promise.resolve({ code: -1, out: 'The engine is not installed.' });
   if (engine.viaShell && !args.every((a) => SAFE_ARG.test(a))) {
     return Promise.resolve({ code: -1, out: 'Refused to run a command with unusual characters.' });
   }
   const child = spawn(engine.command, [...engine.prefix, ...args], { windowsHide: true, env: childEnv(engine.pathDirs) });
-  return collect(child, timeoutMs, input);
+  return collect(child, timeoutMs, input, onLine);
 }
 
 /** Downloads and runs the engine's official installer for this kind of computer. */
-export function installEngine({ timeoutMs = 1200000 } = {}) {
+export function installEngine({ timeoutMs = 1200000, onLine } = {}) {
   const child = WINDOWS
     ? spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
       '& ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard'], { windowsHide: true })
     : spawn('/bin/bash', ['-c', 'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'], { env: childEnv() });
-  return collect(child, timeoutMs);
+  return collect(child, timeoutMs, undefined, onLine);
 }
 
 /** True when the engine answers on its local chat address. */

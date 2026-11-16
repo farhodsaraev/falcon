@@ -110,6 +110,23 @@ export function recogniseKey(key) {
   return null;
 }
 
+/**
+ * Makes one line of installer output fit to show in the window: no colour codes, no AI keys,
+ * no name of the engine, not too long. Returns '' for lines not worth showing.
+ */
+export function progressLine(line) {
+  const text = String(line ?? '')
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(/\bsk-[\w-]{6,}/g, 'sk-…')
+    .replace(/\b\d{6,}:[\w-]{20,}/g, '…')
+    .replace(/open[- ]?claw/gi, 'engine')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!/[\p{L}\p{N}]/u.test(text)) return '';
+  return text.length > 140 ? `${text.slice(0, 139)}…` : text;
+}
+
 export async function startServer({ port = 0, engine = {} } = {}) {
   // `engine` lets tests replace the real engine with stand-ins.
   const installFalcon = async (options) => {
@@ -187,25 +204,30 @@ export async function startServer({ port = 0, engine = {} } = {}) {
 
   // ---- First-time setup ----
   async function setup({ key, accepted, model }) {
-    const step = (text) => broadcast('setup', { text });
+    // Seconds each step usually takes, measured on clean machines by the install test; the window shows the time left.
+    const USUAL = { engine: process.platform === 'win32' ? 360 : 90, key: 60, start: 10, manners: 45, wake: 15 };
+    const ORDER = ['engine', 'key', 'start', 'manners', 'wake'];
+    const step = (text, name) => broadcast('setup', { text, left: ORDER.slice(ORDER.indexOf(name)).reduce((sum, n) => sum + USUAL[n], 0) });
+    // The real lines the installers print, shown under the step so the wait is not a blank spinner.
+    const detail = (line) => { const text = progressLine(line); if (text) broadcast('setup', { detail: text }); };
     if (!accepted) return { ok: false, error: 'Please tick the box to continue.' };
 
     if (!api.findEngine()) {
-      step('Installing the engine. This takes a few minutes…');
-      const install = await api.installEngine();
+      step('Installing the engine. This takes a few minutes…', 'engine');
+      const install = await api.installEngine({ onLine: detail });
       if (!api.findEngine()) return { ok: false, error: 'The engine could not be installed.', detail: install.out.slice(-600) };
     }
 
     if (!api.readGateway()) {
       if (!KEY_SHAPE.test(key || '')) return { ok: false, error: 'That does not look like an API key.' };
-      step('Connecting your AI key…');
+      step('Connecting your AI key…', 'key');
       const provider = PROVIDERS[recogniseKey(key)];
       if (!provider) return { ok: false, error: 'I do not recognise this kind of key. OpenAI, Anthropic and OpenRouter keys are supported.' };
       if (provider.voice) await api.voiceKey.set(key).catch(() => {});
       const preferred = (provider.models.find((m) => m.model === model) || provider.models[0]).model;
       const onboard = await api.runEngine(['onboard', '--non-interactive', '--accept-risk', '--mode', 'local',
         '--auth-choice', provider.authChoice, provider.keyFlag, key, '--gateway-bind', 'loopback', '--gateway-auth', 'token',
-        '--install-daemon', '--agent-name', 'Falcon'], { timeoutMs: 600000 });
+        '--install-daemon', '--agent-name', 'Falcon'], { timeoutMs: 600000, onLine: detail });
       if (onboard.code !== 0 || !api.readGateway()) {
         return { ok: false, error: 'The key could not be connected.', detail: onboard.out.slice(-600) };
       }
@@ -219,18 +241,18 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       }
     }
 
-    step('Starting…');
+    step('Starting…', 'start');
     await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
 
-    step('Teaching Falcon his manners…');
+    step('Teaching Falcon his manners…', 'manners');
     const notes = [];
     try {
-      await api.installFalcon({ runEngine: api.runEngine, log: (line) => notes.push(line) });
+      await api.installFalcon({ runEngine: api.runEngine, log: (line) => { notes.push(line); detail(line); } });
     } catch (err) {
       return { ok: false, error: 'Falcon could not be installed.', detail: `${err.message}\n${notes.join('\n')}`.slice(-600) };
     }
 
-    step('Waking Falcon…');
+    step('Waking Falcon…', 'wake');
     for (let i = 0; i < 30; i++) {
       if (await api.engineReady()) return { ok: true };
       await new Promise((resolve) => setTimeout(resolve, 2000));

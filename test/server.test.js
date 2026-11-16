@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startServer } from '../src/app/server.js';
+import { startServer, progressLine } from '../src/app/server.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-test-'));
 
@@ -182,4 +182,12 @@ test('an approval answer is passed on, and odd answers are refused', async () =>
   assert.deepEqual(calls[0].slice(0, 4), ['approvals', 'resolve', 'abcd1234-aaaa', 'allow-once']);
   assert.equal((await (await call('POST', '/api/approval', { id: 'abcd1234-aaaa', decision: 'allow-always' })).json()).ok, false);
   assert.equal((await (await call('POST', '/api/approval', { id: 'x; calc', decision: 'deny' })).json()).ok, false);
+});
+
+test('installer lines shown during setup are tidy and give nothing away', () => {
+  assert.equal(progressLine('\x1b[32m  added 412 packages in 38s\x1b[0m\r'), 'added 412 packages in 38s');
+  assert.equal(progressLine('Installing OpenClaw to ~/.openclaw/bin'), 'Installing engine to ~/.engine/bin');
+  assert.doesNotMatch(progressLine('using key sk-or-v1-abcdef1234567890abcdef'), /abcdef/);
+  assert.equal(progressLine('   ----   '), '');
+  assert.ok(progressLine('x'.repeat(400)).length <= 140);
 });
