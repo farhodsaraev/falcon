@@ -119,6 +119,8 @@ button.link { background: none; border: 0; color: var(--muted); margin-top: 14px
 .message.bad { color: var(--bad); }
 
 button.wide { width: 100%; margin-top: 6px; }
+.hint.left-hint { text-align: left; align-self: stretch; margin: 6px 0 0; line-height: 1.45; }
+.hint.left-hint b { color: var(--text); font-weight: 600; }
 
 /* ---- Chips: choices and example requests ---- */
 .chip {
