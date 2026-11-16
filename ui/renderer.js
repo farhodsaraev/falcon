@@ -152,6 +152,24 @@ function archiveExchange() {
   scrollTalk();
 }
 
+// Falcon is meant to speak in plain sentences. If formatting symbols slip through anyway
+// (bold, bullets, headings, code marks), take them out so the window never shows them.
+function plainSpeech(text) {
+  return text
+    .replace(/\r/g, '')
+    .replace(/`{3}[a-z]*\n?/gi, '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, '')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/([^.!?:;,\n])\n/g, '$1. ')
+    .replace(/\n/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
 // The answer usually arrives in one piece after the wait. Reveal it a few letters at a time,
 // the way speech arrives, instead of dropping a block of text.
 function createReveal(element) {
@@ -168,7 +186,8 @@ function createReveal(element) {
     if (shown >= target.length) { clearInterval(timer); timer = null; if (finish) { finish(); finish = null; } }
   };
   return {
-    add(piece) { target += piece; if (!timer) timer = setInterval(tick, 24); },
+    // The full text so far; it only ever grows, so letters already shown stay put.
+    set(text) { target = text; if (!timer) timer = setInterval(tick, 24); },
     done() { return new Promise((resolve) => { if (!timer) return resolve(); finish = resolve; }); },
   };
 }
@@ -201,7 +220,7 @@ async function sendToFalcon(text) {
   const fail = (message) => { clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); };
   try {
     await window.falcon.chat(text, {
-      onDelta: (piece) => { clearWaiting(); answer += piece; reveal.add(piece); setOrb('speaking'); },
+      onDelta: (piece) => { clearWaiting(); answer += piece; reveal.set(plainSpeech(answer)); setOrb('speaking'); },
       onError: fail,
     });
     await reveal.done();
