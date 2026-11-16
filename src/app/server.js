@@ -72,6 +72,32 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     }
   }
 
+  // Which Telegram chat is the user's own: remembered from pairing, or found from his first message to Falcon.
+  const telegramFile = () => path.join(path.dirname(api.profileFile()), 'telegram.json');
+  function saveTelegramChat(chat) {
+    fs.mkdirSync(path.dirname(telegramFile()), { recursive: true });
+    fs.writeFileSync(telegramFile(), JSON.stringify({ chat }));
+  }
+  async function telegramChat() {
+    try {
+      const saved = JSON.parse(fs.readFileSync(telegramFile(), 'utf8')).chat;
+      if (/^-?\d{5,}$/.test(saved)) return saved;
+    } catch { /* not saved yet */ }
+    const { code, out } = await api.runEngine(['sessions', '--json', '--limit', 'all'], { timeoutMs: 60000 });
+    if (code !== 0) return null;
+    try {
+      const parsed = JSON.parse(out.slice(out.search(/[[{]/)));
+      const sessions = Array.isArray(parsed) ? parsed : (parsed.sessions || []);
+      for (const session of sessions) {
+        const text = JSON.stringify(session);
+        if (!/telegram/i.test(text)) continue;
+        const chat = /telegram[^"]*?:(-?\d{5,})/i.exec(text)?.[1] || /"(?:to|chatId|peerId|from)"\s*:\s*"?(?:telegram:)?(-?\d{5,})/i.exec(text)?.[1];
+        if (chat) { saveTelegramChat(chat); return chat; }
+      }
+    } catch { /* unreadable list */ }
+    return null;
+  }
+
   async function briefingJobs() {
     const { code, out } = await api.runEngine(['cron', 'list', '--all', '--json'], { timeoutMs: 60000 });
     if (code !== 0) return [];
@@ -245,19 +271,36 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       if (body.enabled && !match) return { ok: false, error: 'Choose a time first.' };
       for (const job of await briefingJobs()) await api.runEngine(['cron', 'rm', job.id], { timeoutMs: 60000 });
       if (!body.enabled) return { ok: true, enabled: false };
+      const chat = await telegramChat();
+      if (!chat) return { ok: false, error: 'I do not know your Telegram chat yet. Send Falcon any message in Telegram, then try again.' };
       const added = await api.runEngine(['cron', 'add',
         '--name', BRIEFING_NAME,
         '--cron', `${Number(match[2])} ${Number(match[1])} * * *`,
         '--tz', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
         '--message', 'It is time for the scheduled morning briefing. Give the user his morning briefing now, following your morning briefing rules. Write it as one short message.',
-        '--announce', '--channel', 'telegram', '--best-effort-deliver', '--exact', '--json'], { timeoutMs: 90000 });
-      return added.code === 0 ? { ok: true, enabled: true } : { ok: false, error: 'The briefing could not be scheduled. Connect Telegram first.' };
+        '--announce', '--channel', 'telegram', '--to', chat, '--exact', '--json'], { timeoutMs: 90000 });
+      return added.code === 0 ? { ok: true, enabled: true } : { ok: false, error: 'The briefing could not be scheduled.' };
     },
     'POST /api/briefing/now': async () => {
       const job = (await briefingJobs())[0];
       if (!job) return { ok: false, error: 'Switch the briefing on first.' };
-      const run = await api.runEngine(['cron', 'run', job.id], { timeoutMs: 240000 });
-      return run.code === 0 ? { ok: true } : { ok: false, error: 'The briefing did not go through.' };
+      await api.runEngine(['cron', 'run', job.id, '--expect-final'], { timeoutMs: 240000 });
+      // Believe the delivery record, not the exit code: wait until the newest run says what happened.
+      for (let i = 0; i < 40; i++) {
+        const { code, out } = await api.runEngine(['cron', 'runs', '--id', job.id, '--json', '--limit', '1'], { timeoutMs: 60000 });
+        if (code === 0) {
+          try {
+            const entry = JSON.parse(out.slice(out.indexOf('{'))).entries?.[0];
+            if (entry?.action === 'finished') {
+              return entry.delivered === true || entry.deliveryStatus === 'delivered'
+                ? { ok: true }
+                : { ok: false, error: `Falcon wrote the briefing, but Telegram did not take it${entry.deliveryError ? `: ${String(entry.deliveryError).slice(0, 120)}` : '.'}` };
+            }
+          } catch { /* not finished writing yet */ }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+      return { ok: false, error: 'The briefing took too long. Please try again.' };
     },
 
     // ---- Connections ----
@@ -280,8 +323,17 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     'POST /api/telegram/pair': async (body) => {
       const code = String(body.code || '').trim().toUpperCase();
       if (!/^[A-Z0-9-]{4,20}$/.test(code)) return { ok: false, error: 'That does not look like a pairing code.' };
+      // Note who is asking before approving, so Falcon later knows which chat to write to first.
+      const pending = await api.runEngine(['pairing', 'list', '--channel', 'telegram', '--json'], { timeoutMs: 60000 });
       const result = await api.runEngine(['pairing', 'approve', 'telegram', code, '--notify'], { timeoutMs: 60000 });
-      return result.code === 0 ? { ok: true } : { ok: false, error: 'That code was not recognised. Send your bot a new message and use the newest code.' };
+      if (result.code !== 0) return { ok: false, error: 'That code was not recognised. Send your bot a new message and use the newest code.' };
+      try {
+        const requests = Object.values(JSON.parse(pending.out.slice(pending.out.indexOf('{')))).find(Array.isArray) || [];
+        const mine = requests.find((r) => JSON.stringify(r).toUpperCase().includes(code));
+        const chat = mine && /"(?:id|senderId|chatId|from|peerId|userId)"\s*:\s*"?(-?\d{5,})/.exec(JSON.stringify(mine))?.[1];
+        if (chat) saveTelegramChat(chat);
+      } catch { /* the chat is learned from his first message instead */ }
+      return { ok: true };
     },
     'POST /api/chrome/test': async () => {
       const result = await api.runEngine(['browser', '--browser-profile', 'user', 'tabs'], { timeoutMs: 45000 });

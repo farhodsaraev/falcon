@@ -139,7 +139,7 @@ test('Telegram: a well-formed token and code are passed on; malformed ones never
   assert.equal((await post('/api/telegram/connect', { token: '123456789:AAEabcdefghijklmnopqrstuvwxyz0123456' })).ok, true);
   assert.deepEqual(calls[0].slice(0, 5), ['channels', 'add', '--channel', 'telegram', '--token']);
   assert.equal((await post('/api/telegram/pair', { code: 'ab12cd34' })).ok, true);
-  assert.deepEqual(calls[1].slice(0, 4), ['pairing', 'approve', 'telegram', 'AB12CD34']);
+  assert.deepEqual(calls.find((c) => c[1] === 'approve').slice(0, 4), ['pairing', 'approve', 'telegram', 'AB12CD34']);
 });
 
 test('an approval answer is passed on, and odd answers are refused', async () => {
