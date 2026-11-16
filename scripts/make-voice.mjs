@@ -136,7 +136,10 @@ const names = Object.keys(lines).filter((name) => !ONLY || name === ONLY);
 if (!names.length) { console.error(`\n  There is no line called "${ONLY}". Lines: ${Object.keys(lines).join(', ')}\n`); process.exit(1); }
 
 console.log('\n  F A L C O N   voice recording\n');
-const key = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || await askHidden('  Paste your Google AI key and press Enter (it stays hidden): ')).trim();
+// The key may also wait in a file called .env in the project folder (never uploaded): GEMINI_API_KEY=...
+const envFile = join(root, '.env');
+const fromFile = existsSync(envFile) ? (readFileSync(envFile, 'utf8').match(/^\s*(?:GEMINI|GOOGLE)_API_KEY\s*=\s*["']?([^"'\r\n]+)/m) || [])[1] : '';
+const key = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || fromFile || await askHidden('  Paste your Google AI key and press Enter (it stays hidden): ')).trim();
 if (!key) { console.error('  No key given. Nothing was recorded.\n'); process.exit(1); }
 
 mkdirSync(outDir, { recursive: true });
