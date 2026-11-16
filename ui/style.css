@@ -253,6 +253,8 @@ button.primary.busy::after { border-color: rgba(3, 18, 28, 0.3); border-top-colo
 .screen { max-width: min(680px, 100%); }
 .screen.main { padding-bottom: 20px; }
 #screen-setup, #screen-intro, #screen-loading { max-width: min(440px, 100%); }
+/* When a screen is taller than the window it scrolls; nothing in it may be squeezed, or text spills over what follows. */
+#screen-setup > *, #screen-intro > *, .screen.left > * { flex-shrink: 0; }
 .screen.left { max-width: min(600px, 100%); }
 .reply { font-size: clamp(17px, 2.3vh + 0.5vw, 23px); max-width: 34em; }
 .said { font-size: clamp(13px, 1.6vh, 15px); }
