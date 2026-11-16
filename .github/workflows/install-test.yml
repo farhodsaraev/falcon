@@ -21,10 +21,28 @@ jobs:
       - name: System
         run: sw_vers && uname -m && (node -v || true)
 
-      - name: Run the Falcon installer
-        env:
-          FALCON_NO_LAUNCH: "1"
-        run: bash installer/install.sh || (cat "${TMPDIR:-/tmp}/falcon-install.log"; exit 1)
+      # A customer's Mac usually has no Homebrew, no Node.js and no developer tools, and nobody to type
+      # an administrator password. This machine has all three, so hide them: a bare PATH, and stand-ins
+      # for sudo and brew that leave a mark and fail if anything tries to use them.
+      - name: Run the Falcon installer as on a Mac with no developer tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/trap"
+          for tool in sudo brew; do
+            printf '#!/bin/bash\necho "%s $*" >> "%s/used"\nexit 1\n' "$tool" "$RUNNER_TEMP/trap" > "$RUNNER_TEMP/trap/$tool"
+            chmod +x "$RUNNER_TEMP/trap/$tool"
+          done
+          env -i HOME="$HOME" USER="$USER" TMPDIR="${TMPDIR:-/tmp}" LANG=en_US.UTF-8 \
+            PATH="$RUNNER_TEMP/trap:/usr/bin:/bin:/usr/sbin:/sbin" \
+            FALCON_NO_LAUNCH=1 FALCON_PRETEND_BARE=1 \
+            /bin/bash installer/install.sh || (cat "${TMPDIR:-/tmp}/falcon-install.log"; exit 1)
+
+      - name: No administrator password and no Homebrew were needed
+        run: |
+          if [ -f "$RUNNER_TEMP/trap/used" ]; then echo "The installer tried to use:"; cat "$RUNNER_TEMP/trap/used"; exit 1; fi
+          LAUNCHER="$HOME/Applications/Falcon.app/Contents/MacOS/Falcon"
+          grep -q "exec \"$HOME/.openclaw/tools/node/bin/node\"" "$LAUNCHER" || { echo "Falcon is not using the engine's own private Node.js:"; cat "$LAUNCHER"; exit 1; }
+          test -x "$HOME/.openclaw/bin/openclaw"
+          echo "Engine and Node.js live under the user's own folder."
 
       - name: Installed files and app
         run: |

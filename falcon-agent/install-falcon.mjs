@@ -21,7 +21,7 @@ const read = (file) => fs.readFileSync(file, 'utf8');
 function stableNode() {
   if (process.platform === 'win32') return process.execPath;
   const real = fs.realpathSync(process.execPath);
-  const dirs = ['/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.openclaw', 'bin'),
+  const dirs = [path.join(os.homedir(), '.openclaw', 'tools', 'node', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.openclaw', 'bin'),
     path.join(os.homedir(), '.local', 'bin'), ...(process.env.PATH || '').split(':')];
   for (const dir of dirs) {
     const link = path.join(dir, 'node');

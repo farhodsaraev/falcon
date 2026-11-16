@@ -24,22 +24,30 @@ printf '\n  F A L C O N\n\n'
 # Finds a command the way a new Terminal window would, so tools installed a moment ago are seen.
 find_tool() {
   local name="$1" found=""
-  for dir in "$HOME/.openclaw/bin" "$HOME/.local/bin" "$HOME/.npm-global/bin" /opt/homebrew/bin /usr/local/bin; do
+  for dir in "$HOME/.openclaw/bin" "$HOME/.openclaw/tools/node/bin" "$HOME/.local/bin" "$HOME/.npm-global/bin"; do
     if [ -x "$dir/$name" ]; then found="$dir/$name"; break; fi
   done
-  if [ -z "$found" ]; then found="$(command -v "$name" 2>/dev/null || true)"; fi
-  if [ -z "$found" ] && [ -x /bin/zsh ]; then
-    found="$(/bin/zsh -lic "command -v $name" 2>/dev/null | grep '^/' | tail -1 || true)"
+  # FALCON_PRETEND_BARE=1 is for testing only: behave as on a Mac with no developer tools at all.
+  if [ -z "$found" ] && [ -z "${FALCON_PRETEND_BARE:-}" ]; then
+    for dir in /opt/homebrew/bin /usr/local/bin; do
+      if [ -x "$dir/$name" ]; then found="$dir/$name"; break; fi
+    done
+    if [ -z "$found" ]; then found="$(command -v "$name" 2>/dev/null || true)"; fi
+    if [ -z "$found" ] && [ -x /bin/zsh ]; then
+      found="$(/bin/zsh -lic "command -v $name" 2>/dev/null | grep '^/' | tail -1 || true)"
+    fi
   fi
   printf '%s' "$found"
 }
 node_major() { "$1" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
 
-# ---- 1. Engine (its installer also provides Node.js when it is missing or too old) ----
+# ---- 1. Engine ----
+# Installed into this user's own folder together with its own private copy of Node.js. This route
+# needs no Homebrew, no developer tools and no administrator password, so it works on any Mac.
 OPENCLAW="$(find_tool openclaw)"
 if [ -z "$OPENCLAW" ]; then
   say "Installing the engine (a few minutes)..."
-  curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard >>"$LOG" 2>&1 || fail "the engine did not install"
+  curl -fsSL https://openclaw.ai/install-cli.sh | /bin/bash -s -- --no-onboard >>"$LOG" 2>&1 </dev/null || fail "the engine did not install"
   OPENCLAW="$(find_tool openclaw)"
   [ -n "$OPENCLAW" ] || fail "the engine was installed but cannot be found"
 fi
@@ -47,7 +55,7 @@ fi
 # Node.js: prefer the one the engine itself runs on.
 NODE=""
 ENGINE_REAL="$(/usr/bin/python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OPENCLAW" 2>/dev/null || echo "$OPENCLAW")"
-for candidate in "$(dirname "$OPENCLAW")/node" "$(dirname "$ENGINE_REAL")/node" "$(find_tool node)"; do
+for candidate in "$HOME/.openclaw/tools/node/bin/node" "$(dirname "$OPENCLAW")/node" "$(dirname "$ENGINE_REAL")/node" "$(find_tool node)"; do
   if [ -n "$candidate" ] && [ -x "$candidate" ] && [ "$(node_major "$candidate")" -ge 24 ]; then NODE="$candidate"; break; fi
 done
 if [ -z "$NODE" ]; then
