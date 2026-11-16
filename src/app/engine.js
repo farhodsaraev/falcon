@@ -23,8 +23,12 @@ function candidateDirs() {
     const found = execFileSync('where.exe', ['openclaw.cmd'], { encoding: 'utf8', windowsHide: true });
     for (const line of found.split(/\r?\n/)) if (line.trim()) dirs.push(path.dirname(line.trim()));
   } catch { /* not on PATH */ }
+  // The window may have started before the engine was installed, so its PATH can be stale:
+  // also look in the places a per-user install normally lands.
   dirs.push(
+    path.dirname(process.execPath),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'nodejs'),
+    path.join(os.homedir(), '.local', 'bin'),
     path.join(process.env.APPDATA || '', 'npm'),
     path.join(ENGINE_HOME, 'bin'),
   );

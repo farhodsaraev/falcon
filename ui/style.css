@@ -132,11 +132,16 @@ button.wide { width: 100%; margin-top: 6px; }
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   text-align: center; padding: 4px 2px 12px;
 }
+.talk, .card-text { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .said { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .said:not(:empty)::before { content: "“"; }
 .said:not(:empty)::after { content: "”"; }
 .reply { margin: 0; font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
 .reply.bad { color: var(--warn); }
+.reply.waiting { color: var(--muted); font-style: italic; }
+.history { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; opacity: 0.55; }
+.history:not(:empty) { padding-bottom: 12px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.history .reply { font-size: 14px; margin-bottom: 8px; }
 
 .ask { display: flex; gap: 8px; width: 100%; flex: none; }
 .ask input { flex: 1; border-radius: 999px; padding: 11px 16px; }

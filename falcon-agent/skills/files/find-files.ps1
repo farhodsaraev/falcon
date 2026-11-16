@@ -36,7 +36,28 @@ try {
     $rs.MoveNext()
   }
   $c.Close()
-  @{ ok = $true; files = @($files) } | ConvertTo-Json -Compress -Depth 4
+  $source = "index"
+  if ($files.Count -eq 0) {
+    # The index can lag behind new files or be switched off: look in the folders directly.
+    $source = "folders"
+    $words = @($Query -split '\s+' | Where-Object { $_ })
+    $extList = @($Ext -split '[,; ]+' | Where-Object { $_ } | ForEach-Object { '.' + $_.TrimStart('.').ToLower() })
+    $hits = foreach ($folder in ($Folders -split ';' | Where-Object { $_ -and (Test-Path $_) })) {
+      # -Filter is applied by Windows itself, which is far quicker than checking every file here
+      $filter = if ($words.Count -gt 0) { "*" + ($words[0] -replace '[\[\]\*\?]', '') + "*" } else { "*" }
+      Get-ChildItem -LiteralPath $folder -Recurse -Depth 6 -File -Filter $filter -ErrorAction SilentlyContinue |
+        Where-Object {
+          $name = $_.Name
+          $_.FullName -notmatch '\\(node_modules|\.git|AppData)\\' -and $name -notlike '~$*' -and
+          ($extList.Count -eq 0 -or $extList -contains $_.Extension.ToLower()) -and
+          -not ($words | Where-Object { $name -notlike "*$_*" })
+        }
+    }
+    $files = @($hits | Sort-Object LastWriteTime -Descending | Select-Object -First $Max | ForEach-Object {
+      @{ path = $_.FullName; modified = $_.LastWriteTime.ToString("yyyy-MM-dd HH:mm"); sizeKb = [int]($_.Length / 1kb) }
+    })
+  }
+  @{ ok = $true; source = $source; files = @($files) } | ConvertTo-Json -Compress -Depth 4
 } catch {
   @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }

@@ -33,6 +33,21 @@ $('setup-start').addEventListener('click', async () => {
 // ---- Talking to Falcon ----
 let busy = false;
 
+const scrollTalk = () => { $('talk').scrollTop = $('talk').scrollHeight; };
+
+// Moves the finished question and answer up into the dimmer history above.
+function archiveExchange() {
+  if (!$('said').textContent) return;
+  for (const [cls, text] of [['said', $('said').textContent], ['reply', $('reply').textContent]]) {
+    const line = document.createElement('p');
+    line.className = cls;
+    line.textContent = text;
+    $('history').appendChild(line);
+  }
+  while ($('history').childElementCount > 40) $('history').firstElementChild.remove();
+  scrollTalk();
+}
+
 $('ask').addEventListener('submit', async (event) => {
   event.preventDefault();
   const text = $('ask-text').value.trim();
@@ -40,21 +55,30 @@ $('ask').addEventListener('submit', async (event) => {
   busy = true;
   $('ask-text').value = '';
   $('ask-send').disabled = true;
+  archiveExchange();
   $('said').textContent = text;
   $('reply').textContent = '';
-  $('reply').classList.remove('bad');
+  $('reply').classList.remove('bad', 'waiting');
   setOrb('thinking');
   let answer = '';
+  // If the answer takes a moment, say so instead of sitting silent.
+  const patience = setTimeout(() => {
+    if (!answer) { $('reply').textContent = /[а-яё]/i.test(text) ? 'Одну минуту, сэр.' : 'One moment, sir.'; $('reply').classList.add('waiting'); }
+  }, 2500);
+  const clearWaiting = () => { clearTimeout(patience); $('reply').classList.remove('waiting'); };
   try {
     await window.falcon.chat(text, {
-      onDelta: (piece) => { answer += piece; $('reply').textContent = answer; setOrb('speaking'); },
-      onError: (message) => { $('reply').textContent = message; $('reply').classList.add('bad'); },
+      onDelta: (piece) => { clearWaiting(); answer += piece; $('reply').textContent = answer; setOrb('speaking'); scrollTalk(); },
+      onError: (message) => { clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); },
     });
   } catch {
-    $('reply').textContent = 'I have lost my connection, sir. Please try again in a moment.';
+    clearWaiting();
+    answer = 'I have lost my connection, sir. Please try again in a moment.';
+    $('reply').textContent = answer;
     $('reply').classList.add('bad');
   }
-  if (!$('reply').textContent) $('reply').textContent = 'Done, sir.';
+  clearWaiting();
+  if (!answer) $('reply').textContent = 'Done, sir.';
   setOrb('idle');
   busy = false;
   $('ask-send').disabled = false;
@@ -111,6 +135,9 @@ if (query.get('preview') === 'allow') {
   nextApproval();
 }
 if (query.get('preview') === 'talk') {
+  $('said').textContent = 'Good morning, Falcon.';
+  $('reply').textContent = 'Good morning, sir. At your service.';
+  archiveExchange();
   $('said').textContent = 'Open my quarterly review presentation and go to slide 5.';
   $('reply').textContent = 'Slide five of the Quarterly Review is up, sir.';
 }

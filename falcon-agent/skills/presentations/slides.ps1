@@ -17,6 +17,17 @@ try {
     $rs = $c.Execute("SELECT TOP 1 System.ItemPathDisplay FROM SYSTEMINDEX WHERE " + ($where -join " AND ") + " ORDER BY System.DateModified DESC")
     if (-not $rs.EOF) { $Path = [string]$rs.Fields.Item(0).Value }
     $c.Close()
+    if (-not $Path) {
+      # The index can lag behind new files or be switched off: look in the usual folders directly.
+      $words = @($Find -split '\s+' | Where-Object { $_ })
+      $folders = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('MyDocuments'), (Join-Path $env:USERPROFILE 'Downloads'))
+      $hit = foreach ($folder in ($folders | Where-Object { $_ -and (Test-Path $_) })) {
+        Get-ChildItem -LiteralPath $folder -Recurse -Depth 6 -File -Filter "*.ppt*" -ErrorAction SilentlyContinue |
+          Where-Object { $name = $_.Name; $name -notlike '~$*' -and -not ($words | Where-Object { $name -notlike "*$_*" }) }
+      }
+      $hit = $hit | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+      if ($hit) { $Path = $hit.FullName }
+    }
     if (-not $Path) { throw "No presentation with '$Find' in its name was found." }
   }
 

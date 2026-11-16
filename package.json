@@ -1,16 +1,14 @@
 {
-  "name": "jarvis",
+  "name": "falcon",
   "version": "0.1.0",
   "private": true,
-  "description": "Voice-first desktop assistant that controls the PC",
+  "description": "Falcon: a private butler-style assistant that controls your Windows PC",
   "type": "module",
   "main": "src/app/launch.js",
   "scripts": {
     "start": "node src/app/launch.js",
     "test": "node --test test/",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-package.ps1",
     "demo:files": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-demo-files.ps1"
-  },
-  "dependencies": {
-    "nodemailer": "^6.9.16"
   }
 }
