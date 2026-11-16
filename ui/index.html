@@ -3,32 +3,41 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self'">
   <title>Falcon</title>
+  <link rel="icon" type="image/png" href="falcon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="bar">
-    <span class="brand">F A L C O N</span>
-    <button id="open-connections" class="icon" title="Connections" aria-label="Connections" hidden>⚙</button>
+    <span class="brand"><img src="falcon.png" alt="" width="18" height="18">F A L C O N</span>
+    <span class="bar-right">
+      <span id="status-dots" class="dots" hidden>
+        <span id="dot-voice" class="dot" title="Voice: not set up"><i></i>Voice</span>
+        <span id="dot-telegram" class="dot" title="Telegram: not connected"><i></i>Telegram</span>
+        <span id="dot-chrome" class="dot" title="Your Chrome: not connected"><i></i>Chrome</span>
+      </span>
+      <button id="open-connections" class="icon" title="Settings" aria-label="Settings" hidden>⚙</button>
+    </span>
   </header>
 
   <!-- Waking up -->
   <section id="screen-loading" class="screen">
     <div class="orb small" data-state="thinking"><div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div>
-    <p class="status">One moment, sir.</p>
+    <p class="status">One moment.</p>
   </section>
 
   <!-- First launch -->
   <section id="screen-setup" class="screen" hidden>
+    <ol class="stepper" aria-label="Setup steps"><li class="now">Key</li><li>Introduction</li><li>Ready</li></ol>
     <div class="orb small" data-state="idle"><div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div>
-    <h1>Good day, sir.</h1>
+    <h1>Good day.</h1>
     <p class="lead">I am Falcon. Paste your AI key and I shall be at your service. It stays on this computer.</p>
     <label for="setup-key">AI key</label>
     <input id="setup-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
     <p id="setup-key-kind" class="message" role="status"></p>
     <div id="setup-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
-    <p class="hint left-hint">An <b>OpenAI</b> key gives Falcon both his mind and his voice, so one key is enough. Anthropic and OpenRouter keys also work for thinking; a voice key can be added later under the gear icon.</p>
+    <p class="hint left-hint">An <b>OpenAI</b> key gives Falcon both his mind and his voice, so one key is enough. Anthropic and OpenRouter keys also work for thinking; a voice key can be added later in Settings.</p>
     <label class="check">
       <input id="setup-accept" type="checkbox">
       <span>I understand Falcon can open apps, read files, use the browser and run commands on this computer, and that he asks before sending, deleting or running anything unfamiliar.</span>
@@ -39,6 +48,7 @@
 
   <!-- Introduction: Falcon learns who he serves -->
   <section id="screen-intro" class="screen" hidden>
+    <ol class="stepper" aria-label="Setup steps"><li class="done">Key</li><li class="now">Introduction</li><li>Ready</li></ol>
     <div class="orb small" data-state="idle"><div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div>
     <h1>A moment to get acquainted.</h1>
     <p class="lead">Three quick questions, so I can serve you properly. I shall remember the answers.</p>
@@ -59,14 +69,17 @@
   </section>
 
   <!-- Main -->
-  <section id="screen-main" class="screen" hidden>
+  <section id="screen-main" class="screen main" hidden>
     <div id="orb" class="orb" data-state="idle">
-      <div class="ring r1"></div><div class="ring r2"></div><div class="core"></div>
+      <div class="ripple p1"></div><div class="ripple p2"></div><div class="ripple p3"></div>
+      <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+      <div class="core"></div>
     </div>
     <div id="talk" class="talk" aria-live="polite">
       <div id="history" class="history"></div>
       <p id="said" class="said"></p>
-      <p id="reply" class="reply">At your service, sir.</p>
+      <p id="reply" class="reply">At your service.</p>
+      <div id="actions" class="actions" aria-label="What Falcon did"></div>
       <p id="voice-note" class="hint" role="status"></p>
     </div>
     <div id="examples" class="examples" aria-label="Things to try">
@@ -86,88 +99,121 @@
     </form>
   </section>
 
-  <!-- Connections -->
+  <!-- Settings -->
   <section id="screen-connections" class="screen left" hidden>
-    <h2>Connections</h2>
-
-    <div class="panel">
-      <p class="panel-title">AI key and model</p>
-      <p class="panel-text">Falcon is thinking with <b id="model-now">…</b>. To change the model or the key, paste a key: Falcon recognises whose it is and shows the models it can use. An OpenAI key also gives Falcon his voice. Keys stay on this computer.</p>
-      <div class="row tight">
-        <input id="key-value" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="AI key">
-        <button id="key-save" class="primary">Save</button>
-      </div>
-      <p id="key-kind" class="message" role="status"></p>
-      <div id="key-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
-      <p id="key-message" class="message" role="status"></p>
+    <div class="settings-head">
+      <h2>Settings</h2>
+      <button id="connections-back" class="ghost small-btn">Back to Falcon</button>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Settings sections">
+      <button class="tab on" role="tab" aria-selected="true" data-tab="key">AI key</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="connections">Connections</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="briefing">Briefing</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="about">About</button>
     </div>
 
-    <div class="panel">
-      <p class="panel-title">Telegram <span id="tg-state" class="state"></span></p>
-      <p class="panel-text">Talk to Falcon from your phone.</p>
-      <ol class="steps">
-        <li>Open <b>Telegram</b> on your phone or computer.</li>
-        <li>In the search box type <b>BotFather</b> and open the one with the blue tick.</li>
-        <li>Press <b>Start</b>, then send the message <b class="copy">/newbot</b></li>
-        <li>It asks for a <b>name</b>. Type anything, for example <b>Falcon</b>.</li>
-        <li>It asks for a <b>username</b>. It must be unique and end in <b>bot</b>, for example <b>anna_falcon_bot</b>. If it is taken, try another.</li>
-        <li>BotFather replies with a long line that looks like <b>123456789:AAE…</b>. That is the token. Copy it and keep it private.</li>
-        <li>Paste the token here and press <b>Connect</b>.</li>
-      </ol>
-      <div class="row tight">
-        <input id="tg-token" type="password" placeholder="123456789:AAE…" autocomplete="off" spellcheck="false" aria-label="Telegram bot token">
-        <button id="tg-connect" class="primary">Connect</button>
+    <div class="tab-body" data-tab="key">
+      <div class="panel">
+        <p class="panel-title">AI key and model</p>
+        <p class="panel-text">Falcon is thinking with <b id="model-now">…</b>. To change the model or the key, paste a key: Falcon recognises whose it is and shows the models it can use. An OpenAI key also gives Falcon his voice. Keys stay on this computer.</p>
+        <div class="row tight">
+          <input id="key-value" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="AI key">
+          <button id="key-save" class="primary">Save</button>
+        </div>
+        <p id="key-kind" class="message" role="status"></p>
+        <div id="key-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
+        <p id="key-message" class="message" role="status"></p>
       </div>
-      <ol class="steps" start="8">
-        <li>Back in Telegram, search for the <b>username</b> you just chose and open your new bot.</li>
-        <li>Press <b>Start</b> and send it any message, for example <b>hello</b>.</li>
-        <li>The bot replies with a short <b>code</b>. Type that code here and press <b>Confirm</b>. From then on, Falcon answers you in that chat.</li>
-      </ol>
-      <div class="row tight">
-        <input id="tg-code" type="text" placeholder="Code from your bot" autocomplete="off" spellcheck="false" aria-label="Telegram pairing code">
-        <button id="tg-pair" class="ghost">Confirm</button>
+      <div class="panel">
+        <p class="panel-title">Voice <span id="voice-state" class="state"></span></p>
+        <p id="voice-text" class="panel-text">Falcon speaks and listens through OpenAI's live voice service. It needs an OpenAI key, saved above.</p>
       </div>
-      <p id="tg-message" class="message" role="status"></p>
     </div>
 
-    <div class="panel">
-      <p class="panel-title">Morning briefing <span id="brief-state" class="state"></span></p>
-      <p class="panel-text">Once a day Falcon sends you the weather, today's meetings and important mail in Telegram, without being asked. Connect Telegram first.</p>
-      <div class="row tight">
-        <input id="brief-time" type="time" value="08:00" aria-label="Briefing time">
-        <button id="brief-on" class="primary">Switch on</button>
-        <button id="brief-off" class="ghost">Off</button>
+    <div class="tab-body" data-tab="connections" hidden>
+      <div class="panel">
+        <p class="panel-title">Telegram <span id="tg-state" class="state"></span></p>
+        <p class="panel-text">Talk to Falcon from your phone.</p>
+        <ol class="steps">
+          <li>Open <b>Telegram</b> on your phone or computer.</li>
+          <li>In the search box type <b>BotFather</b> and open the one with the blue tick.</li>
+          <li>Press <b>Start</b>, then send the message <b class="copy">/newbot</b></li>
+          <li>It asks for a <b>name</b>. Type anything, for example <b>Falcon</b>.</li>
+          <li>It asks for a <b>username</b>. It must be unique and end in <b>bot</b>, for example <b>anna_falcon_bot</b>. If it is taken, try another.</li>
+          <li>BotFather replies with a long line that looks like <b>123456789:AAE…</b>. That is the token. Copy it and keep it private.</li>
+          <li>Paste the token here and press <b>Connect</b>.</li>
+        </ol>
+        <div class="row tight">
+          <input id="tg-token" type="password" placeholder="123456789:AAE…" autocomplete="off" spellcheck="false" aria-label="Telegram bot token">
+          <button id="tg-connect" class="primary">Connect</button>
+        </div>
+        <ol class="steps" start="8">
+          <li>Back in Telegram, search for the <b>username</b> you just chose and open your new bot.</li>
+          <li>Press <b>Start</b> and send it any message, for example <b>hello</b>.</li>
+          <li>The bot replies with a short <b>code</b>. Type that code here and press <b>Confirm</b>. From then on, Falcon answers you in that chat.</li>
+        </ol>
+        <div class="row tight">
+          <input id="tg-code" type="text" placeholder="Code from your bot" autocomplete="off" spellcheck="false" aria-label="Telegram pairing code">
+          <button id="tg-pair" class="ghost">Confirm</button>
+        </div>
+        <p id="tg-message" class="message" role="status"></p>
       </div>
-      <div class="row tight">
-        <button id="brief-now" class="ghost">Send one now, to try it</button>
+
+      <div class="panel">
+        <p class="panel-title">Your own Chrome <span id="chrome-state" class="state"></span></p>
+        <p class="panel-text">Lets Falcon work in sites you are already signed in to, such as your mail and calendar, when you ask him to. Chrome asks you to allow this yourself.</p>
+        <ol class="steps">
+          <li>In Chrome, open <b class="copy">chrome://inspect/#remote-debugging</b></li>
+          <li>Switch on <b>Allow remote debugging</b>.</li>
+          <li>Press Check below, then click <b>Allow</b> when Chrome asks.</li>
+        </ol>
+        <div class="row tight">
+          <button id="chrome-copy" class="ghost">Copy the address</button>
+          <button id="chrome-test" class="primary">Check</button>
+        </div>
+        <p id="chrome-message" class="message" role="status"></p>
       </div>
-      <p id="brief-message" class="message" role="status"></p>
     </div>
 
-    <div class="panel">
-      <p class="panel-title">Your own Chrome <span id="chrome-state" class="state"></span></p>
-      <p class="panel-text">Lets Falcon work in sites you are already signed in to, such as your mail and calendar. Chrome asks you to allow this yourself.</p>
-      <ol class="steps">
-        <li>In Chrome, open <b class="copy">chrome://inspect/#remote-debugging</b></li>
-        <li>Switch on <b>Allow remote debugging</b>.</li>
-        <li>Press Check below, then click <b>Allow</b> when Chrome asks.</li>
-      </ol>
-      <div class="row tight">
-        <button id="chrome-copy" class="ghost">Copy the address</button>
-        <button id="chrome-test" class="primary">Check</button>
+    <div class="tab-body" data-tab="briefing" hidden>
+      <div class="panel">
+        <p class="panel-title">Morning briefing <span id="brief-state" class="state"></span></p>
+        <p class="panel-text">Once a day Falcon writes to you in Telegram without being asked: the weather, the top headlines and anything you asked him to remember. He uses his own browser for this, never your Chrome. Connect Telegram first.</p>
+        <div class="row tight">
+          <input id="brief-time" type="time" value="08:00" aria-label="Briefing time">
+          <button id="brief-on" class="primary">Switch on</button>
+          <button id="brief-off" class="ghost">Off</button>
+        </div>
+        <div class="row tight">
+          <button id="brief-now" class="ghost">Send one now, to try it</button>
+        </div>
+        <p id="brief-message" class="message" role="status"></p>
       </div>
-      <p id="chrome-message" class="message" role="status"></p>
     </div>
 
-    <button id="connections-back" class="ghost wide">Back to Falcon</button>
+    <div class="tab-body" data-tab="about" hidden>
+      <div class="panel about">
+        <img src="falcon.png" alt="" width="56" height="56">
+        <p class="panel-title">Falcon</p>
+        <p class="panel-text">A private assistant that lives on this computer. He opens presentations, finds files, reads the screen, works in the browser, remembers what you tell him, and asks before sending, deleting or running anything unfamiliar.</p>
+        <p class="panel-text">Falcon addresses you as <b id="about-callme">sir</b>.</p>
+        <div class="row tight">
+          <button id="about-intro" class="ghost">Change how Falcon addresses me</button>
+        </div>
+        <p class="panel-text legal">Version <span id="about-version">0.1</span>. Your keys, notes and conversations stay on this computer; requests are sent to the AI provider whose key you entered. Built on open-source components; their licences are included with the installation.</p>
+      </div>
+    </div>
   </section>
 
   <!-- Approval -->
   <div id="approval" class="overlay" hidden>
-    <div class="card" role="alertdialog" aria-labelledby="approval-title" aria-describedby="approval-text">
-      <p id="approval-title" class="card-title">Shall I proceed, sir?</p>
-      <p class="card-note">Falcon wants to run:</p>
-      <p id="approval-text" class="card-text"></p>
+    <div class="card" role="alertdialog" aria-labelledby="approval-title" aria-describedby="approval-plain">
+      <p id="approval-title" class="card-title">Shall I proceed?</p>
+      <p id="approval-plain" class="card-plain"></p>
+      <details class="card-details">
+        <summary>Show the exact command</summary>
+        <p id="approval-text" class="card-text"></p>
+      </details>
       <div class="row">
         <button id="deny" class="ghost">Don't allow</button>
         <button id="allow" class="primary">Allow once</button>

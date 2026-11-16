@@ -34,7 +34,7 @@ const engine = {
     }
     if (String(url).includes('api.anthropic.com')) throw new Error('offline');
     calls.push(['fetch', url, options.headers.Authorization, JSON.parse(options.body).messages[0].content]);
-    const sse = ['Slide five ', 'is up, sir.'].map((t) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
+    const sse = ['Slide five ', 'is up, sir [1].', '\n\n[[d', 'id]] Opened Quarterly Review | Went to slide 5'].map((t) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
     await new Promise((r) => setTimeout(r, 2500));          // long enough for one approvals poll
     return new Response(sse, { status: 200 });
   },
@@ -92,11 +92,13 @@ test('chat is relayed to the engine and streamed back; approvals show up meanwhi
   const chat = await call('POST', '/api/chat', { text: 'Open slide 5' });
   const text = await chat.text();
   assert.match(text, /Slide five /);
-  assert.match(text, /is up, sir\./);
   assert.match(text, /event: done/);
+  assert.match(text, /is up, sir \[1\]\./, 'an ordinary bracket in the answer is passed on');
+  assert.doesNotMatch(text.split('event: actions')[0], /\[\[d|Opened Quarterly/, 'the "what I did" line is not shown as text');
+  assert.deepEqual(JSON.parse(text.split('event: actions\ndata: ')[1].split('\n')[0]).items, ['Opened Quarterly Review', 'Went to slide 5']);
   const relayed = calls.find((c) => c[0] === 'fetch');
   assert.equal(relayed[2], 'Bearer gw');
-  assert.equal(relayed[3], 'Open slide 5');
+  assert.ok(relayed[3].startsWith('Open slide 5\n\n[Note from your own window'));
   const pushed = new TextDecoder().decode((await reader.read()).value);
   assert.match(pushed, /event: approval/);
   assert.match(pushed, /whoami/);

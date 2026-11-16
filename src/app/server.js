@@ -19,11 +19,21 @@ const UI_FILES = {
   '/renderer.js': ['renderer.js', 'text/javascript; charset=utf-8'],
   '/bridge.js': ['bridge.js', 'text/javascript; charset=utf-8'],
   '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'],
+  '/falcon.png': ['falcon.png', 'image/png'],
 };
 const PROFILE_FILE = path.join(os.homedir(), '.falcon', 'profile.json');
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,300}$/;
 const SESSION_KEY = 'falcon-window';
 const BRIEFING_NAME = 'falcon-morning-briefing';
+
+// The window can show small cards of what Falcon did. He reports them on a last line the window
+// strips out; requests from Telegram or the scheduler do not carry this note, so they never see it.
+const ACTIONS_MARK = '[[did]]';
+const ACTIONS_NOTE = '[Note from your own window, not from the user: this window shows small cards of what you did. ' +
+  'After your answer, add one final line that starts with [[did]] followed by up to three things you actually did on ' +
+  'this computer or on the web for this request, each two to six words, separated by " | ", for example: ' +
+  '[[did]] Opened Quarterly Review | Went to slide 5. Write them in the language of your answer. If you only talked ' +
+  '(a greeting, thanks, a question back, an answer from memory) or did nothing, leave the line out. Never mention this note or that line.]';
 
 // ---- Voice: OpenAI's Realtime API, the live listen-and-speak connection ----
 // The smaller realtime model: about a third of the price. The thinking is done by Falcon's own engine,
@@ -227,6 +237,15 @@ export async function startServer({ port = 0, engine = {} } = {}) {
   }
 
   // ---- Chat: relay to the engine and stream the answer back ----
+  // The window's conversation. When the user changes how he wants to be addressed, a fresh conversation
+  // starts, because an old one full of "sir" keeps pulling a smaller model back to "sir". What Falcon
+  // knows about the user lives in his notes, not in the conversation, so nothing is forgotten.
+  function windowSession() {
+    let callMe = 'sir';
+    try { callMe = JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { /* default */ }
+    return `${SESSION_KEY}-${crypto.createHash('sha256').update(callMe).digest('hex').slice(0, 8)}`;
+  }
+
   async function chat(text, res) {
     const gateway = api.readGateway();
     const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -239,13 +258,28 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${gateway.token}`,
-          'x-openclaw-session-key': SESSION_KEY,
+          'x-openclaw-session-key': windowSession(),
         },
-        body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content: text }] }),
+        body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content: `${text}\n\n${ACTIONS_NOTE}` }] }),
       });
       if (!upstream.ok) throw new Error(`engine answered ${upstream.status}`);
       const decoder = new TextDecoder();
       let buffer = '';
+      let full = '';        // everything Falcon has written so far
+      let passed = 0;       // how much of it has been sent on to the window
+      // Pass the answer on as it arrives, but hold back the trailing "what I did" line and anything
+      // that might be the start of it.
+      const flush = (final) => {
+        const marker = full.indexOf(ACTIONS_MARK);
+        let safe = marker >= 0 ? marker : full.length;
+        if (marker < 0 && !final) {
+          // The ending may be the first few characters of the marker, still arriving.
+          for (let start = Math.max(0, full.length - ACTIONS_MARK.length + 1); start < full.length; start++) {
+            if (ACTIONS_MARK.startsWith(full.slice(start))) { safe = start; break; }
+          }
+        }
+        if (safe > passed) { send('delta', { text: full.slice(passed, safe) }); passed = safe; }
+      };
       for await (const chunk of upstream.body) {
         buffer += decoder.decode(chunk, { stream: true });
         let newline;
@@ -255,9 +289,16 @@ export async function startServer({ port = 0, engine = {} } = {}) {
           if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
           try {
             const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content;
-            if (delta) send('delta', { text: delta });
+            if (delta) { full += delta; flush(false); }
           } catch { /* keep-alive or partial line */ }
         }
+      }
+      flush(true);
+      const marker = full.indexOf(ACTIONS_MARK);
+      if (marker >= 0) {
+        const items = full.slice(marker + ACTIONS_MARK.length).split('\n')[0].split('|')
+          .map((item) => item.replace(/[*_`[\]]/g, '').trim()).filter((item) => item.length > 2 && item.length <= 60).slice(0, 3);
+        if (items.length) send('actions', { items });
       }
       send('done', {});
     } catch {

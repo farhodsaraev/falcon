@@ -43,7 +43,7 @@
       }
     },
     // Sends a message and calls onDelta for each piece of the answer as it arrives.
-    async chat(text, { onDelta, onError }) {
+    async chat(text, { onDelta, onError, onActions }) {
       const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text }) });
       if (!response.ok || !response.body) return onError('I have lost my connection, sir.');
       const reader = response.body.getReader();
@@ -62,6 +62,7 @@
           if (!event || !data) continue;
           const payload = JSON.parse(data);
           if (event === 'delta') onDelta(payload.text);
+          if (event === 'actions' && onActions) onActions(payload.items);
           if (event === 'error') onError(payload.text);
         }
       }

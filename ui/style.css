@@ -244,3 +244,119 @@ button.primary.busy::after { border-color: rgba(3, 18, 28, 0.3); border-top-colo
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
   max-height: 140px; overflow-y: auto; user-select: text;
 }
+
+/* ======================================================================
+   Interface upgrade: living orb, action cards, identity, approval, tabs
+   ====================================================================== */
+
+/* ---- Layout that fills the window at any size ---- */
+.screen { max-width: min(680px, 100%); }
+.screen.main { padding-bottom: 20px; }
+#screen-setup, #screen-intro, #screen-loading { max-width: min(440px, 100%); }
+.screen.left { max-width: min(600px, 100%); }
+.reply { font-size: clamp(17px, 2.3vh + 0.5vw, 23px); max-width: 34em; }
+.said { font-size: clamp(13px, 1.6vh, 15px); }
+.ask { max-width: 560px; }
+.examples { max-width: 560px; }
+
+/* ---- Identity: brand mark and status dots ---- */
+.brand { display: inline-flex; align-items: center; gap: 9px; }
+.brand img { border-radius: 50%; opacity: 0.95; }
+.bar-right { display: inline-flex; align-items: center; gap: 6px; -webkit-app-region: no-drag; }
+.dots { display: inline-flex; gap: 12px; margin-right: 6px; }
+.dot { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); cursor: default; }
+.dot i { width: 7px; height: 7px; border-radius: 50%; background: #2a3a52; display: inline-block; }
+.dot.on { color: var(--text); }
+.dot.on i { background: var(--ok); box-shadow: 0 0 8px rgba(111, 227, 165, 0.7); }
+@media (max-width: 460px) { .dot { font-size: 0; gap: 0; } .dots { gap: 8px; } }
+
+/* ---- Step markers on the first screens ---- */
+.stepper { list-style: none; display: flex; gap: 6px; padding: 0; margin: 4px 0 0; font-size: 11px; color: var(--muted); counter-reset: step; }
+.stepper li { counter-increment: step; display: inline-flex; align-items: center; gap: 6px; }
+.stepper li::before {
+  content: counter(step); width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center;
+  border: 1px solid var(--line); font-size: 10px;
+}
+.stepper li + li::after { content: ""; order: -1; width: 18px; height: 1px; background: var(--line); margin-right: 2px; }
+.stepper li.now { color: var(--text); }
+.stepper li.now::before { border-color: var(--glow); color: var(--glow); }
+.stepper li.done::before { content: "✓"; background: var(--glow); border-color: var(--glow); color: #03121c; }
+
+/* ---- Living orb ---- */
+#orb { --level: 0; width: clamp(170px, 30vh, 280px); height: clamp(170px, 30vh, 280px); margin: clamp(12px, 4vh, 40px) 0 clamp(14px, 3vh, 28px); }
+#orb .core { transition: filter 0.4s ease, box-shadow 0.4s ease; }
+.ring.r3 { inset: -7%; border-color: rgba(79, 216, 255, 0.12); border-top-color: transparent; border-right-color: transparent; animation: spin 34s linear infinite; }
+.ripple { position: absolute; inset: 22%; border-radius: 50%; border: 1px solid rgba(79, 216, 255, 0.55); opacity: 0; pointer-events: none; }
+
+/* Idle: slow breathing, rings drifting. */
+
+/* Listening: soft ripples moving outward; they grow stronger with the loudness of the user's voice. */
+#orb[data-state="listening"] .core { animation: breathe 2.6s ease-in-out infinite; box-shadow: 0 0 44px 8px rgba(79, 216, 255, 0.55), 0 0 120px 30px rgba(20, 121, 201, 0.32); }
+#orb[data-state="listening"] .ripple { animation: ripple 2.4s ease-out infinite; border-color: rgba(79, 216, 255, calc(0.35 + var(--level) * 0.65)); }
+#orb[data-state="listening"] .ripple.p2 { animation-delay: 0.8s; }
+#orb[data-state="listening"] .ripple.p3 { animation-delay: 1.6s; }
+@keyframes ripple { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(2.15); opacity: 0; } }
+
+/* Working: arcs turn quickly in opposite directions, the core dims and waits. */
+#orb[data-state="thinking"] .ring.r1 { animation-duration: 1.3s; border-color: rgba(79, 216, 255, 0.7); border-top-color: transparent; border-bottom-color: transparent; }
+#orb[data-state="thinking"] .ring.r2 { animation-duration: 2s; border-color: rgba(79, 216, 255, 0.5); border-left-color: transparent; border-right-color: transparent; }
+#orb[data-state="thinking"] .ring.r3 { animation-duration: 3.2s; border-color: rgba(79, 216, 255, 0.3); border-top-color: transparent; border-right-color: transparent; }
+#orb[data-state="thinking"] .core { animation: breathe 1.8s ease-in-out infinite; filter: saturate(0.75) brightness(0.82); }
+
+/* Speaking: the core swells with his voice. With live sound it follows the real loudness;
+   for typed answers, where there is no sound, it keeps a gentle speaking rhythm. */
+#orb[data-state="speaking"] .core { animation: speak 0.46s ease-in-out infinite alternate; box-shadow: 0 0 52px 12px rgba(79, 216, 255, 0.6), 0 0 130px 34px rgba(20, 121, 201, 0.36); }
+#orb.live[data-state="speaking"] .core {
+  animation: none;
+  transform: scale(calc(0.96 + var(--level) * 0.26));
+  box-shadow: 0 0 calc(40px + var(--level) * 60px) calc(8px + var(--level) * 18px) rgba(79, 216, 255, calc(0.45 + var(--level) * 0.4)), 0 0 130px 34px rgba(20, 121, 201, 0.36);
+  transition: transform 0.08s linear, box-shadow 0.08s linear;
+}
+#orb.live[data-state="speaking"] .ring.r1 { border-color: rgba(79, 216, 255, calc(0.3 + var(--level) * 0.6)); border-top-color: transparent; border-bottom-color: transparent; }
+@media (prefers-reduced-motion: reduce) {
+  .ripple { animation: none !important; }
+  #orb.live[data-state="speaking"] .core { transform: none; }
+}
+
+/* ---- Action cards: what Falcon did ---- */
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; }
+.actions:empty { display: none; }
+.action {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text);
+  background: rgba(79, 216, 255, 0.06); border: 1px solid var(--line); border-radius: 9px; padding: 5px 10px 5px 8px;
+  animation: card-in 0.35s ease both;
+}
+.action svg { width: 14px; height: 14px; flex: none; color: var(--glow); }
+.action:nth-child(2) { animation-delay: 0.08s; }
+.action:nth-child(3) { animation-delay: 0.16s; }
+@keyframes card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.history .actions { opacity: 0.9; margin-bottom: 10px; }
+.history .action { font-size: 11.5px; padding: 3px 8px 3px 6px; animation: none; }
+@media (prefers-reduced-motion: reduce) { .action { animation: none; } }
+
+/* ---- Approval card: plain words first, the exact command one click away ---- */
+.card-plain { margin: 0 0 10px; font-size: 16px; line-height: 1.45; overflow-wrap: anywhere; }
+.card-plain b { font-weight: 600; }
+.card-details { margin: 0 0 4px; }
+.card-details summary { cursor: pointer; font-size: 12px; color: var(--muted); list-style-position: inside; }
+.card-details summary:hover { color: var(--text); }
+.card-details[open] summary { margin-bottom: 8px; }
+
+/* ---- Settings: four tabs ---- */
+.settings-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.settings-head h2 { margin: 0; }
+button.small-btn { padding: 6px 12px; font-size: 12.5px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; flex: none; }
+.tab {
+  background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+  padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--text); border-bottom-color: var(--glow); }
+.tab-body { display: flex; flex-direction: column; }
+.panel.about { text-align: center; }
+.panel.about img { border-radius: 50%; margin: 4px 0 6px; }
+.panel.about .row { justify-content: center; }
+.panel.about .row button { flex: 0 1 auto; }
+.panel-text.legal { font-size: 11.5px; margin-top: 12px; }
+#brief-time { flex: 1.2; }

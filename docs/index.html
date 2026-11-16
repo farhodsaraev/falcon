@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Falcon: a private assistant for your Mac or PC</title>
+  <meta name="description" content="Falcon is a private assistant that lives on your computer. Ask in plain words, by voice or in writing, and he gets things done. Install on Mac or Windows with one line.">
+  <meta property="og:title" content="Falcon">
+  <meta property="og:description" content="A private assistant that lives on your computer. Click the orb and he will introduce himself.">
+  <meta property="og:image" content="falcon.png">
+  <meta name="theme-color" content="#05080f">
+  <link rel="icon" type="image/png" href="falcon.png">
+  <style>
+    :root {
+      --bg: #05080f;
+      --panel: #0c1320;
+      --line: #1c2a40;
+      --text: #dbe7f5;
+      --muted: #7d8da3;
+      --glow: #4fd8ff;
+      --glow-deep: #1479c9;
+      --warn: #ffb454;
+      --ok: #6fe3a5;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+
+    html {
+      min-height: 100%;
+      background: radial-gradient(120% 80% at 50% 0%, #0b1626 0%, var(--bg) 60%) fixed var(--bg);
+      scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+    }
+    body {
+      margin: 0; min-height: 100vh; min-height: 100dvh;
+      color: var(--text);
+      font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+      overflow-x: hidden;
+    }
+
+    #sky { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+
+    .bar {
+      position: relative; z-index: 2;
+      display: flex; justify-content: space-between; align-items: center;
+      height: 48px; padding: 0 12px 0 20px;
+    }
+    .bar-buttons { display: flex; align-items: center; gap: 8px; }
+    .brand { font-size: 11px; letter-spacing: 0.32em; color: var(--muted); transition: color 1.2s, text-shadow 1.2s; }
+    body:not(.asleep) .brand { color: var(--text); text-shadow: 0 0 18px rgba(79, 216, 255, 0.55); }
+
+    .screen {
+      position: relative; z-index: 1;
+      display: flex; flex-direction: column; align-items: center;
+      width: 100%; max-width: 640px; margin: 0 auto;
+      padding: 0 24px 28px;
+      min-height: calc(100vh - 48px); min-height: calc(100dvh - 48px);
+    }
+
+    /* ---- Orb: the same one that lives in Falcon's window ---- */
+    .orb {
+      position: relative; flex: none;
+      width: 230px; height: 230px;
+      margin: 20px 0 18px;
+      padding: 0; border: 0; background: none; border-radius: 50%;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      transition: width 0.9s cubic-bezier(.2,.8,.2,1), height 0.9s cubic-bezier(.2,.8,.2,1), margin 0.9s cubic-bezier(.2,.8,.2,1);
+    }
+    body.asleep .orb { margin-top: max(24px, calc(50vh - 48px - 190px)); }
+    body.compact .orb { width: 132px; height: 132px; margin: 10px 0 12px; }
+    .orb:focus-visible { outline: 2px solid var(--glow); outline-offset: 6px; }
+    .core {
+      position: absolute; inset: 22%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 38% 32%, #e9fbff 0%, var(--glow) 28%, var(--glow-deep) 62%, #07304f 100%);
+      box-shadow: 0 0 38px 6px rgba(79, 216, 255, 0.45), 0 0 110px 26px rgba(20, 121, 201, 0.28);
+      animation: breathe 4.2s ease-in-out infinite;
+      transition: box-shadow 0.4s, filter 0.4s;
+    }
+    .orb:hover .core { box-shadow: 0 0 46px 10px rgba(79, 216, 255, 0.6), 0 0 140px 36px rgba(20, 121, 201, 0.38); }
+    .ring { position: absolute; inset: 0; border-radius: 50%; border: 1px solid rgba(79, 216, 255, 0.28); }
+    .ring.r1 { inset: 9%; border-top-color: transparent; border-bottom-color: transparent; animation: spin 14s linear infinite; }
+    .ring.r2 { border-left-color: transparent; border-right-color: transparent; animation: spin 22s linear infinite reverse; }
+    .orb[data-state="speaking"] .ring.r1 { animation-duration: 6s; }
+    .orb[data-state="speaking"] .ring.r2 { animation-duration: 9s; }
+    .orb[data-state="speaking"] .core { animation: speak 0.42s ease-in-out infinite alternate; }
+
+    @keyframes breathe { 0%, 100% { transform: scale(0.96); } 50% { transform: scale(1.03); } }
+    @keyframes speak { from { transform: scale(0.97); } to { transform: scale(1.09); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hint { color: var(--muted); font-size: 12.5px; margin: 4px 0 8px; text-align: center; }
+    #wake-hint { font-size: 14px; color: var(--text); letter-spacing: 0.04em; animation: beckon 2.6s ease-in-out infinite; }
+    #wake-hint small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; letter-spacing: 0; }
+    @keyframes beckon { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+    /* ---- What Falcon says ---- */
+    .talk {
+      width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px;
+      text-align: center; padding: 4px 2px 16px; min-height: 96px;
+    }
+    .said { margin: 0; color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
+    .said:not(:empty)::before { content: "“"; }
+    .said:not(:empty)::after { content: "”"; }
+    .reply { margin: 0; font-size: 19px; line-height: 1.55; font-weight: 300; overflow-wrap: anywhere; }
+    .reply .w { opacity: 0; filter: blur(5px); transition: opacity 0.4s ease, filter 0.4s ease; }
+    .reply .w.on { opacity: 1; filter: none; }
+
+    /* ---- Buttons and chips ---- */
+    button { font: inherit; }
+    button.primary, button.ghost { padding: 10px 14px; border-radius: 8px; cursor: pointer; }
+    button.primary { background: var(--glow); color: #03121c; border: 1px solid var(--glow); font-weight: 600; }
+    button.primary:hover { background: #7fe4ff; }
+    button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    button.ghost:hover { border-color: var(--glow); }
+    button:focus-visible, a:focus-visible { outline: 2px solid var(--glow); outline-offset: 1px; }
+    .bar .ghost { padding: 6px 14px; border-radius: 999px; font-size: 12.5px; }
+
+    .mic {
+      width: 32px; height: 32px; padding: 0; border-radius: 999px;
+      display: grid; place-items: center; background: transparent; color: var(--text);
+      border: 1px solid var(--line); cursor: pointer;
+    }
+    .mic:hover { border-color: var(--glow); }
+    .mic .off { display: none; }
+    .mic[aria-pressed="false"] { color: var(--muted); }
+    .mic[aria-pressed="false"] .off { display: inline; }
+    .mic[aria-pressed="false"] .waves { display: none; }
+
+    .chip {
+      background: transparent; color: var(--text); border: 1px solid var(--line);
+      border-radius: 999px; padding: 7px 13px; font-size: 13px; cursor: pointer;
+    }
+    .chip:hover { border-color: var(--glow); }
+    .chip.on { background: var(--glow); border-color: var(--glow); color: #03121c; font-weight: 600; }
+    .examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; padding: 6px 0 14px; }
+    .examples .hint { width: 100%; margin: 0 0 2px; }
+
+    /* ---- Install panel ---- */
+    .panel {
+      width: 100%; background: rgba(12, 19, 32, 0.92); border: 1px solid var(--line); border-radius: 14px;
+      padding: 18px 20px; margin-bottom: 14px; text-align: left;
+      box-shadow: 0 0 60px rgba(20, 121, 201, 0.12);
+    }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+    .panel-title { margin: 0; font-size: 17px; }
+    .tabs { display: flex; gap: 6px; }
+    .note {
+      margin: 0 0 6px; padding: 11px 13px; font-size: 13.5px; line-height: 1.5;
+      border: 1px solid var(--line); border-left: 3px solid var(--glow); border-radius: 8px; background: rgba(79, 216, 255, 0.05);
+    }
+    .note.warn { border-left-color: var(--warn); background: rgba(255, 180, 84, 0.06); }
+    .note b { font-weight: 600; }
+    .note a, .more a { color: var(--glow); }
+
+    .steps { list-style: none; counter-reset: step; margin: 14px 0 0; padding: 0; }
+    .steps > li { counter-increment: step; position: relative; padding: 0 0 16px 44px; }
+    .steps > li::before {
+      content: counter(step); position: absolute; left: 0; top: 0;
+      width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+      font-size: 13px; font-weight: 600; color: var(--glow);
+      border: 1px solid var(--glow); box-shadow: 0 0 14px rgba(79, 216, 255, 0.25);
+    }
+    .steps > li:not(:last-child)::after {
+      content: ""; position: absolute; left: 14px; top: 32px; bottom: 4px; width: 1px; background: var(--line);
+    }
+    .step-title { margin: 2px 0 2px; font-size: 15.5px; font-weight: 600; }
+    .step-do { margin: 0; font-size: 14px; line-height: 1.6; }
+    .step-see { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+    .step-see::before { content: "You will see: "; color: var(--ok); }
+    kbd {
+      font: 12px/1 Consolas, Menlo, monospace; color: var(--text); white-space: nowrap;
+      border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 2px 6px; background: var(--bg);
+    }
+    .cmd-row { display: flex; gap: 8px; align-items: stretch; margin-top: 8px; }
+    .cmd {
+      flex: 1; min-width: 0; margin: 0;
+      font: 12.5px/1.5 Consolas, Menlo, "Cascadia Mono", monospace; color: var(--glow);
+      background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; user-select: all;
+    }
+    .cmd-row .primary { flex: none; min-width: 96px; }
+    .screen-text {
+      margin: 6px 0 0; padding: 8px 12px; font: 12px/1.6 Consolas, Menlo, monospace; color: var(--muted);
+      background: var(--bg); border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap;
+    }
+    .more { margin: 4px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
+    .more p { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
+    .more p b { color: var(--text); font-weight: 600; }
+
+    .foot { margin: auto 0 0; padding-top: 14px; font-size: 12px; color: var(--muted); text-align: center; }
+    .foot a { color: var(--muted); }
+    .foot a:hover { color: var(--text); }
+
+    .rise { animation: rise 0.7s cubic-bezier(.2,.8,.2,1) both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+    @media (max-width: 520px) {
+      .orb { width: 190px; height: 190px; }
+      body.compact .orb { width: 110px; height: 110px; }
+      .reply { font-size: 17px; }
+      .screen { padding: 0 16px 22px; }
+      .panel { padding: 16px 14px; }
+      .panel-head { flex-wrap: wrap; }
+      .steps > li { padding-left: 40px; }
+      .cmd-row { flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .core, .ring, #wake-hint, .rise { animation: none !important; }
+      .orb, .reply .w { transition: none; }
+      .reply .w { filter: none; }
+    }
+  </style>
+</head>
+<body class="asleep">
+  <canvas id="sky" aria-hidden="true"></canvas>
+
+  <header class="bar">
+    <span class="brand">F A L C O N</span>
+    <span class="bar-buttons">
+      <button id="sound" type="button" class="mic" aria-pressed="true" aria-label="Falcon's voice" title="Falcon's voice on or off">
+        <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" fill="currentColor" stroke="none"/>
+          <path class="waves" d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a7.8 7.8 0 0 1 0 11"/>
+          <path class="off" d="M16 9.5l5 5M21 9.5l-5 5"/>
+        </svg>
+      </button>
+      <button id="jump-install" class="ghost" type="button">Install</button>
+    </span>
+  </header>
+
+  <main class="screen">
+    <button id="orb" class="orb" type="button" data-state="idle" aria-label="Wake Falcon. He will introduce himself aloud.">
+      <span class="ring r1"></span><span class="ring r2"></span><span class="core"></span>
+    </button>
+
+    <p id="wake-hint" class="hint">Click to wake Falcon<small>He speaks, so turn your sound on.</small></p>
+
+    <div id="talk" class="talk" aria-live="polite" hidden>
+      <p id="said" class="said"></p>
+      <p id="reply" class="reply"></p>
+    </div>
+
+    <section id="install" class="panel" aria-label="Install Falcon" hidden>
+      <div class="panel-head">
+        <p class="panel-title">Install Falcon</p>
+        <div class="tabs" role="tablist" aria-label="Your computer">
+          <button type="button" class="chip" role="tab" data-os="mac">Mac</button>
+          <button type="button" class="chip" role="tab" data-os="windows">Windows</button>
+        </div>
+      </div>
+
+      <p id="phone-note" class="note warn" hidden><b>Falcon installs on a computer, not a phone.</b> Open this page on your Mac or Windows PC and follow the steps there.</p>
+
+      <p class="note"><b>Have one thing ready: an AI key.</b> It is a long line of letters that starts with <b>sk-</b>. The simplest is an OpenAI key, which gives Falcon both his mind and his voice: create one at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>. Anthropic and OpenRouter keys also work.</p>
+
+      <div data-pane="mac">
+        <ol class="steps">
+          <li>
+            <p class="step-title">Open Terminal</p>
+            <p class="step-do">Hold <kbd>⌘ Command</kbd> and press <kbd>Space</kbd>. Type <b>Terminal</b>. Press <kbd>Return</kbd>.</p>
+            <p class="step-see">a small window with a line of text and a blinking cursor.</p>
+          </li>
+          <li>
+            <p class="step-title">Copy this line</p>
+            <p class="step-do">Press the <b>Copy</b> button. Do not type the line by hand.</p>
+            <div class="cmd-row">
+              <pre class="cmd" id="cmd-mac">curl -fsSL https://raw.githubusercontent.com/farhodsaraev/falcon/main/installer/install.sh | bash</pre>
+              <button type="button" class="primary" data-copy="cmd-mac">Copy</button>
+            </div>
+          </li>
+          <li>
+            <p class="step-title">Paste it into Terminal</p>
+            <p class="step-do">Click inside the Terminal window. Hold <kbd>⌘ Command</kbd> and press <kbd>V</kbd>. Then press <kbd>Return</kbd>.</p>
+          </li>
+          <li>
+            <p class="step-title">Wait a few minutes</p>
+            <p class="step-do">Leave the window open. Nothing will ask you for a password. When it says <b>Done.</b>, Falcon's window opens by itself.</p>
+            <pre class="screen-text">  F A L C O N
+
+  Installing the engine (a few minutes)...
+  Downloading Falcon...
+  Adding the Falcon app...
+  Done.
+  Opening Falcon...</pre>
+          </li>
+          <li>
+            <p class="step-title">Give Falcon your AI key</p>
+            <p class="step-do">In Falcon's window: paste your <b>AI key</b>, tick the box, press <b>Start</b>. The first start takes a few minutes; wait until he greets you.</p>
+          </li>
+          <li>
+            <p class="step-title">Say hello</p>
+            <p class="step-do">Type a request, or press the <b>microphone</b> and simply talk.</p>
+          </li>
+        </ol>
+        <div class="more">
+          <p><b>Opening Falcon later:</b> double-click <b>Falcon</b> on your Desktop or in Applications.</p>
+          <p><b>macOS asks for permission</b> the first time Falcon looks at your screen or controls an app. Click <b>Allow</b>.</p>
+          <p><b>If it says “Falcon could not be installed”:</b> check your internet connection and repeat steps 2 and 3. Running it twice is safe.</p>
+        </div>
+      </div>
+
+      <div data-pane="windows" hidden>
+        <ol class="steps">
+          <li>
+            <p class="step-title">Open PowerShell</p>
+            <p class="step-do">Press the <kbd>⊞ Windows</kbd> key. Type <b>PowerShell</b>. Press <kbd>Enter</kbd>. Do not choose “Run as administrator”; it is not needed.</p>
+            <p class="step-see">a dark window with a line of text and a blinking cursor.</p>
+          </li>
+          <li>
+            <p class="step-title">Copy this line</p>
+            <p class="step-do">Press the <b>Copy</b> button. Do not type the line by hand.</p>
+            <div class="cmd-row">
+              <pre class="cmd" id="cmd-windows">irm https://raw.githubusercontent.com/farhodsaraev/falcon/main/installer/install.ps1 | iex</pre>
+              <button type="button" class="primary" data-copy="cmd-windows">Copy</button>
+            </div>
+          </li>
+          <li>
+            <p class="step-title">Paste it into PowerShell</p>
+            <p class="step-do">Click inside the PowerShell window. Hold <kbd>Ctrl</kbd> and press <kbd>V</kbd>. Then press <kbd>Enter</kbd>.</p>
+          </li>
+          <li>
+            <p class="step-title">Wait a few minutes</p>
+            <p class="step-do">Leave the window open. Nothing will ask you for a password. When it says <b>Done.</b>, Falcon's window opens by itself.</p>
+            <pre class="screen-text">  F A L C O N
+
+  Downloading Falcon...
+  Adding the Falcon icon...
+  Done.
+  Opening Falcon...</pre>
+          </li>
+          <li>
+            <p class="step-title">Give Falcon your AI key</p>
+            <p class="step-do">In Falcon's window: paste your <b>AI key</b>, tick the box, press <b>Start</b>. The first start takes a few minutes; wait until he greets you.</p>
+          </li>
+          <li>
+            <p class="step-title">Say hello</p>
+            <p class="step-do">Type a request, or press the <b>microphone</b> and simply talk.</p>
+          </li>
+        </ol>
+        <div class="more">
+          <p><b>Opening Falcon later:</b> double-click <b>Falcon</b> on your Desktop, or find him in the Start menu.</p>
+          <p><b>If it stops with an error:</b> check your internet connection and repeat steps 2 and 3. Running it twice is safe.</p>
+        </div>
+      </div>
+    </section>
+
+    <div id="examples" class="examples" aria-label="Hear more from Falcon" hidden>
+      <p class="hint">Hear more from Falcon</p>
+      <button type="button" class="chip" data-topic="what">What can you do?</button>
+      <button type="button" class="chip" data-topic="need">What do I need?</button>
+      <button type="button" class="chip" data-topic="safe">Is it safe?</button>
+    </div>
+
+    <p id="foot" class="foot" hidden>For Mac and Windows 10/11 · <a href="https://github.com/farhodsaraev/falcon" rel="noopener">Source on GitHub</a></p>
+
+    <noscript>
+      <div class="panel">
+        <p class="panel-title">Install Falcon</p>
+        <p class="note">Falcon is a private assistant that lives on your computer. Have an AI key ready (OpenAI, Anthropic or OpenRouter).</p>
+        <ol class="steps">
+          <li><p class="step-title">Mac</p><p class="step-do">Open Terminal, paste this line, press Return:</p><pre class="cmd">curl -fsSL https://raw.githubusercontent.com/farhodsaraev/falcon/main/installer/install.sh | bash</pre></li>
+          <li><p class="step-title">Windows</p><p class="step-do">Open PowerShell, paste this line, press Enter:</p><pre class="cmd">irm https://raw.githubusercontent.com/farhodsaraev/falcon/main/installer/install.ps1 | iex</pre></li>
+          <li><p class="step-title">Then</p><p class="step-do">Falcon's window opens. Paste your AI key, tick the box, press Start.</p></li>
+        </ol>
+      </div>
+    </noscript>
+  </main>
+
+  <script src="lines.js"></script>
+  <script>
+  (() => {
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const LINES = window.FALCON_LINES || {};
+
+    // ---- Which computer is the visitor on ----
+    const ua = navigator.userAgent || '';
+    const plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+    const phone = /Android|iPhone|iPad|iPod/i.test(ua) || (/Mac/i.test(plat) && navigator.maxTouchPoints > 1);
+    const os = phone ? 'other' : /Mac/i.test(plat) ? 'mac' : /Win/i.test(plat) ? 'windows' : 'other';
+
+    // ---- Voice ----
+    // Falcon's recorded voice lives in voice/<name>.wav (made by scripts/make-voice.mjs).
+    // Where a recording is missing, the browser's own voice reads the line instead.
+    const player = new Audio();
+    player.preload = 'auto';
+    const noClip = new Set();
+    const synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
+    let soundOn = true;
+    let voice = null;
+    let keep = null; // holds the utterance so the browser does not drop it mid-sentence
+    const WANTED = [/Ryan.*Natural/i, /Thomas.*Natural/i, /Google UK English Male/i, /^Daniel/i, /Arthur/i, /Oliver/i, /Microsoft George/i];
+    function pickVoice() {
+      if (!synth) return;
+      const all = synth.getVoices();
+      if (!all.length) return;
+      for (const re of WANTED) {
+        const v = all.find((x) => re.test(x.name) && /^en/i.test(x.lang));
+        if (v) { voice = v; return; }
+      }
+      voice = all.find((x) => /^en[-_]GB/i.test(x.lang)) || all.find((x) => /^en/i.test(x.lang)) || null;
+    }
+    if (synth) { pickVoice(); synth.addEventListener && synth.addEventListener('voiceschanged', pickVoice); }
+
+    // ---- Speaking: words appear as he says them ----
+    const orb = $('orb');
+    const reply = $('reply');
+    let run = 0;        // every new speech gets a number; older ones stop when it changes
+    let speaking = false;
+    let kick = 0;       // jumps on each word, drives the sound ring
+    const setOrb = (state) => { orb.dataset.state = state; speaking = state === 'speaking'; };
+
+    function stop() {
+      run++;
+      if (synth) synth.cancel();
+      player.pause();
+      reply.querySelectorAll('.w').forEach((w) => w.classList.add('on'));
+      setOrb('idle');
+    }
+    function setSound(on) {
+      soundOn = on;
+      $('sound').setAttribute('aria-pressed', String(on));
+      if (!on && speaking) stop();
+    }
+
+    // Puts a paragraph on screen with every word still hidden; returns the words.
+    function lay(text) {
+      reply.textContent = '';
+      return text.trim().split(/\s+/).map((word) => {
+        const span = document.createElement('span');
+        span.className = 'w'; span.textContent = word;
+        reply.append(span, ' ');
+        return span;
+      });
+    }
+
+    // Plays a recording and reveals the words in step with it. Resolves 'done' or 'missing'.
+    function playClip(name, paras, id) {
+      return new Promise((resolve) => {
+        if (noClip.has(name)) return resolve('missing');
+        const plan = []; let total = 0;
+        paras.forEach((p, pi) => p.trim().split(/\s+/).forEach((w, wi) => {
+          plan.push({ pi, wi, at: total });
+          total += w.length + (/[.!?]$/.test(w) ? 7 : /[,;:]$/.test(w) ? 3 : 1);
+        }));
+        let para = -1, spans = [], over = false;
+        const end = (result) => {
+          if (over) return;
+          over = true; player.onended = player.onerror = null; resolve(result);
+        };
+        const frame = () => {
+          if (over) return;
+          if (id !== run) return end('done');
+          const length = player.duration;
+          if (length && isFinite(length)) {
+            const pos = (player.currentTime / length) * total;
+            let n = 0; while (n < plan.length && plan[n].at <= pos) n++;
+            const now = plan[Math.max(0, n - 1)];
+            if (now.pi !== para) { para = now.pi; spans = lay(paras[para]); }
+            for (let k = 0; k <= now.wi; k++) if (!spans[k].classList.contains('on')) { spans[k].classList.add('on'); kick = 1; }
+          }
+          requestAnimationFrame(frame);
+        };
+        player.onended = () => { spans.forEach((s) => s.classList.add('on')); end('done'); };
+        player.onerror = () => { noClip.add(name); end('missing'); };
+        player.src = 'voice/' + name + '.wav';
+        const started = player.play();
+        if (started && started.catch) started.catch((err) => {
+          if (id !== run || (err && err.name === 'AbortError')) return end('done');
+          noClip.add(name); end('missing');
+        });
+        requestAnimationFrame(frame);
+      });
+    }
+
+    // The browser's own voice (or silence), one sentence at a time.
+    function speakSentence(text, spans, id) {
+      return new Promise((resolve) => {
+        let shown = 0, done = false, timer = 0, guard = 0, heard = false;
+        let aloud = soundOn && !!synth;
+        const show = (n) => {
+          if (id !== run) return;
+          while (shown < n && shown < spans.length) { spans[shown++].classList.add('on'); kick = 1; }
+        };
+        const finish = () => {
+          if (done) return;
+          done = true; clearTimeout(timer); clearTimeout(guard);
+          show(spans.length); resolve();
+        };
+        const tick = () => {
+          if (done || heard) return;
+          if (id !== run) return finish();
+          show(shown + 1);
+          if (shown >= spans.length) { if (!aloud) timer = setTimeout(finish, 280); return; }
+          timer = setTimeout(tick, 95 + spans[shown - 1].textContent.length * 52);
+        };
+        tick();
+        if (!aloud) return;
+        const u = new SpeechSynthesisUtterance(text);
+        if (voice) u.voice = voice;
+        u.lang = voice ? voice.lang : 'en-GB';
+        u.rate = 1; u.pitch = 0.95;
+        u.onboundary = (e) => {
+          if (e.name && e.name !== 'word') return;
+          heard = true; clearTimeout(timer);
+          show(text.slice(0, e.charIndex).split(/\s+/).filter(Boolean).length + 1);
+        };
+        u.onend = finish;
+        u.onerror = (e) => {
+          if (id !== run || e.error === 'interrupted' || e.error === 'canceled') return finish();
+          aloud = false; // the browser will not speak: carry on in writing
+          if (shown >= spans.length) return finish();
+          if (heard) { heard = false; tick(); }
+        };
+        keep = u;
+        synth.speak(u);
+        guard = setTimeout(finish, 5000 + text.length * 120);
+      });
+    }
+    async function readParagraph(text, id) {
+      const spans = lay(text);
+      const sentences = text.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) || [text];
+      let from = 0;
+      for (const s of sentences) {
+        if (id !== run) return;
+        const count = s.trim().split(/\s+/).length;
+        await speakSentence(s.trim(), spans.slice(from, from + count), id);
+        from += count;
+      }
+    }
+
+    // Says one entry of lines.js. Resolves true when he finished, false when interrupted.
+    async function say(name) {
+      const paras = LINES[name];
+      if (!paras) return true;
+      stop();
+      const id = run;
+      $('talk').hidden = false;
+      setOrb('speaking');
+      const result = soundOn ? await playClip(name, paras, id) : 'missing';
+      if (id !== run) return false;
+      if (result === 'missing') {
+        for (let i = 0; i < paras.length; i++) {
+          await readParagraph(paras[i], id);
+          if (id !== run) return false;
+          if (i < paras.length - 1) await wait(420);
+          if (id !== run) return false;
+        }
+      }
+      setOrb('idle');
+      return true;
+    }
+
+    // ---- The screen: what is visible when ----
+    let awake = false, settled = false;
+    function reveal(el) { if (!el.hidden) return; el.hidden = false; if (!reduce) el.classList.add('rise'); }
+
+    function showInstall(which) {
+      const pick = which === 'windows' ? 'windows' : 'mac';
+      document.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== pick; });
+      document.querySelectorAll('.tabs .chip').forEach((t) => {
+        const on = t.dataset.os === pick;
+        t.classList.toggle('on', on); t.setAttribute('aria-selected', String(on));
+      });
+      $('phone-note').hidden = !phone;
+      document.body.classList.add('compact');
+      reveal($('install'));
+    }
+    function settle() {
+      if (settled) return;
+      settled = true;
+      showInstall(os);
+      reveal($('examples')); reveal($('foot'));
+    }
+    function wakeUp() {
+      if (awake) return;
+      awake = true;
+      document.body.classList.remove('asleep');
+      $('wake-hint').hidden = true;
+      $('talk').hidden = false;
+      orb.setAttribute('aria-label', 'Falcon. Click to stop him, or to hear the introduction again.');
+      shock();
+    }
+
+    async function introduce() {
+      wakeUp();
+      pickVoice();
+      $('said').textContent = '';
+      if (await say('intro')) {
+        showInstall(os);
+        await wait(500);
+        await say(os);
+      }
+      settle();
+    }
+
+    // ---- Controls ----
+    orb.addEventListener('click', () => {
+      if (speaking) { stop(); settle(); return; }
+      introduce();
+    });
+    $('jump-install').addEventListener('click', () => {
+      wakeUp(); stop(); settle();
+      if (!reply.textContent) lay('The steps are below. Follow them one by one.').forEach((w) => w.classList.add('on'));
+      $('install').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    });
+    $('examples').addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-topic]');
+      if (!chip) return;
+      $('said').textContent = chip.textContent;
+      say(chip.dataset.topic);
+      orb.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    });
+    $('sound').addEventListener('click', () => setSound(!soundOn));
+    document.querySelector('.tabs').addEventListener('click', (e) => {
+      const tab = e.target.closest('[data-os]');
+      if (tab) showInstall(tab.dataset.os);
+    });
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-copy]');
+      if (!btn) return;
+      const text = $(btn.dataset.copy).textContent.trim();
+      let ok = false;
+      try { await navigator.clipboard.writeText(text); ok = true; } catch (_) {
+        const range = document.createRange(); range.selectNodeContents($(btn.dataset.copy));
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+        try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      }
+      btn.textContent = ok ? 'Copied ✓' : 'Select it';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 2200);
+      if (ok) { $('said').textContent = ''; say(btn.dataset.copy === 'cmd-windows' ? 'copiedWindows' : 'copiedMac'); }
+    });
+    addEventListener('pagehide', () => { if (synth) synth.cancel(); player.pause(); });
+
+    // ---- The sky behind him: drifting dust, a sound ring, a wave when he wakes ----
+    const sky = $('sky');
+    const ctx = sky.getContext('2d');
+    let W = 0, H = 0, dust = [], waves = [], level = 0, boost = 1;
+    function resize() {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      W = innerWidth; H = innerHeight;
+      sky.width = W * dpr; sky.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const count = Math.min(170, Math.round((W * H) / 8500));
+      const reach = Math.hypot(W, H) * 0.62;
+      dust = Array.from({ length: count }, () => {
+        const r = 70 + Math.pow(Math.random(), 0.8) * reach;
+        return { a: Math.random() * 6.283, r, v: (0.012 + Math.random() * 0.02) * (260 / (r + 120)), s: 0.5 + Math.random() * 1.3, p: Math.random() * 6.283 };
+      });
+      if (reduce) draw(0);
+    }
+    function shock() { if (!reduce) { waves.push(performance.now()); boost = 16; } }
+    function draw(now) {
+      const box = orb.getBoundingClientRect();
+      const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+      const t = now / 1000;
+      ctx.clearRect(0, 0, W, H);
+
+      boost += (1 - boost) * 0.025;
+      level += ((speaking ? 1 : 0) - level) * 0.09;
+      kick *= 0.9;
+
+      for (const d of dust) {
+        d.a += d.v * 0.016 * boost * (1 + level * 0.8);
+        const x = cx + Math.cos(d.a) * d.r, y = cy + Math.sin(d.a) * d.r * 0.8;
+        if (x < -4 || x > W + 4 || y < -4 || y > H + 4) continue;
+        const twinkle = 0.5 + 0.5 * Math.sin(t * 1.3 + d.p);
+        ctx.globalAlpha = (0.12 + 0.5 * twinkle) * Math.min(1, d.r / 220);
+        ctx.fillStyle = '#9fe8ff';
+        ctx.beginPath(); ctx.arc(x, y, d.s, 0, 6.283); ctx.fill();
+      }
+
+      if (level > 0.02) {
+        const bars = 96, r0 = box.width * 0.54;
+        ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#4fd8ff';
+        for (let i = 0; i < bars; i++) {
+          const ang = (i / bars) * 6.283 - 1.571;
+          const wob = 0.5 + 0.5 * Math.sin(t * (5 + (i % 7)) + i * 1.7) * Math.sin(t * 2.3 + i * 0.37);
+          const len = 2 + level * (0.3 + 0.7 * wob) * (0.45 + 0.55 * kick) * box.width * 0.17;
+          ctx.globalAlpha = level * (0.25 + 0.6 * wob);
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(ang) * r0, cy + Math.sin(ang) * r0);
+          ctx.lineTo(cx + Math.cos(ang) * (r0 + len), cy + Math.sin(ang) * (r0 + len));
+          ctx.stroke();
+        }
+      }
+
+      waves = waves.filter((t0) => now - t0 < 2200);
+      for (const t0 of waves) {
+        const k = (now - t0) / 2200, ease = 1 - Math.pow(1 - k, 3);
+        ctx.globalAlpha = (1 - k) * 0.55; ctx.lineWidth = 1.5 + (1 - k) * 2; ctx.strokeStyle = '#7fe4ff';
+        ctx.beginPath(); ctx.arc(cx, cy, box.width * 0.4 + ease * Math.hypot(W, H) * 0.75, 0, 6.283); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      if (!reduce) requestAnimationFrame(draw);
+    }
+    addEventListener('resize', resize);
+    resize();
+    if (!reduce) requestAnimationFrame(draw);
+  })();
+  </script>
+</body>
+</html>

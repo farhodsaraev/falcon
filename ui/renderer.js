@@ -4,7 +4,8 @@ const screens = ['loading', 'setup', 'intro', 'main', 'connections'];
 function showScreen(name) {
   for (const s of screens) $(`screen-${s}`).hidden = s !== name;
   $('open-connections').hidden = name !== 'main';
-  if (name === 'main') { $('ask-text').focus(); refreshVoice(); }
+  $('status-dots').hidden = name !== 'main';
+  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); }
   if (name !== 'main' && window.falconVoice.active()) window.falconVoice.stop();
   if (name === 'connections') refreshConnections();
 }
@@ -12,14 +13,45 @@ function showScreen(name) {
 // ---- Connections ----
 function note(id, text, kind = '') { $(id).textContent = text; $(id).className = `message ${kind}`; }
 
-async function refreshConnections() {
+// Small dots in the title bar: lit when voice, Telegram and Chrome are ready.
+function setDot(id, on, label) {
+  $(id).classList.toggle('on', Boolean(on));
+  $(id).title = label;
+}
+let chromeKnown = false;
+try { chromeKnown = localStorage.getItem('falcon-chrome') === 'yes'; } catch { /* storage unavailable */ }
+async function refreshDots() {
+  setDot('dot-chrome', chromeKnown, chromeKnown ? 'Your Chrome: connected when last checked' : 'Your Chrome: not connected');
   try {
     const c = await window.falcon.connections();
+    setDot('dot-telegram', c.telegram, c.telegram ? 'Telegram: connected' : 'Telegram: not connected');
     $('tg-state').textContent = c.telegram ? '✓ connected' : '';
-    showBriefing(await window.falcon.briefing());
-    showCurrentModel();
   } catch { /* leave as is */ }
 }
+
+async function refreshConnections() {
+  showCurrentModel();
+  $('about-callme').textContent = callMe;
+  $('voice-state').textContent = voiceReady ? '✓ ready' : '';
+  $('voice-text').textContent = voiceReady
+    ? 'Falcon can speak and listen. Press the microphone in his window and just talk; you can interrupt him.'
+    : 'Falcon speaks and listens through OpenAI’s live voice service. It needs an OpenAI key, saved above.';
+  $('chrome-state').textContent = chromeKnown ? '✓ connected' : '';
+  await refreshDots();
+  try { showBriefing(await window.falcon.briefing()); } catch { /* leave as is */ }
+}
+
+// Settings are split into four tabs.
+function showTab(name) {
+  for (const tab of document.querySelectorAll('.tab')) {
+    const on = tab.dataset.tab === name;
+    tab.classList.toggle('on', on);
+    tab.setAttribute('aria-selected', String(on));
+  }
+  for (const body of document.querySelectorAll('.tab-body')) body.hidden = body.dataset.tab !== name;
+}
+for (const tab of document.querySelectorAll('.tab')) tab.addEventListener('click', () => showTab(tab.dataset.tab));
+$('about-intro').addEventListener('click', () => showScreen('intro'));
 
 // Shows a spinner in the pressed button until the job is finished.
 async function withButton(button, work) {
@@ -97,6 +129,8 @@ $('key-save').addEventListener('click', () => withButton($('key-save'), async ()
     panelKey.reset();
     note('key-message', r.thinking ? `Saved. Falcon now thinks with ${r.thinking}, on your ${r.provider} key.` : `Saved. Falcon can now use your ${r.provider} key.`, 'ok');
     showCurrentModel();
+    await refreshVoice();
+    refreshConnections();
   } catch { note('key-message', 'Falcon could not be reached. Please try again.', 'bad'); }
 }));
 
@@ -131,6 +165,9 @@ $('chrome-test').addEventListener('click', () => withButton($('chrome-test'), as
   try {
     const r = await window.falcon.chromeTest();
     $('chrome-state').textContent = r.ok ? '✓ connected' : '';
+    chromeKnown = r.ok;
+    try { localStorage.setItem('falcon-chrome', r.ok ? 'yes' : 'no'); } catch { /* storage unavailable */ }
+    refreshDots();
     note('chrome-message', r.ok ? 'Connected. Falcon can now use your Chrome when you ask him to.'
       : 'Not connected yet. Check that remote debugging is switched on and that you clicked Allow.', r.ok ? 'ok' : 'bad');
   } catch { note('chrome-message', 'Falcon could not be reached. Please try again.', 'bad'); }
@@ -169,7 +206,56 @@ let busy = false;
 
 const scrollTalk = () => { $('talk').scrollTop = $('talk').scrollHeight; };
 
-// Moves the finished question and answer up into the dimmer history above.
+// ---- Action cards: a small card for each thing Falcon did ----
+const ICONS = {
+  slides: 'M4 5h16v11H4z M9 20h6 M12 16v4',
+  file: 'M7 3h7l4 4v14H7z M14 3v4h4',
+  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M16.5 16.5 21 21',
+  web: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18',
+  screen: 'M3 5h18v12H3z M8 21h8 M12 17v4',
+  mail: 'M3 6h18v12H3z M3 7l9 6 9-6',
+  calendar: 'M4 6h16v14H4z M4 10h16 M8 3v4 M16 3v4',
+  memory: 'M6 4h12v16l-6-4-6 4z',
+  weather: 'M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 11a3.5 3.5 0 0 0 1 7z',
+  done: 'M5 12.5 10 17.5 19 7',
+};
+function iconFor(text) {
+  const t = text.toLowerCase();
+  if (/slide|presentation|deck|keynote|powerpoint|слайд|презентац/.test(t)) return 'slides';
+  if (/screen|экран/.test(t)) return 'screen';
+  if (/mail|inbox|message|почт|письм/.test(t)) return 'mail';
+  if (/calendar|meeting|event|reminder|календар|встреч/.test(t)) return 'calendar';
+  if (/weather|forecast|погод/.test(t)) return 'weather';
+  if (/remember|noted|saved to memory|recall|запомн/.test(t)) return 'memory';
+  if (/search|found|looked for|find|наш[её]л|поиск|искал/.test(t)) return 'search';
+  if (/file|folder|document|pdf|invoice|файл|папк|документ/.test(t)) return 'file';
+  if (/site|web|page|browser|opened .*\.|read .*(news|headline|article|wikipedia)|visited|сайт|страниц|браузер|bbc|google/.test(t)) return 'web';
+  return 'done';
+}
+function actionCards(items) {
+  return items.map((text) => {
+    const card = document.createElement('span');
+    card.className = 'action';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', ICONS[iconFor(text)]);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '1.8');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.append(path);
+    const label = document.createElement('span');
+    label.textContent = text;
+    card.append(svg, label);
+    return card;
+  });
+}
+function showActions(items) { $('actions').replaceChildren(...actionCards(items)); scrollTalk(); }
+
+// Moves the finished question, answer and cards up into the dimmer history above.
 function archiveExchange() {
   if (!$('said').textContent) return;
   for (const [cls, text] of [['said', $('said').textContent], ['reply', $('reply').textContent]]) {
@@ -178,7 +264,14 @@ function archiveExchange() {
     line.textContent = text;
     $('history').appendChild(line);
   }
-  while ($('history').childElementCount > 40) $('history').firstElementChild.remove();
+  if ($('actions').childElementCount) {
+    const cards = document.createElement('div');
+    cards.className = 'actions';
+    cards.append(...$('actions').children);
+    $('history').appendChild(cards);
+  }
+  $('actions').replaceChildren();
+  while ($('history').childElementCount > 60) $('history').firstElementChild.remove();
   scrollTalk();
 }
 
@@ -234,6 +327,7 @@ async function sendToFalcon(text) {
   $('reply').classList.remove('bad', 'waiting');
   setOrb('thinking');
   let answer = '';
+  let cards = [];
   const reveal = createReveal($('reply'));
   // If the answer takes a moment, say so instead of sitting silent.
   const russian = /[а-яё]/i.test(text);
@@ -251,9 +345,11 @@ async function sendToFalcon(text) {
   try {
     await window.falcon.chat(text, {
       onDelta: (piece) => { clearWaiting(); answer += piece; reveal.set(plainSpeech(answer)); setOrb('speaking'); },
+      onActions: (items) => { cards = items; },
       onError: fail,
     });
     await reveal.done();
+    if (cards.length) showActions(cards);
   } catch {
     fail(`I have lost my connection, ${address()}. Please try again in a moment.`);
   }
@@ -277,7 +373,8 @@ let voiceReady = false;
 async function refreshVoice() {
   try { voiceReady = (await window.falcon.voiceStatus()).available; } catch { voiceReady = false; }
   $('mic').classList.toggle('needs-key', !voiceReady);
-  $('mic').title = voiceReady ? 'Talk to Falcon' : 'Voice needs an OpenAI key. Add one under the gear icon.';
+  $('mic').title = voiceReady ? 'Talk to Falcon' : 'Voice needs an OpenAI key. Add one in Settings.';
+  setDot('dot-voice', voiceReady, voiceReady ? 'Voice: ready' : 'Voice: needs an OpenAI key');
 }
 function voiceNote(text, kind = '') { $('voice-note').textContent = text; $('voice-note').className = `hint ${kind}`; }
 
@@ -286,16 +383,21 @@ window.falconVoice.on('state', (state) => {
   $('mic').classList.toggle('on', on);
   $('mic').classList.toggle('busy', state === 'connecting');
   $('mic').setAttribute('aria-pressed', String(on));
+  $('orb').classList.toggle('live', on);
+  if (!on) $('orb').style.setProperty('--level', '0');
   setOrb({ off: 'idle', connecting: 'thinking', listening: 'listening', thinking: 'thinking', speaking: 'speaking' }[state] || 'idle');
   voiceNote({ connecting: 'Connecting the voice…', listening: 'Listening. Just speak; press the microphone again to end.', thinking: 'One moment…', speaking: '', off: '' }[state] ?? '');
 });
 window.falconVoice.on('heard', (text) => { archiveExchange(); $('examples').hidden = true; $('said').textContent = text; $('reply').textContent = ''; });
 window.falconVoice.on('said', (text) => { $('reply').classList.remove('bad', 'waiting'); $('reply').textContent = plainSpeech(text); scrollTalk(); });
 window.falconVoice.on('error', (message) => voiceNote(message, 'bad'));
+window.falconVoice.on('actions', (items) => showActions(items));
+// The orb follows the real loudness: the user's voice while listening, Falcon's while he speaks.
+window.falconVoice.on('level', (level) => { $('orb').style.setProperty('--level', level.toFixed(3)); });
 
 $('mic').addEventListener('click', () => {
   if (window.falconVoice.active()) return window.falconVoice.stop();
-  if (!voiceReady) return voiceNote('Voice needs an OpenAI key. Add one under the gear icon, then try again.', 'bad');
+  if (!voiceReady) return voiceNote('Voice needs an OpenAI key. Add one in Settings (the gear icon), then try again.', 'bad');
   if (busy) return voiceNote('One moment, I am still working on the last request.');
   $('examples').hidden = true;
   window.falconVoice.start();
@@ -306,9 +408,15 @@ let callMe = 'sir';
 const address = () => callMe;
 const addressRu = () => ({ sir: 'сэр', madam: 'мадам', boss: 'босс' }[callMe.toLowerCase()] || callMe);
 
+function greeting() {
+  const hour = new Date().getHours();
+  const part = hour < 5 ? 'Good evening' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  return `${part}, ${address()}. At your service.`;
+}
 function applyProfile(profile) {
   callMe = profile?.callMe || 'sir';
-  $('reply').textContent = `At your service, ${address()}.`;
+  if (!$('said').textContent) $('reply').textContent = greeting();
+  $('about-callme').textContent = callMe;
 }
 
 for (const chip of document.querySelectorAll('[data-call]')) {
@@ -344,6 +452,33 @@ async function enterFalcon() {
 }
 
 // ---- Approval prompt ----
+// Says in plain words what a command would do, with the thing it touches in bold.
+// The exact command stays one click away for anyone who wants to read it.
+function describeCommand(command) {
+  const c = String(command || '');
+  const last = (re) => { const m = c.match(re); return m ? m[m.length - 1].replace(/^["']|["']$/g, '') : ''; };
+  const leaf = (p) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+  const target = last(/"[^"]+"|'[^']+'|[A-Za-z]:\\[^\s"']+|\/[^\s"']+\.[a-z0-9]{1,6}/gi);
+  const host = (c.match(/https?:\/\/([^\s/"']+)/i) || [])[1] || '';
+  const rules = [
+    [/\b(remove-item|del|erase|rmdir|rd|rm)\b/i, 'delete', target && leaf(target)],
+    [/\b(move-item|move|mv|rename-item|ren)\b/i, 'move or rename', target && leaf(target)],
+    [/\b(copy-item|copy|cp|xcopy|robocopy)\b/i, 'copy', target && leaf(target)],
+    [/\b(new-item|mkdir|md|touch)\b/i, 'create', target && leaf(target)],
+    [/\b(winget|choco|scoop|brew|apt|npm|pip|pip3|msiexec)\b.*\b(install|add)\b/i, 'install software', ''],
+    [/\b(curl|wget|invoke-webrequest|invoke-restmethod|iwr|irm)\b/i, 'contact a website', host],
+    [/\b(shutdown|restart-computer|stop-computer|reboot)\b/i, 'shut down or restart this computer', ''],
+    [/\b(stop-process|taskkill|kill|pkill)\b/i, 'close a running program', ''],
+    [/\b(reg|set-itemproperty|defaults write|netsh|sc|set-service)\b/i, 'change a system setting', ''],
+    [/\b(start-process|start|open|explorer)\b/i, 'open', target && leaf(target)],
+    [/\b(ipconfig|ifconfig|whoami|hostname|systeminfo|get-process|tasklist|ps|netstat|ping)\b/i, 'read information about this computer', ''],
+  ];
+  const [, verb, what] = rules.find(([re]) => re.test(c)) || [null, 'run a command on this computer', ''];
+  const parts = [document.createTextNode(`Falcon wants to ${verb}`)];
+  if (what) { const b = document.createElement('b'); b.textContent = what; parts.push(document.createTextNode(': '), b); }
+  parts.push(document.createTextNode('.'));
+  return parts;
+}
 const approvalQueue = [];
 let currentApproval = null;
 
@@ -351,7 +486,10 @@ function nextApproval() {
   currentApproval = approvalQueue.shift() || null;
   $('approval').hidden = !currentApproval;
   if (currentApproval) {
+    $('approval-title').textContent = `Shall I proceed, ${address()}?`;
+    $('approval-plain').replaceChildren(...describeCommand(currentApproval.summary));
     $('approval-text').textContent = currentApproval.summary;
+    document.querySelector('.card-details').open = false;
     $('deny').focus();
   }
 }
@@ -392,6 +530,12 @@ if (query.get('preview') === 'allow') {
   approvalQueue.push({ id: 'preview', summary: 'powershell -Command "Remove-Item C:\\Users\\you\\Desktop\\old-report.docx"' });
   nextApproval();
 }
+if (['listening', 'thinking', 'speaking'].includes(query.get('orb'))) {
+  setOrb(query.get('orb'));
+  $('orb').classList.add('live');
+  $('orb').style.setProperty('--level', '0.7');
+}
+if (query.get('tab')) showTab(query.get('tab'));
 if (query.get('preview') === 'models') {
   const sample = { ok: true, provider: 'OpenAI', checked: true, voice: true, models: [
     { model: 'a', label: 'GPT-6.1 Terra', note: 'Recommended. Passed every safety and quality check.', tested: true },
@@ -418,6 +562,11 @@ if (query.get('preview') === 'talk') {
   $('said').textContent = 'Good morning, Falcon.';
   $('reply').textContent = 'Good morning, sir. At your service.';
   archiveExchange();
+  showActions(['Opened BBC News', 'Read top headline']);
+  archiveExchange();
+  $('examples').hidden = true;
   $('said').textContent = 'Open my quarterly review presentation and go to slide 5.';
   $('reply').textContent = 'Slide five of the Quarterly Review is up, sir.';
+  showActions(['Found Quarterly Review', 'Opened it in PowerPoint', 'Went to slide 5']);
+  for (const id of ['dot-voice', 'dot-telegram']) $(id).classList.add('on');
 }
