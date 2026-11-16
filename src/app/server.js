@@ -26,7 +26,9 @@ const SESSION_KEY = 'falcon-window';
 const BRIEFING_NAME = 'falcon-morning-briefing';
 
 // ---- Voice: OpenAI's Realtime API, the live listen-and-speak connection ----
-const VOICE_MODEL = 'gpt-realtime-2.1';
+// The smaller realtime model: about a third of the price. The thinking is done by Falcon's own engine,
+// so the voice model only has to converse and pass requests on.
+const VOICE_MODEL = 'gpt-realtime-2.1-mini';
 const VOICE_NAME = 'cedar';
 const VOICE_INSTRUCTIONS = [
   'You are the voice of Falcon, a private assistant in the manner of a calm, impeccably competent British butler.',
