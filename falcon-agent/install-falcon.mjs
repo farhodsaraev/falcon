@@ -61,7 +61,7 @@ export async function setupSearch({ step, envFile = path.join(os.homedir(), '.op
     await step('Google search', ['config', 'set', 'tools.web.search.provider', 'gemini']);
   } else if (/^OPENROUTER_API_KEY=\S/m.test(env)) {
     // Without the add-on the engine would not know the search service, so set nothing else if it failed.
-    if (!await step('search add-on', ['plugins', 'install', '@openclaw/perplexity-plugin', '--accept-capabilities', '--acknowledge-install-policy-warning'], undefined, { okIf: /already installed/i })) return;
+    if (!await step('search add-on', ['plugins', 'install', '@openclaw/perplexity-plugin', '--accept-capabilities', '--acknowledge-install-policy-warning'], undefined, { okIf: /already (installed|exists)/i })) return;
     await step('web search', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.baseUrl', 'https://openrouter.ai/api/v1']);
     await step('web search model', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.model', 'perplexity/sonar-pro']);
     await step('web search on', ['config', 'set', 'tools.web.search.provider', 'perplexity']);
@@ -168,6 +168,9 @@ export async function installFalcon({
   // One browser: the user's own Chrome. Smaller models forgot to name it on every step, so their next
   // step went to the engine's separate, empty browser and found nothing.
   await step('browser is his Chrome', ['config', 'set', 'browser.defaultProfile', 'user']);
+  // Tools sit in a catalog. In the default mode, calling web search or the browser by name answered
+  // "tool not found" and Falcon gave up; in directory mode a call by exact name just works.
+  await step('tools callable by name', ['config', 'set', 'tools.toolSearch.mode', 'directory']);
   await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m']);
   await step('local chat for the Falcon window', ['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
   await setupSearch({ step, envFile });
