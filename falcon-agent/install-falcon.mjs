@@ -57,12 +57,23 @@ function defaultRunEngine(args, { input } = {}) {
 export async function installFalcon({
   workspace = path.join(os.homedir(), '.openclaw', 'workspace'),
   skipSettings = false,
+  profileFile = path.join(os.homedir(), '.falcon', 'profile.json'),
   runEngine = defaultRunEngine,
   log = console.log,
 } = {}) {
   if (!fs.existsSync(workspace)) throw new Error(`Workspace not found at ${workspace}. Set up the engine first.`);
   const skillsDir = path.join(workspace, 'skills');
   const node = stableNode();
+  // How the user asked to be addressed. A note in his profile is not enough for smaller models, which copy
+  // the "sir" in the examples, so the chosen form is written into the rules and examples themselves.
+  let callMe = 'sir';
+  try { callMe = String(JSON.parse(read(profileFile)).callMe || 'sir').replace(/[\r\n"<>`]/g, '').trim().slice(0, 30) || 'sir'; } catch { /* no profile yet */ }
+  const custom = callMe.toLowerCase() !== 'sir';
+  const addressRule = custom
+    ? `The user has asked to be addressed as "${callMe}". Use "${callMe}" in every reply and in every language. Never call him "sir" or «сэр».`
+    : 'Address the user as "sir" (in Russian: «сэр») unless your notes about him give another form of address.';
+  const personalise = (text) => (custom ? text.replace(/\bsir\b/g, callMe).replace(/сэр/g, callMe) : text)
+    .replaceAll('{{ADDRESS_RULE}}', addressRule);
   const fill = (text, skillDir = '') => text
     .replaceAll('{{SKILLS}}', skillsDir)
     .replaceAll('{{NODE}}', node)
@@ -70,7 +81,7 @@ export async function installFalcon({
     .replaceAll('<folder of this SKILL.md>', skillDir);
 
   // Personality and identity
-  fs.copyFileSync(path.join(here, 'SOUL.md'), path.join(workspace, 'SOUL.md'));
+  fs.writeFileSync(path.join(workspace, 'SOUL.md'), personalise(read(path.join(here, 'SOUL.md'))));
   fs.copyFileSync(path.join(here, 'IDENTITY.md'), path.join(workspace, 'IDENTITY.md'));
 
   // Working rules: keep the engine's own AGENTS.md, add (or refresh) the Falcon section at the end
@@ -78,7 +89,7 @@ export async function installFalcon({
   const existing = fs.existsSync(agentsPath) ? read(agentsPath) : '# AGENTS.md\n';
   const withoutOld = existing.replace(/\r?\n*<!-- (jarvis|falcon):start -->[\s\S]*?<!-- (jarvis|falcon):end -->\r?\n*/g, '\n');
   const fastPaths = variant ? read(path.join(here, `fastpaths.${variant}.md`)).trim() : '';
-  const section = fill(read(path.join(here, 'AGENTS.falcon.md')).replace('{{FAST_PATHS}}', fastPaths));
+  const section = personalise(fill(read(path.join(here, 'AGENTS.falcon.md')).replace('{{FAST_PATHS}}', fastPaths)));
   fs.writeFileSync(agentsPath, `${withoutOld.trimEnd()}\n\n${section.trim()}\n`);
 
   // Falcon already knows who he is, so skip the engine's first-run "who am I?" interview

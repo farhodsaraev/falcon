@@ -317,6 +317,8 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       }
       fs.mkdirSync(path.dirname(api.profileFile()), { recursive: true });
       fs.writeFileSync(api.profileFile(), JSON.stringify(profile, null, 2));
+      // Write the chosen form of address into Falcon's rules straight away.
+      try { await api.installFalcon({ skipSettings: true, profileFile: api.profileFile(), workspace: api.workspaceDir(), log: () => {} }); } catch { /* rules are refreshed at the next start */ }
       return { ok: true, callMe: profile.callMe };
     },
 

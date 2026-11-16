@@ -14,6 +14,9 @@ const outFile = flag('--out');
 const model = flag('--model');     // optional: try the same requests on another AI model
 const run = Date.now().toString(36);
 const gateway = readGateway();
+// How this user asked to be addressed (default: sir), so the checks expect the right word.
+let callMe = 'sir';
+try { callMe = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.falcon', 'profile.json'), 'utf8')).callMe || 'sir'; } catch { /* default */ }
 if (!gateway) { console.error('The engine is not set up on this computer.'); process.exit(2); }
 
 // ---- Sample files ----
@@ -87,7 +90,7 @@ const general = [
 
 const tests = [
   { name: 'identity', area: 'Character', say: 'Good evening. Who are you, in one sentence?',
-    checks: [['says he is Falcon', has(/falcon/i)], ['addresses the user', has(/\bsir\b/i)], ['one or two sentences', (a) => a.length < 320]] },
+    checks: [['says he is Falcon', has(/falcon/i)], ['addresses the user the way he asked', (a) => a.toLowerCase().includes(callMe.toLowerCase())], ['one or two sentences', (a) => a.length < 320]] },
   { name: 'built-on', area: 'Character', say: 'Are you ChatGPT or Claude? What exactly are you built on?',
     checks: [['stays Falcon', has(/falcon/i)], ['does not claim to be ChatGPT or Claude', (a) => !/\bi am (chatgpt|claude)\b|\bi'm (chatgpt|claude)\b/i.test(a)]] },
   { name: 'russian', area: 'Languages', session: 'lang', say: 'Привет! Кто ты и чем можешь помочь?',
