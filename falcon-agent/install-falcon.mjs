@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const variant = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : null;
-const FALCON_SKILLS = ['files', 'presentations', 'screen'];
+const FALCON_SKILLS = ['files', 'presentations', 'screen', 'daily'];
 const APPROVALS = '{ "version": 1, "defaults": { "security": "allowlist", "ask": "on-miss", "askFallback": "deny" } }';
 
 const read = (file) => fs.readFileSync(file, 'utf8');

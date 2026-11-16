@@ -65,6 +65,11 @@ jobs:
           ls -R "$HOME/.openclaw/workspace/skills"
           openclaw approvals get --gateway | grep -E "Defaults|mjs" || true
 
+      - name: Mac skill - calendar, mail, reminders (needs macOS permission; informational)
+        continue-on-error: true
+        run: |
+          for what in calendar mail reminders; do node "$HOME/.openclaw/workspace/skills/daily/daily.mjs" --what $what; done
+
       - name: Window sees the engine
         run: node scripts/ci-check.mjs "$HOME/Library/Application Support/Falcon/app" --expect-ready
 

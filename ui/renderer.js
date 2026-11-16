@@ -15,6 +15,7 @@ async function refreshConnections() {
   try {
     const c = await window.falcon.connections();
     $('tg-state').textContent = c.telegram ? '✓ connected' : '';
+    showBriefing(await window.falcon.briefing());
   } catch { /* leave as is */ }
 }
 
@@ -32,6 +33,42 @@ async function withButton(button, work) {
 
 $('open-connections').addEventListener('click', () => showScreen('connections'));
 $('connections-back').addEventListener('click', () => showScreen('main'));
+
+$('key-save').addEventListener('click', () => withButton($('key-save'), async () => {
+  if (!$('key-value').value.trim()) return note('key-message', 'Paste the key first.', 'bad');
+  note('key-message', 'Saving the key, this can take half a minute', 'working');
+  try {
+    const r = await window.falcon.saveKey($('key-value').value);
+    if (!r.ok) return note('key-message', r.error, 'bad');
+    $('key-value').value = '';
+    note('key-message', `Saved. Falcon can now use your ${r.provider} key.`, 'ok');
+  } catch { note('key-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+}));
+
+function showBriefing(b) {
+  $('brief-state').textContent = b.enabled ? `✓ daily at ${b.time}` : '';
+  if (b.time) $('brief-time').value = b.time;
+}
+async function setBriefing(button, enabled) {
+  await withButton(button, async () => {
+    note('brief-message', enabled ? 'Scheduling' : 'Switching off', 'working');
+    try {
+      const r = await window.falcon.setBriefing(enabled, $('brief-time').value);
+      if (!r.ok) return note('brief-message', r.error, 'bad');
+      showBriefing({ enabled: r.enabled, time: $('brief-time').value });
+      note('brief-message', r.enabled ? `Done. Falcon will write to you in Telegram every day at ${$('brief-time').value}.` : 'Switched off.', 'ok');
+    } catch { note('brief-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+  });
+}
+$('brief-on').addEventListener('click', () => setBriefing($('brief-on'), true));
+$('brief-off').addEventListener('click', () => setBriefing($('brief-off'), false));
+$('brief-now').addEventListener('click', () => withButton($('brief-now'), async () => {
+  note('brief-message', 'Falcon is preparing your briefing, this can take a minute', 'working');
+  try {
+    const r = await window.falcon.briefingNow();
+    note('brief-message', r.ok ? 'Sent. Look at Telegram.' : r.error, r.ok ? 'ok' : 'bad');
+  } catch { note('brief-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+}));
 
 $('tg-connect').addEventListener('click', () => withButton($('tg-connect'), async () => {
   note('tg-message', 'Connecting to Telegram, this can take half a minute', 'working');

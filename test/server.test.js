@@ -117,6 +117,19 @@ test('the introduction is saved for Falcon to read, replaced on change, and cann
   assert.equal(saved.callMe, 'sir');
 });
 
+test('a later key goes in on standard input, never on the command line', async () => {
+  calls.length = 0;
+  const post = async (body) => (await call('POST', '/api/key', body)).json();
+  assert.equal((await post({ key: 'not a key' })).ok, false);
+  assert.equal(calls.length, 0);
+  const key = 'sk-proj-abcdefghijklmnopqrstuvwxyz012345';
+  const r = await post({ key });
+  assert.equal(r.ok, true);
+  assert.equal(r.provider, 'OpenAI');
+  assert.deepEqual(calls[0].args ?? calls[0], ['models', 'auth', 'paste-api-key', '--provider', 'openai']);
+  assert.ok(!JSON.stringify(calls).includes(key), 'the key is not among the command arguments');
+});
+
 test('Telegram: a well-formed token and code are passed on; malformed ones never reach the engine', async () => {
   calls.length = 0;
   const post = async (route, body) => (await call('POST', route, body)).json();

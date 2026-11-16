@@ -8,6 +8,8 @@ Speed matters more than commentary. For these requests issue exactly one command
   `"{{NODE}}" "{{SKILLS}}/files/find-files.mjs" --query "words from the name"`
 - Look at the screen (then view the image at the `path` it prints and describe it):
   `"{{NODE}}" "{{SKILLS}}/screen/screenshot.mjs"`
+- The user's day, from this Mac's own Calendar, Mail and Reminders (read-only; `--what calendar|mail|reminders`, and `--day today|tomorrow` for the calendar):
+  `"{{NODE}}" "{{SKILLS}}/daily/daily.mjs" --what calendar --day today`
 - Open a file or folder in its usual app: `open "<full path>"`
 - Open a website the user names: use the browser tool's open/navigate action straight away with the full URL. Do not search for the site first.
 

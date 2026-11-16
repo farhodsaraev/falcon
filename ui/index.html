@@ -84,6 +84,16 @@
     <h2>Connections</h2>
 
     <div class="panel">
+      <p class="panel-title">AI key</p>
+      <p class="panel-text">Add another key or replace the current one. OpenAI, OpenRouter and Anthropic keys are recognised by their shape. An OpenAI key is also what gives Falcon his voice. Keys stay on this computer.</p>
+      <div class="row tight">
+        <input id="key-value" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="AI key">
+        <button id="key-save" class="primary">Save</button>
+      </div>
+      <p id="key-message" class="message" role="status"></p>
+    </div>
+
+    <div class="panel">
       <p class="panel-title">Telegram <span id="tg-state" class="state"></span></p>
       <p class="panel-text">Talk to Falcon from your phone.</p>
       <ol class="steps">
@@ -109,6 +119,20 @@
         <button id="tg-pair" class="ghost">Confirm</button>
       </div>
       <p id="tg-message" class="message" role="status"></p>
+    </div>
+
+    <div class="panel">
+      <p class="panel-title">Morning briefing <span id="brief-state" class="state"></span></p>
+      <p class="panel-text">Once a day Falcon sends you the weather, today's meetings and important mail in Telegram, without being asked. Connect Telegram first.</p>
+      <div class="row tight">
+        <input id="brief-time" type="time" value="08:00" aria-label="Briefing time">
+        <button id="brief-on" class="primary">Switch on</button>
+        <button id="brief-off" class="ghost">Off</button>
+      </div>
+      <div class="row tight">
+        <button id="brief-now" class="ghost">Send one now, to try it</button>
+      </div>
+      <p id="brief-message" class="message" role="status"></p>
     </div>
 
     <div class="panel">

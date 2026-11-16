@@ -21,6 +21,7 @@ const UI_FILES = {
 const PROFILE_FILE = path.join(os.homedir(), '.falcon', 'profile.json');
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,300}$/;
 const SESSION_KEY = 'falcon-window';
+const BRIEFING_NAME = 'falcon-morning-briefing';
 
 function providerFor(key) {
   if (key.startsWith('sk-or-')) return ['openrouter-api-key', '--openrouter-api-key'];
@@ -69,6 +70,12 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     } finally {
       pollerRunning = false;
     }
+  }
+
+  async function briefingJobs() {
+    const { code, out } = await api.runEngine(['cron', 'list', '--all', '--json'], { timeoutMs: 60000 });
+    if (code !== 0) return [];
+    try { return (JSON.parse(out.slice(out.indexOf('{'))).jobs || []).filter((job) => job.name === BRIEFING_NAME); } catch { return []; }
   }
 
   // ---- First-time setup ----
@@ -205,6 +212,52 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       fs.mkdirSync(path.dirname(api.profileFile()), { recursive: true });
       fs.writeFileSync(api.profileFile(), JSON.stringify(profile, null, 2));
       return { ok: true, callMe: profile.callMe };
+    },
+
+    // ---- AI keys: add or replace one later. The key travels on standard input, never on a command line. ----
+    'POST /api/key': async (body) => {
+      const key = String(body.key || '').trim();
+      if (!KEY_SHAPE.test(key)) return { ok: false, error: 'That does not look like an API key.' };
+      const provider = key.startsWith('sk-or-') ? 'openrouter' : key.startsWith('sk-ant-') ? 'anthropic' : 'openai';
+      const save = () => api.runEngine(['models', 'auth', 'paste-api-key', '--provider', provider], { input: `${key}\n`, timeoutMs: 90000 });
+      let result = await save();
+      if (result.code !== 0) {
+        // The engine was busy with its own files: pause it, save, and start it again.
+        await api.runEngine(['gateway', 'stop'], { timeoutMs: 60000 });
+        result = await save();
+        await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+      } else if (/gateway restart/i.test(result.out)) {
+        await api.runEngine(['gateway', 'restart'], { timeoutMs: 120000 });
+      }
+      if (result.code !== 0) return { ok: false, error: 'The key could not be saved.' };
+      const names = { openrouter: 'OpenRouter', anthropic: 'Anthropic', openai: 'OpenAI' };
+      return { ok: true, provider: names[provider] };
+    },
+
+    // ---- Morning briefing: Falcon speaks first, once a day, in Telegram ----
+    'GET /api/briefing': async () => {
+      const job = (await briefingJobs())[0];
+      const [minute, hour] = (job?.schedule?.expr || '0 8 * * *').split(' ');
+      return { enabled: Boolean(job?.enabled), time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
+    },
+    'POST /api/briefing': async (body) => {
+      const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(body.time || ''));
+      if (body.enabled && !match) return { ok: false, error: 'Choose a time first.' };
+      for (const job of await briefingJobs()) await api.runEngine(['cron', 'rm', job.id], { timeoutMs: 60000 });
+      if (!body.enabled) return { ok: true, enabled: false };
+      const added = await api.runEngine(['cron', 'add',
+        '--name', BRIEFING_NAME,
+        '--cron', `${Number(match[2])} ${Number(match[1])} * * *`,
+        '--tz', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        '--message', 'It is time for the scheduled morning briefing. Give the user his morning briefing now, following your morning briefing rules. Write it as one short message.',
+        '--announce', '--channel', 'telegram', '--best-effort-deliver', '--exact', '--json'], { timeoutMs: 90000 });
+      return added.code === 0 ? { ok: true, enabled: true } : { ok: false, error: 'The briefing could not be scheduled. Connect Telegram first.' };
+    },
+    'POST /api/briefing/now': async () => {
+      const job = (await briefingJobs())[0];
+      if (!job) return { ok: false, error: 'Switch the briefing on first.' };
+      const run = await api.runEngine(['cron', 'run', job.id], { timeoutMs: 240000 });
+      return run.code === 0 ? { ok: true } : { ok: false, error: 'The briefing did not go through.' };
     },
 
     // ---- Connections ----
