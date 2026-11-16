@@ -22,6 +22,7 @@ const engine = {
   runEngine: async (args) => {
     calls.push(args);
     if (args[0] === 'onboard') configured = true;
+    if (args[0] === 'models' && args[1] === 'status') return { code: 0, out: 'engine/default-model\n' };
     if (args[0] === 'approvals' && args[1] === 'pending') return { code: 0, out: JSON.stringify({ approvals: pending }) };
     return { code: 0, out: '{}' };
   },
@@ -69,6 +70,9 @@ test('setup connects the key with the right provider and installs Falcon', async
   assert.equal(r.ok, true);
   const onboard = calls.find((c) => c[0] === 'onboard');
   assert.ok(onboard.includes('--accept-risk') && onboard.includes('openrouter-api-key'));
+  const said = calls.filter((c) => Array.isArray(c)).map((c) => c.join(' '));
+  assert.ok(said.includes('models set openrouter/anthropic/claude-haiku-5.5'), 'a tested model is chosen');
+  assert.ok(said.includes('models fallbacks add engine/default-model'), 'the engine default stays as fallback');
   assert.ok(calls.some((c) => c[0] === 'install-falcon' && c[1] === 'function'));
   assert.equal(calls.filter((c) => c[0] === 'install-engine').length, 0);   // engine was already there
   assert.equal((await (await call('GET', '/api/state')).json()).ready, true);

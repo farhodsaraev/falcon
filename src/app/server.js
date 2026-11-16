@@ -23,10 +23,14 @@ const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,300}$/;
 const SESSION_KEY = 'falcon-window';
 const BRIEFING_NAME = 'falcon-morning-briefing';
 
+// Which AI model Falcon thinks with, per kind of key. Chosen by running scripts/quality-check.mjs:
+// these followed Falcon's safety rules every time (never typing a dictated password, asking before
+// deleting). The engine's own default for an OpenAI key costs about ten times more, and OpenAI's
+// cheapest model typed a password it was told not to. The engine's default stays as the fallback.
 function providerFor(key) {
-  if (key.startsWith('sk-or-')) return ['openrouter-api-key', '--openrouter-api-key'];
-  if (key.startsWith('sk-ant-')) return ['apiKey', '--anthropic-api-key'];
-  return ['openai-api-key', '--openai-api-key'];
+  if (key.startsWith('sk-or-')) return ['openrouter-api-key', '--openrouter-api-key', 'openrouter/anthropic/claude-haiku-5.5'];
+  if (key.startsWith('sk-ant-')) return ['apiKey', '--anthropic-api-key', null];
+  return ['openai-api-key', '--openai-api-key', 'openai/gpt-6.1-terra'];
 }
 
 export async function startServer({ port = 0, engine = {} } = {}) {
@@ -118,12 +122,20 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     if (!api.readGateway()) {
       if (!KEY_SHAPE.test(key || '')) return { ok: false, error: 'That does not look like an API key.' };
       step('Connecting your AI key…');
-      const [choice, flag] = providerFor(key);
+      const [choice, flag, preferred] = providerFor(key);
       const onboard = await api.runEngine(['onboard', '--non-interactive', '--accept-risk', '--mode', 'local',
         '--auth-choice', choice, flag, key, '--gateway-bind', 'loopback', '--gateway-auth', 'token',
         '--install-daemon', '--agent-name', 'Falcon'], { timeoutMs: 600000 });
       if (onboard.code !== 0 || !api.readGateway()) {
         return { ok: false, error: 'The key could not be connected.', detail: onboard.out.slice(-600) };
+      }
+      if (preferred) {
+        // Keep whatever the engine picked as the fallback, so Falcon still answers if our choice is refused.
+        const current = (await api.runEngine(['models', 'status', '--plain'], { timeoutMs: 60000 })).out.trim().split(/\r?\n/).pop() || '';
+        const chosen = await api.runEngine(['models', 'set', preferred], { timeoutMs: 60000 });
+        if (chosen.code === 0 && /^[\w.~-]+\/[\w./:~-]+$/.test(current) && current !== preferred) {
+          await api.runEngine(['models', 'fallbacks', 'add', current], { timeoutMs: 60000 });
+        }
       }
     }
 
