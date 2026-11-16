@@ -16,9 +16,11 @@ const engine = {
   workspaceDir: () => tmp,
   voiceKey: { get: async () => null, set: async () => {} },
   profileFile: () => path.join(tmp, 'profile.json'),
+  envFile: () => path.join(tmp, 'engine.env'),
   readGateway: () => (configured ? { port: 1, token: 'gw' } : null),
   engineReady: async () => configured,
   installEngine: async () => { calls.push(['install-engine']); return { code: 0, out: '' }; },
+  setupSearch: async ({ step }) => { await step('web search', ['config', 'set', 'tools.web.search.provider', 'perplexity']); },
   installFalcon: async (options) => { calls.push(['install-falcon', typeof options.runEngine]); return { ok: true }; },
   runEngine: async (args) => {
     calls.push(args);
@@ -33,6 +35,9 @@ const engine = {
       return new Response(JSON.stringify({ data: [{ id: 'gpt-6.1-terra' }, { id: 'gpt-6-luna' }, { id: 'gpt-4o' }] }), { status: 200 });
     }
     if (String(url).includes('api.anthropic.com')) throw new Error('offline');
+    if (String(url).includes('generativelanguage.googleapis.com')) {
+      return new Response('{}', { status: options.headers['x-goog-api-key'].includes('Rejected') ? 400 : 200 });
+    }
     calls.push(['fetch', url, options.headers.Authorization, JSON.parse(options.body).messages[0].content]);
     const sse = ['Slide five ', 'is up, sir [1].', '\n\n[[d', 'id]] Opened Quarterly Review | Went to slide 5'].map((t) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
     await new Promise((r) => setTimeout(r, 2500));          // long enough for one approvals poll
@@ -144,6 +149,16 @@ test('a later key goes in on standard input, never on the command line', async (
   assert.ok(!JSON.stringify(calls).includes(key), 'the key is not among the command arguments');
 });
 
+test('an OpenRouter key also switches on web search, and stays off the command line', async () => {
+  calls.length = 0;
+  const key = 'sk-or-v1-abcdefghijklmnopqrstuvwxyz012345';
+  const r = await (await call('POST', '/api/key', { key })).json();
+  assert.equal(r.ok, true);
+  assert.match(fs.readFileSync(path.join(tmp, 'engine.env'), 'utf8'), new RegExp(`^OPENROUTER_API_KEY=${key}$`, 'm'));
+  assert.ok(calls.some((c) => c.join(' ') === 'config set tools.web.search.provider perplexity'));
+  assert.ok(!JSON.stringify(calls).includes(key), 'the key is not among the command arguments');
+});
+
 test('a pasted key is recognised by its shape, checked with its own company, and offers only models it can use', async () => {
   const inspect = async (key) => (await call('POST', '/api/key/inspect', { key })).json();
   const openai = await inspect('sk-proj-abcdefghijklmnopqrstuvwxyz012345');
@@ -164,6 +179,27 @@ test('a pasted key is recognised by its shape, checked with its own company, and
   assert.equal(offline.voice, false);
 
   assert.equal((await inspect('AIzaSyNotOneOfOurs0000000000000000')).ok, false);
+});
+
+test('a Google key turns on Google search; it goes in the private settings file, never on a command line', async () => {
+  calls.length = 0;
+  const post = async (body) => (await call('POST', '/api/search', body)).json();
+  const status = async () => (await call('GET', '/api/search')).json();
+  assert.equal((await status()).google, false);
+  assert.equal((await post({ key: 'sk-proj-abcdefghijklmnopqrstuvwxyz012345' })).ok, false, 'only Google keys');
+  const refused = await post({ key: 'AIzaSyRejected000000000000000000000000' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /Google does not accept/);
+  assert.equal(calls.length, 0);
+  fs.writeFileSync(path.join(tmp, 'engine.env'), 'OTHER=1\nGEMINI_API_KEY=old\n');
+  const key = 'AIzaSyAbcdefghijklmnopqrstuvwxyz0123456';
+  assert.equal((await post({ key })).ok, true);
+  assert.equal(fs.readFileSync(path.join(tmp, 'engine.env'), 'utf8'), `OTHER=1
+GEMINI_API_KEY=${key}
+`);
+  assert.deepEqual(calls[0], ['config', 'set', 'tools.web.search.provider', 'gemini']);
+  assert.ok(!JSON.stringify(calls).includes(key), 'the key is not among the command arguments');
+  assert.equal((await status()).google, true);
 });
 
 test('Telegram: a well-formed token and code are passed on; malformed ones never reach the engine', async () => {
@@ -190,6 +226,7 @@ test('installer lines shown during setup are tidy and give nothing away', () => 
   assert.equal(progressLine('\x1b[32m  added 412 packages in 38s\x1b[0m\r'), 'added 412 packages in 38s');
   assert.equal(progressLine('Installing OpenClaw to ~/.openclaw/bin'), 'Installing engine to ~/.engine/bin');
   assert.doesNotMatch(progressLine('using key sk-or-v1-abcdef1234567890abcdef'), /abcdef/);
+  assert.doesNotMatch(progressLine('GEMINI_API_KEY=AIzaSyAbcdefghijklmnop'), /Abcdef/);
   assert.equal(progressLine('   ----   '), '');
   assert.ok(progressLine('x'.repeat(400)).length <= 140);
 });

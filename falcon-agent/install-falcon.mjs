@@ -48,6 +48,27 @@ function defaultRunEngine(args, { input } = {}) {
 }
 
 /**
+ * Web search. The engine has a search tool only when a search service is set up; an OpenAI key brings
+ * its own, but with an Anthropic or OpenRouter key Falcon would have none and fall back to a browser
+ * that Google blocks. Falcon's window keeps the keys search needs in the engine's private .env file:
+ * a Google key (searches Google itself) wins; otherwise an OpenRouter key searches through Perplexity,
+ * billed to the same OpenRouter account, with no extra key.
+ */
+export async function setupSearch({ step, envFile = path.join(os.homedir(), '.openclaw', '.env') }) {
+  let env = '';
+  try { env = read(envFile); } catch { /* no keys saved */ }
+  if (/^GEMINI_API_KEY=\S/m.test(env)) {
+    await step('Google search', ['config', 'set', 'tools.web.search.provider', 'gemini']);
+  } else if (/^OPENROUTER_API_KEY=\S/m.test(env)) {
+    // Without the add-on the engine would not know the search service, so set nothing else if it failed.
+    if (!await step('search add-on', ['plugins', 'install', '@openclaw/perplexity-plugin', '--accept-capabilities', '--acknowledge-install-policy-warning'], undefined, { okIf: /already installed/i })) return;
+    await step('web search', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.baseUrl', 'https://openrouter.ai/api/v1']);
+    await step('web search model', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.model', 'perplexity/sonar-pro']);
+    await step('web search on', ['config', 'set', 'tools.web.search.provider', 'perplexity']);
+  }
+}
+
+/**
  * @param {object} options
  * @param {string} [options.workspace]     agent workspace folder
  * @param {boolean} [options.skipSettings] copy files only
@@ -58,6 +79,7 @@ export async function installFalcon({
   workspace = path.join(os.homedir(), '.openclaw', 'workspace'),
   skipSettings = false,
   profileFile = path.join(os.homedir(), '.falcon', 'profile.json'),
+  envFile = path.join(os.homedir(), '.openclaw', '.env'),
   runEngine = defaultRunEngine,
   log = console.log,
 } = {}) {
@@ -133,15 +155,18 @@ export async function installFalcon({
 
   // Settings (need the engine running)
   const results = [];
-  const step = async (what, args, input) => {
-    const { code, out } = await runEngine(args, { input });
-    results.push({ what, ok: code === 0 });
-    log(code === 0 ? `  ok    ${what}` : `  FAILED ${what}: ${out.trim().split('\n')[0]}`);
+  const step = async (what, args, input, { okIf } = {}) => {
+    const { code, out } = await runEngine(args, { input, timeoutMs: 300000 });
+    const ok = code === 0 || Boolean(okIf && okIf.test(out));
+    results.push({ what, ok });
+    log(ok ? `  ok    ${what}` : `  FAILED ${what}: ${out.trim().split('\n')[0]}`);
+    return ok;
   };
   log('Applying settings...');
   await step('fast replies', ['config', 'set', 'agents.defaults.thinkingDefault', 'off']);
   await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m']);
   await step('local chat for the Falcon window', ['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
+  await setupSearch({ step, envFile });
   await step('ask-first approvals', ['approvals', 'set', '--gateway', '--stdin'], APPROVALS);
   for (const script of scripts) {
     await step(`pre-approve ${path.basename(script)}`, ['approvals', 'allowlist', 'add', script, '--gateway']);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { installFalcon } from '../falcon-agent/install-falcon.mjs';
+import { installFalcon, setupSearch } from '../falcon-agent/install-falcon.mjs';
 
 const variant = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : null;
 
@@ -18,7 +18,7 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   const ws = freshWorkspace();
   const calls = [];
   const runEngine = async (args, opts) => { calls.push({ args, input: opts?.input }); return { code: 0, out: '' }; };
-  for (let i = 0; i < 2; i++) await installFalcon({ workspace: ws, runEngine, profileFile: path.join(ws, 'none.json'), log: () => {} });
+  for (let i = 0; i < 2; i++) await installFalcon({ workspace: ws, runEngine, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), log: () => {} });
 
   const agents = fs.readFileSync(path.join(ws, 'AGENTS.md'), 'utf8');
   assert.match(agents, /Engine defaults stay here\./);
@@ -76,4 +76,31 @@ test('a failed setting is reported, not hidden', { skip: !variant }, async () =>
 
 test('a missing workspace is a clear error', async () => {
   await assert.rejects(installFalcon({ workspace: path.join(os.tmpdir(), 'no-such-falcon-ws'), log: () => {} }), /Workspace not found/);
+});
+
+test('web search: a Google key wins, an OpenRouter key searches through Perplexity, no key changes nothing', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-env-'));
+  const envFile = path.join(dir, '.env');
+  const run = async (installWorks = true) => {
+    const steps = [];
+    const step = async (what, args, input, { okIf } = {}) => {
+      steps.push(args.join(' '));
+      return args[1] === 'install' ? installWorks : true;
+    };
+    await setupSearch({ step, envFile });
+    return steps;
+  };
+  assert.deepEqual(await run(), [], 'no keys: search settings untouched');
+
+  fs.writeFileSync(envFile, 'OPENROUTER_API_KEY=sk-or-v1-abc\n');
+  const viaOpenRouter = await run();
+  assert.match(viaOpenRouter[0], /^plugins install @openclaw\/perplexity-plugin/);
+  assert.ok(viaOpenRouter.includes('config set plugins.entries.perplexity.config.webSearch.baseUrl https://openrouter.ai/api/v1'));
+  assert.equal(viaOpenRouter.at(-1), 'config set tools.web.search.provider perplexity');
+  assert.ok(!viaOpenRouter.join(' ').includes('sk-or-v1-abc'), 'the key never goes on a command line');
+  assert.equal((await run(false)).length, 1, 'if the add-on does not install, nothing else is changed');
+
+  fs.writeFileSync(envFile, 'OPENROUTER_API_KEY=sk-or-v1-abc\nGEMINI_API_KEY=AIzaX\n');
+  assert.deepEqual(await run(), ['config set tools.web.search.provider gemini']);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

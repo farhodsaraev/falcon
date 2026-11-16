@@ -131,7 +131,26 @@ $('key-save').addEventListener('click', () => withButton($('key-save'), async ()
   } catch { note('key-message', 'Falcon could not be reached. Please try again.', 'bad'); }
 }));
 
-$('tg-connect').addEventListener('click', () => withButton($('tg-connect'), async () => {
+async function refreshSearch() {
+  try {
+    $('search-state').textContent = (await window.falcon.searchStatus()).google ? '✓ on' : '';
+  } catch { /* leave as it was */ }
+}
+refreshSearch();
+
+$('search-save').addEventListener('click', () => withButton($('search-save'), async () => {
+  if (!$('search-key').value.trim()) return note('search-message', 'Paste the key first.', 'bad');
+  note('search-message', 'Checking the key with Google and saving it', 'working');
+  try {
+    const r = await window.falcon.saveSearchKey($('search-key').value);
+    if (!r.ok) return note('search-message', r.error, 'bad');
+    $('search-key').value = '';
+    note('search-message', 'Saved. Falcon now searches Google directly.', 'ok');
+    refreshSearch();
+  } catch { note('search-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+}));
+
+$('tg-connect').addEventListener('click',() => withButton($('tg-connect'), async () => {
   note('tg-message', 'Connecting to Telegram, this can take half a minute', 'working');
   try {
     const r = await window.falcon.telegramConnect($('tg-token').value);

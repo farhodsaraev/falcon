@@ -116,7 +116,7 @@
     <div class="tab-body" data-tab="key">
       <div class="panel">
         <p class="panel-title">AI key and model</p>
-        <p class="panel-text">Falcon is thinking with <b id="model-now">…</b>. To change the model or the key, paste a key: Falcon recognises whose it is and shows the models it can use. An OpenAI key also gives Falcon his voice. Keys stay on this computer.</p>
+        <p class="panel-text">Falcon is thinking with <b id="model-now">…</b>. To change the model or the key, paste a key: Falcon recognises whose it is and shows the models it can use. An OpenAI key also gives Falcon his voice. OpenAI and OpenRouter keys also let him search the web. Keys stay on this computer.</p>
         <div class="row tight">
           <input id="key-value" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" aria-label="AI key">
           <button id="key-save" class="primary">Save</button>
@@ -124,6 +124,15 @@
         <p id="key-kind" class="message" role="status"></p>
         <div id="key-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
         <p id="key-message" class="message" role="status"></p>
+      </div>
+      <div class="panel">
+        <p class="panel-title">Google search <span id="search-state" class="state"></span></p>
+        <p class="panel-text">Optional. With a free Google key, Falcon searches Google directly and can look up people, companies and news in depth. Create one at aistudio.google.com/apikey (sign in with any Google account, then "Create API key") and paste it here. It starts with AIza and stays on this computer.</p>
+        <div class="row tight">
+          <input id="search-key" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" aria-label="Google search key">
+          <button id="search-save" class="primary">Save</button>
+        </div>
+        <p id="search-message" class="message" role="status"></p>
       </div>
       <div class="panel">
         <p class="panel-title">Voice <span id="voice-state" class="state"></span></p>

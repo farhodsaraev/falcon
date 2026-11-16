@@ -110,6 +110,26 @@ export function recogniseKey(key) {
   return null;
 }
 
+const GOOGLE_KEY_SHAPE = /^AIza[A-Za-z0-9_-]{30,60}$/;
+
+/** One value from the engine's private settings file (NAME=value lines), or ''. */
+export function readEnvKey(file, name) {
+  try {
+    const line = fs.readFileSync(file, 'utf8').split(/\r?\n/).find((l) => l.startsWith(`${name}=`));
+    return line ? line.slice(name.length + 1).trim() : '';
+  } catch { return ''; }
+}
+
+/** Sets one value in that file, keeping the other lines, readable only by this user. */
+export function writeEnvKey(file, name, value) {
+  let lines = [];
+  try { lines = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => l && !l.startsWith(`${name}=`)); } catch { /* new file */ }
+  lines.push(`${name}=${value}`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${lines.join('\n')}\n`, { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch { /* Windows */ }
+}
+
 /**
  * A last safety net for what Falcon says in his window. His rules tell him to speak of "my settings" and
  * never to name what he runs on; a smaller model sometimes slips, so the name is put into his own words here.
@@ -127,6 +147,7 @@ export function progressLine(line) {
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
     .replace(/[\x00-\x1f\x7f]/g, ' ')
     .replace(/\bsk-[\w-]{6,}/g, 'sk-…')
+    .replace(/\bAIza[\w-]{6,}/g, 'AIza…')
     .replace(/\b\d{6,}:[\w-]{20,}/g, '…')
     .replace(/open[- ]?claw/gi, 'engine')
     .replace(/\s+/g, ' ')
@@ -142,7 +163,12 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     return pack.installFalcon(options);
   };
   const workspaceDir = () => path.join(os.homedir(), '.openclaw', 'workspace');
-  const api = { engineReady, findEngine, installEngine, installFalcon, readGateway, runEngine, fetch, workspaceDir, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  const setupSearch = async (options) => {
+    const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
+    return pack.setupSearch(options);
+  };
+  const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
+  const api = { engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
@@ -232,6 +258,8 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       const provider = PROVIDERS[recogniseKey(key)];
       if (!provider) return { ok: false, error: 'I do not recognise this kind of key. OpenAI, Anthropic and OpenRouter keys are supported.' };
       if (provider.voice) await api.voiceKey.set(key).catch(() => {});
+      // An OpenRouter key also gives Falcon web search; the settings step below switches it on.
+      if (provider === PROVIDERS.openrouter) writeEnvKey(api.envFile(), 'OPENROUTER_API_KEY', key);
       const preferred = (provider.models.find((m) => m.model === model) || provider.models[0]).model;
       const onboard = await api.runEngine(['onboard', '--non-interactive', '--accept-risk', '--mode', 'local',
         '--auth-choice', provider.authChoice, provider.keyFlag, key, '--gateway-bind', 'loopback', '--gateway-auth', 'token',
@@ -450,6 +478,15 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       }
       if (result.code !== 0) return { ok: false, error: 'The key could not be saved.' };
       if (PROVIDERS[provider].voice) await api.voiceKey.set(key).catch(() => {});
+      if (provider === 'openrouter') {
+        // The same key gives Falcon web search, through Perplexity.
+        writeEnvKey(api.envFile(), 'OPENROUTER_API_KEY', key);
+        await api.setupSearch({ step: async (what, args, input, { okIf } = {}) => {
+          const { code, out } = await api.runEngine(args, { timeoutMs: 300000 });
+          return code === 0 || Boolean(okIf && okIf.test(out));
+        }, envFile: api.envFile() });
+        await api.runEngine(['gateway', 'restart'], { timeoutMs: 120000 });
+      }
       // Optionally make Falcon think with a model from this key straight away.
       const chosen = PROVIDERS[provider].models.find((m) => m.model === body.model);
       let thinking = null;
@@ -458,6 +495,26 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         if (set.code === 0) thinking = chosen.label;
       }
       return { ok: true, provider: PROVIDERS[provider].name, thinking };
+    },
+
+    // ---- Google search: a free Google AI Studio key lets Falcon search Google itself, instead of
+    // clicking through a browser that Google often blocks. The key goes in the engine's own private
+    // settings file, never on a command line.
+    'GET /api/search': async () => ({ google: Boolean(readEnvKey(api.envFile(), 'GEMINI_API_KEY')) }),
+    'POST /api/search': async (body) => {
+      const key = String(body.key || '').trim();
+      if (!GOOGLE_KEY_SHAPE.test(key)) return { ok: false, error: 'That does not look like a Google key. It starts with AIza.' };
+      try {
+        const response = await api.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(15000) });
+        if (response.status === 400 || response.status === 401 || response.status === 403) {
+          return { ok: false, error: 'Google does not accept this key. Check that it was copied completely.' };
+        }
+      } catch { /* no internet right now: save it anyway */ }
+      writeEnvKey(api.envFile(), 'GEMINI_API_KEY', key);
+      const set = await api.runEngine(['config', 'set', 'tools.web.search.provider', 'gemini'], { timeoutMs: 60000 });
+      if (set.code !== 0) return { ok: false, error: 'The key was saved, but Falcon could not switch to Google search.' };
+      await api.runEngine(['gateway', 'restart'], { timeoutMs: 120000 });
+      return { ok: true };
     },
 
     // ---- Voice ----
