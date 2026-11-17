@@ -25,6 +25,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { progressPath } from './scout-live.mjs';
 
+// A copy the chat can send (the engine sends files only from its own folders); never blocks the result.
+async function readyToSend(file) {
+  try { const { shareFile } = await import(new URL('../files/share-file.mjs', import.meta.url)); const r = shareFile(file); return r.ok ? r.sendPath : undefined; } catch { return undefined; }
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const option = (name, fallback = '') => { const i = args.indexOf(name); return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback; };
@@ -281,4 +286,5 @@ try {
   const progress = JSON.parse(fs.readFileSync(progressPath(), 'utf8'));
   fs.writeFileSync(progressPath(), JSON.stringify({ ...progress, stage: 3, dossier: out, at: Date.now() }));
 } catch { /* no window waiting */ }
-done({ ok: true, path: out, remembered: Boolean(remembered), sources: sources.length, news: news.length, checks: checks.length });
+const sendPath = await readyToSend(out);
+done({ ok: true, path: out, ...(sendPath ? { sendPath } : {}), remembered: Boolean(remembered), sources: sources.length, news: news.length, checks: checks.length });

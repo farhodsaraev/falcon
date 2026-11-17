@@ -63,9 +63,9 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   const approvals = firstRun.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').file;
   assert.equal(approvals.defaults.ask, 'on-miss');
   const patterns = approvals.agents['*'].allowlist.map((e) => e.pattern);
-  // Windows: 5 earlier scripts + scout.ps1 and its three Node scripts + the document maker and its wrapper + the apps helper;
-  // Mac: 5 + the three scout scripts + the document maker + the apps helper
-  assert.equal(patterns.length, variant === 'windows' ? 12 : 10);
+  // Windows: 5 earlier scripts + scout.ps1 and its three Node scripts + the document maker and its wrapper + the apps helper + share-file and its wrapper;
+  // Mac: 5 + the three scout scripts + the document maker + the apps helper + share-file
+  assert.equal(patterns.length, variant === 'windows' ? 14 : 11);
   assert.ok(!once.some((c) => c.startsWith('approvals allowlist add')), 'nothing needed adding one by one');
   assert.ok(firstRun.length <= 6, `few engine commands (${firstRun.length}): ${once.join(' | ')}`);
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'documents', 'make-document.mjs')));
@@ -140,7 +140,7 @@ test('if the engine refuses the batches, Falcon falls back to one setting at a t
   assert.ok(calls.includes('config set gateway.http.endpoints.chatCompletions.enabled true'));
   assert.ok(calls.includes('config set tools.web.search.provider parallel-free'));
   assert.ok(calls.includes('approvals set --gateway --stdin'));
-  assert.equal(calls.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'windows' ? 12 : 10);
+  assert.equal(calls.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'windows' ? 14 : 11);
   fs.rmSync(ws, { recursive: true, force: true });
 });
 

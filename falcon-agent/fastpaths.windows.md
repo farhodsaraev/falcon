@@ -8,6 +8,8 @@ Speed matters more than commentary. For these requests issue exactly one command
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\find-files.ps1" -Query "words from the name"`
 - Read what is inside a file, to answer questions about its contents (PDF, Word .docx, text; read-only):
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\read-file.ps1" -Path "<full path>"`
+- Get a file ready to send on Telegram or another chat (prints the `sendPath` to send; dossiers and new documents already come with one):
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\share-file.ps1" -Path "<full path>"`
 - Look at the screen (then view the image at the `path` it prints and describe it):
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\screen\screenshot.ps1"`
 - Scout a person or company: the free sweep, then (after writing `{{SKILLS}}\scout\dossier.json`) the dossier page:

@@ -8,6 +8,8 @@ Speed matters more than commentary. For these requests issue exactly one command
   `"{{NODE}}" "{{SKILLS}}/files/find-files.mjs" --query "words from the name"`
 - Read what is inside a file, to answer questions about its contents (PDF, Word .docx, text; read-only):
   `"{{NODE}}" "{{SKILLS}}/files/read-file.mjs" --path "<full path>"`
+- Get a file ready to send on Telegram or another chat (prints the `sendPath` to send; dossiers and new documents already come with one):
+  `"{{NODE}}" "{{SKILLS}}/files/share-file.mjs" --path "<full path>"`
 - Look at the screen (then view the image at the `path` it prints and describe it):
   `"{{NODE}}" "{{SKILLS}}/screen/screenshot.mjs"`
 - The user's day, from this Mac's own Calendar, Mail and Reminders (read-only; `--what calendar|mail|reminders`, and `--day today|tomorrow` for the calendar):

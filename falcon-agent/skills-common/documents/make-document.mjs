@@ -20,6 +20,11 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync, spawn } from 'node:child_process';
 
+// A copy the chat can send (the engine sends files only from its own folders); never blocks the result.
+async function readyToSend(file) {
+  try { const { shareFile } = await import(new URL('../files/share-file.mjs', import.meta.url)); const r = shareFile(file); return r.ok ? r.sendPath : undefined; } catch { return undefined; }
+}
+
 const args = process.argv.slice(2);
 const option = (name, fallback) => { const i = args.indexOf(name); return i >= 0 && args[i + 1] !== undefined && !args[i + 1].startsWith('--') ? args[i + 1] : fallback; };
 const done = (result) => { process.stdout.write(`${JSON.stringify(result)}\n`); process.exit(result.ok ? 0 : 1); };
@@ -522,7 +527,8 @@ try {
   const file = writeNew(folder, base, type, zip(made.files));
   const opened = args.includes('--open');
   if (opened) openFile(file);
-  done({ ok: true, path: file, type, ...made.info, ...(opened ? { opened: true } : {}) });
+  const sendPath = process.env.FALCON_DOCS_DIR ? undefined : await readyToSend(file);
+  done({ ok: true, path: file, type, ...made.info, ...(opened ? { opened: true } : {}), ...(sendPath ? { sendPath } : {}) });
 } catch (err) {
   fail(`The document could not be made: ${err?.message || err}`);
 }
