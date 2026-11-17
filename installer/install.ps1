@@ -50,6 +50,15 @@ function Find-Package([string]$dir) {
 }
 
 $local = Find-Package $PSScriptRoot
+# A running Falcon keeps his folder in use, even after his window is closed. Close him before
+# replacing his files (only Falcon's own processes: those started from his folder or his window profile).
+$running = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+  $_.CommandLine -and ($_.CommandLine -like "*$app*" -or $_.CommandLine -like "*\.falcon\window*") }
+if ($running) {
+  Say "Closing the running Falcon..."
+  $running | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Seconds 2
+}
 if (Test-Path $app) { Remove-Item $app -Recurse -Force }
 New-Item -ItemType Directory -Force $app | Out-Null
 if ($local) {

@@ -71,6 +71,8 @@ fi
 # ---- 2. Falcon's files ----
 copy_falcon() {
   local from="$1"
+  # A running Falcon would keep serving his old files: close him first (only his own processes).
+  pkill -f "$APP_DIR/src/app/launch.js" 2>/dev/null || true
   rm -rf "$APP_DIR"
   mkdir -p "$APP_DIR/src"
   cp -R "$from/src/app" "$APP_DIR/src/app"
