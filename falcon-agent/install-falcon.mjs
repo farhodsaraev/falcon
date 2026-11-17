@@ -58,6 +58,8 @@ function defaultRunEngine(args, { input } = {}) {
  */
 export async function setupSearch({
   step,
+  // Optional: collect plain settings to apply together with Falcon's others, instead of one command each.
+  set = (what, key, value) => step(what, ['config', 'set', key, String(value)]),
   envFile = path.join(os.homedir(), '.openclaw', '.env'),
   configFile = path.join(os.homedir(), '.openclaw', 'openclaw.json'),
 }) {
@@ -69,16 +71,16 @@ export async function setupSearch({
     primary = String((typeof model === 'string' ? model : model?.primary) || '');
   } catch { /* no engine settings yet */ }
   if (/^GEMINI_API_KEY=\S/m.test(env)) {
-    await step('Google search', ['config', 'set', 'tools.web.search.provider', 'gemini']);
+    await set('Google search', 'tools.web.search.provider', 'gemini');
   } else if (/^OPENROUTER_API_KEY=\S/m.test(env)) {
     // Without the add-on the engine would not know the search service, so set nothing else if it failed.
     if (!await step('search add-on', ['plugins', 'install', '@openclaw/perplexity-plugin', '--accept-capabilities', '--acknowledge-install-policy-warning'], undefined, { okIf: /already (installed|exists)/i })) return;
-    await step('web search', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.baseUrl', 'https://openrouter.ai/api/v1']);
-    await step('web search model', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.model', 'perplexity/sonar']);
-    await step('web search on', ['config', 'set', 'tools.web.search.provider', 'perplexity']);
+    await set('web search', 'plugins.entries.perplexity.config.webSearch.baseUrl', 'https://openrouter.ai/api/v1');
+    await set('web search model', 'plugins.entries.perplexity.config.webSearch.model', 'perplexity/sonar');
+    await set('web search on', 'tools.web.search.provider', 'perplexity');
   } else if (!/^openai\//.test(primary)) {
     if (!await step('free search add-on', ['plugins', 'install', '@openclaw/parallel-plugin', '--accept-capabilities', '--acknowledge-install-policy-warning'], undefined, { okIf: /already (installed|exists)/i })) return;
-    await step('free web search on', ['config', 'set', 'tools.web.search.provider', 'parallel-free']);
+    await set('free web search on', 'tools.web.search.provider', 'parallel-free');
   }
 }
 
@@ -186,29 +188,74 @@ export async function installFalcon({
     return ok;
   };
   log('Applying settings...');
+  // Each engine command starts the engine's command tool from scratch, which takes seconds (11 on a slow
+  // PC with two antivirus programs). So plain settings are collected and applied in one validated write,
+  // and the pre-approvals go in with the approvals themselves: about 6 commands instead of about 28.
+  // If a batch is refused, the same settings are applied one by one, as before.
+  const sets = [];
+  const set = (what, key, value) => { sets.push({ what, path: key, value }); return true; };
   // A little thinking: with none, Falcon stopped after the first step of browser tasks (opened a site and answered).
-  await step('think before acting', ['config', 'set', 'agents.defaults.thinkingDefault', 'low']);
+  set('think before acting', 'agents.defaults.thinkingDefault', 'low');
   // One browser: the user's own Chrome. Smaller models forgot to name it on every step, so their next
   // step went to the engine's separate, empty browser and found nothing.
-  await step('browser is his Chrome', ['config', 'set', 'browser.defaultProfile', 'user']);
+  set('browser is his Chrome', 'browser.defaultProfile', 'user');
   // Tools sit in a catalog. In the default mode, calling web search or the browser by name answered
   // "tool not found" and Falcon gave up; in directory mode a call by exact name just works.
-  await step('tools callable by name', ['config', 'set', 'tools.toolSearch.mode', 'directory']);
+  set('tools callable by name', 'tools.toolSearch.mode', 'directory');
   // Falcon's rules are longer than the 20,000 characters the engine reads from each file by default;
   // without this the end of them (the scout steps among them) was cut off.
-  await step('read all of his rules', ['config', 'set', 'agents.defaults.bootstrapMaxChars', '60000']);
+  set('read all of his rules', 'agents.defaults.bootstrapMaxChars', 60000);
+  set('no background check-ins', 'agents.defaults.heartbeat.every', '0m');
+  set('local chat for the Falcon window', 'gateway.http.endpoints.chatCompletions.enabled', true);
   // Hands for desktop apps: the engine's desktop control stays off until it is switched on by name.
   // On Windows this makes the computer tool work. On a Mac it is tried; the apps skill, which commands
   // Mail, Notes, Calendar and the rest directly, covers the common apps either way.
-  await step('desktop control', ['plugins', 'enable', 'cua-computer'], undefined, { okIf: /already enabled/i, optional: process.platform !== 'win32' });
-  await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m']);
-  await step('local chat for the Falcon window', ['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
-  await setupSearch({ step, envFile, configFile });
-  await step('ask-first approvals', ['approvals', 'set', '--gateway', '--stdin'], APPROVALS);
-  for (const script of scripts) {
-    await step(`pre-approve ${path.basename(script)}`, ['approvals', 'allowlist', 'add', script, '--gateway']);
+  // Skipped when already on: on a second setup the engine's enable command failed with no reason given.
+  let desktopOn = false;
+  try { desktopOn = JSON.parse(fs.readFileSync(configFile, 'utf8')).plugins?.entries?.['cua-computer']?.enabled === true; } catch { /* no settings yet */ }
+  if (!desktopOn) await step('desktop control', ['plugins', 'enable', 'cua-computer'], undefined, { okIf: /already enabled/i, optional: process.platform !== 'win32' });
+  // Search add-ons are installed first (their settings only exist once they are); their plain settings
+  // join the batch.
+  await setupSearch({ step, set, envFile, configFile });
+
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-setup-'));
+  try {
+    const batchFile = path.join(temp, 'settings.json');
+    fs.writeFileSync(batchFile, JSON.stringify(sets.map(({ path: key, value }) => ({ path: key, value }))));
+    if (!await step(`${sets.length} settings at once`, ['config', 'set', '--batch-file', batchFile], undefined, { optional: true })) {
+      for (const s of sets) await step(s.what, ['config', 'set', s.path, String(s.value)]);
+    }
+
+    // Ask-first approvals, with Falcon's own small programs pre-approved in the same document.
+    const approvals = JSON.parse(APPROVALS);
+    approvals.agents = { '*': { allowlist: scripts.map((script) => ({ pattern: script })) } };
+    const approvalsFile = path.join(temp, 'approvals.json');
+    fs.writeFileSync(approvalsFile, JSON.stringify(approvals));
+    const together = await step(`ask-first approvals and ${scripts.length} pre-approvals`,
+      ['approvals', 'set', '--gateway', '--file', approvalsFile], undefined, { optional: true });
+    // Check what landed; add one by one whatever did not (or everything, if the combined write was refused).
+    let landed = new Set();
+    if (together) {
+      const { code, out } = await runEngine(['approvals', 'get', '--gateway', '--json'], { timeoutMs: 300000 });
+      if (code === 0) {
+        try {
+          const doc = JSON.parse(out.slice(out.indexOf('{')));
+          landed = new Set(Object.values(doc.file?.agents || {}).flatMap((a) => a.allowlist || []).map((e) => path.normalize(String(e.pattern || ''))));
+        } catch { /* unreadable: re-add everything below */ }
+      }
+    } else {
+      await step('ask-first approvals', ['approvals', 'set', '--gateway', '--stdin'], APPROVALS);
+    }
+    for (const script of scripts) {
+      if (landed.has(path.normalize(script))) continue;
+      await step(`pre-approve ${path.basename(script)}`, ['approvals', 'allowlist', 'add', script, '--gateway']);
+    }
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
   }
+
   await step('name', ['agents', 'set-identity', '--workspace', workspace, '--name', 'Falcon']);
+  // A refused batch is not a failure in itself: what counts is that its settings then went in one by one.
   return { ok: results.every((r) => r.ok || r.optional), settings: results };
 }
 

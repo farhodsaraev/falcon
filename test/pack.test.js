@@ -17,7 +17,17 @@ function freshWorkspace() {
 test('the pack installs into a workspace and can be re-run without duplicating itself', { skip: !variant }, async () => {
   const ws = freshWorkspace();
   const calls = [];
-  const runEngine = async (args, opts) => { calls.push({ args, input: opts?.input }); return { code: 0, out: '' }; };
+  // A pretend engine: it reads the files handed to it when they are handed over, and answers
+  // "approvals get" with the approvals it was last given.
+  let approvalsDoc = {};
+  const runEngine = async (args, opts) => {
+    const fileArg = args.includes('--batch-file') ? args[args.indexOf('--batch-file') + 1] : args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
+    const file = fileArg ? JSON.parse(fs.readFileSync(fileArg, 'utf8')) : undefined;
+    calls.push({ args, input: opts?.input, file });
+    if (args[0] === 'approvals' && args[1] === 'set' && file) approvalsDoc = file;
+    if (args[0] === 'approvals' && args[1] === 'get') return { code: 0, out: JSON.stringify({ file: approvalsDoc }) };
+    return { code: 0, out: '' };
+  };
   for (let i = 0; i < 2; i++) await installFalcon({ workspace: ws, runEngine, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), configFile: path.join(ws, 'none-config.json'), log: () => {} });
 
   const agents = fs.readFileSync(path.join(ws, 'AGENTS.md'), 'utf8');
@@ -34,19 +44,30 @@ test('the pack installs into a workspace and can be re-run without duplicating i
     assert.ok(text.includes(path.join(ws, 'skills', skill)));
   }
 
-  const once = calls.slice(0, calls.length / 2).map((c) => c.args.join(' '));
-  assert.ok(once.includes('config set agents.defaults.thinkingDefault low'));
-  assert.ok(once.includes('config set browser.defaultProfile user'));
-  assert.ok(once.includes('config set tools.toolSearch.mode directory'));
+  const firstRun = calls.slice(0, calls.length / 2);
+  const once = firstRun.map((c) => c.args.join(' '));
+  // All plain settings go to the engine in one validated write.
+  const batch = firstRun.find((c) => c.args.includes('--batch-file'));
+  assert.ok(batch, 'settings are applied in one batch');
+  const settings = Object.fromEntries(batch.file.map((s) => [s.path, s.value]));
+  assert.equal(settings['agents.defaults.thinkingDefault'], 'low');
+  assert.equal(settings['browser.defaultProfile'], 'user');
+  assert.equal(settings['tools.toolSearch.mode'], 'directory');
+  assert.equal(settings['tools.web.search.provider'], 'parallel-free', 'with no search key, free search is switched on');
+  assert.equal(settings['agents.defaults.bootstrapMaxChars'], 60000);
+  assert.equal(settings['gateway.http.endpoints.chatCompletions.enabled'], true);
+  assert.equal(settings['agents.defaults.heartbeat.every'], '0m');
   assert.ok(once.includes('plugins enable cua-computer'), 'desktop control is switched on');
-  assert.ok(once.includes('config set tools.web.search.provider parallel-free'), 'with no search key, free search is switched on');
-  assert.ok(once.includes('config set agents.defaults.bootstrapMaxChars 60000'));
-  assert.ok(once.includes('config set gateway.http.endpoints.chatCompletions.enabled true'));
-  assert.ok(once.some((c) => c.startsWith('approvals set --gateway --stdin')));
-  assert.match(calls.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').input, /"ask": "on-miss"/);
+  assert.ok(!once.some((c) => /^config set (?!--batch-file)/.test(c)), 'no setting is sent on its own');
+  // Ask-first approvals and the pre-approvals go in one document.
+  const approvals = firstRun.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').file;
+  assert.equal(approvals.defaults.ask, 'on-miss');
+  const patterns = approvals.agents['*'].allowlist.map((e) => e.pattern);
   // Windows: 5 earlier scripts + scout.ps1 and its three Node scripts + the document maker and its wrapper + the apps helper;
   // Mac: 5 + the three scout scripts + the document maker + the apps helper
-  assert.equal(once.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'windows' ? 12 : 10);
+  assert.equal(patterns.length, variant === 'windows' ? 12 : 10);
+  assert.ok(!once.some((c) => c.startsWith('approvals allowlist add')), 'nothing needed adding one by one');
+  assert.ok(firstRun.length <= 6, `few engine commands (${firstRun.length}): ${once.join(' | ')}`);
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'documents', 'make-document.mjs')));
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'apps', variant === 'mac' ? 'apps.mjs' : 'apps.ps1')));
   assert.match(agents, /documents[\\/]+make-document\.(ps1|mjs)/);
@@ -55,7 +76,7 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.match(agents, /scout[\\/]+(scout\.ps1|scout-sources\.mjs)/);
   // The reader for PDF, Word and text files is shared by Mac and Windows, and may run without asking.
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'files', 'read-file.mjs')));
-  assert.ok(once.some((c) => c.startsWith('approvals allowlist add') && c.includes('read-file.mjs')));
+  assert.ok(patterns.some((p) => p.endsWith('read-file.mjs')));
   assert.match(agents, /read-file.(mjs|ps1)/);
   fs.rmSync(ws, { recursive: true, force: true });
 });
@@ -93,13 +114,33 @@ test('a setting refused because the engine was busy is tried once more', { skip:
   const runEngine = async (args) => {
     const key = args.join(' ');
     seen.set(key, (seen.get(key) || 0) + 1);
-    return seen.get(key) === 1 && key === 'config set agents.defaults.thinkingDefault low'
+    return seen.get(key) === 1 && args.includes('--batch-file')
       ? { code: 1, out: 'could not complete config.patch: config changed since last load; re-run config.get and retry' }
       : { code: 0, out: '' };
   };
   const result = await installFalcon({ workspace: ws, runEngine, retryDelayMs: 1, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), configFile: path.join(ws, 'none-config.json'), log: () => {} });
   assert.equal(result.ok, true);
-  assert.equal(seen.get('config set agents.defaults.thinkingDefault low'), 2);
+  const batchRuns = [...seen].filter(([k]) => k.includes('--batch-file'));
+  assert.equal(batchRuns.length, 1);
+  assert.equal(batchRuns[0][1], 2, 'the batch was sent a second time');
+  assert.ok(![...seen.keys()].includes('config set agents.defaults.thinkingDefault low'), 'no need to fall back once the retry worked');
+  fs.rmSync(ws, { recursive: true, force: true });
+});
+
+test('if the engine refuses the batches, Falcon falls back to one setting at a time', { skip: !variant }, async () => {
+  const ws = freshWorkspace();
+  const calls = [];
+  const runEngine = async (args) => {
+    calls.push(args.join(' '));
+    return args.includes('--batch-file') || args.includes('--file') ? { code: 1, out: 'error: unknown option' } : { code: 0, out: '' };
+  };
+  const result = await installFalcon({ workspace: ws, runEngine, retryDelayMs: 1, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), configFile: path.join(ws, 'none-config.json'), log: () => {} });
+  assert.equal(result.ok, true, 'a refused batch is not a failure once its settings went in one by one');
+  assert.ok(calls.includes('config set agents.defaults.thinkingDefault low'));
+  assert.ok(calls.includes('config set gateway.http.endpoints.chatCompletions.enabled true'));
+  assert.ok(calls.includes('config set tools.web.search.provider parallel-free'));
+  assert.ok(calls.includes('approvals set --gateway --stdin'));
+  assert.equal(calls.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'windows' ? 12 : 10);
   fs.rmSync(ws, { recursive: true, force: true });
 });
 
