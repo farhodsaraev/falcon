@@ -696,9 +696,20 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       const code = String(body.code || '').trim().toUpperCase();
       if (!/^[A-Z0-9-]{4,20}$/.test(code)) return { ok: false, error: 'That does not look like a pairing code.' };
       // Note who is asking before approving, so Falcon later knows which chat to write to first.
-      const pending = await api.runEngine(['pairing', 'list', '--channel', 'telegram', '--json'], { timeoutMs: 60000 });
-      const result = await api.runEngine(['pairing', 'approve', 'telegram', code, '--notify'], { timeoutMs: 60000 });
-      if (result.code !== 0) return { ok: false, error: 'That code was not recognised. Send your bot a new message and use the newest code.' };
+      // Generous waits: on a slow PC each of these took 20-30 seconds, and a cut-off wait was reported as a wrong code.
+      const listPending = () => api.runEngine(['pairing', 'list', '--channel', 'telegram', '--json'], { timeoutMs: 180000 });
+      const pending = await listPending();
+      const waiting = (out) => String(out || '').toUpperCase().includes(`"${code}"`);
+      const result = await api.runEngine(['pairing', 'approve', 'telegram', code, '--notify'], { timeoutMs: 180000 });
+      if (result.code !== 0) {
+        // The approval may have gone through even though the command did not say so in time.
+        const wasWaiting = pending.code === 0 && waiting(pending.out);
+        const after = wasWaiting ? await listPending() : null;
+        if (!(after && after.code === 0 && !waiting(after.out))) {
+          // The bot sends its code once and keeps it for an hour; messaging it again brings no new code.
+          return { ok: false, error: 'That code was not recognised. Type the code exactly as the bot sent it in its first reply (it stays the same for an hour).' };
+        }
+      }
       try {
         const requests = Object.values(JSON.parse(pending.out.slice(pending.out.indexOf('{')))).find(Array.isArray) || [];
         const mine = requests.find((r) => JSON.stringify(r).toUpperCase().includes(code));

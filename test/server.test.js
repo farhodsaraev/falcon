@@ -221,6 +221,23 @@ test('Telegram: a well-formed token and code are passed on; malformed ones never
   assert.ok(!calls.some((c) => c[0] === 'gateway' && c[1] === 'restart'), 'no restart when the engine took the token by itself');
 });
 
+test('Telegram: a pairing whose approve command ran out of time but went through counts as done', async () => {
+  const fake = (pendingNow) => async (args) => {
+    if (args[1] === 'list') return { code: 0, out: JSON.stringify({ requests: pendingNow() ? [{ id: '2005844543', code: 'LDFLGWYS' }] : [] }) };
+    if (args[1] === 'approve') { approved = true; return { code: 1, out: 'timed out' }; }
+    return { code: 0, out: '{}' };
+  };
+  let approved = false;
+  for (const [wentThrough, expected] of [[true, true], [false, false]]) {
+    approved = false;
+    const s = await startServer({ engine: { ...engine, runEngine: fake(() => !(wentThrough && approved)) } });
+    try {
+      const r = await fetch(`http://127.0.0.1:${s.port}/api/telegram/pair`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ code: 'ldflgwys' }) }).then((x) => x.json());
+      assert.equal(r.ok, expected);
+    } finally { await s.close(); }
+  }
+});
+
 test('Telegram: if the running engine did not take the token, Falcon restarts it so the bot answers', async () => {
   calls.length = 0;
   telegramNeedsRestart = true;
