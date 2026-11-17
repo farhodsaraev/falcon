@@ -17,6 +17,7 @@
         <span id="dot-telegram" class="dot" title="Telegram: not connected"><i></i>Telegram</span>
         <span id="dot-chrome" class="dot" title="Your Chrome: not connected"><i></i>Chrome</span>
       </span>
+      <button id="open-tasks" class="ghost small-btn" type="button" aria-haspopup="dialog">Tasks</button>
       <button id="open-connections" class="icon" title="Settings" aria-label="Settings" hidden>⚙</button>
     </span>
   </header>
@@ -133,9 +134,15 @@
       <button class="tab on" role="tab" aria-selected="true" data-tab="key">AI key</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="connections">Connections</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="briefing">Briefing</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="readiness">Readiness</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="about">About</button>
     </div>
 
+    <div class="tab-body" data-tab="readiness" hidden>
+      <div class="tasks-head"><h3>Ready to help</h3><button id="readiness-refresh" class="ghost small-btn" type="button">Check again</button></div>
+      <p id="readiness-message" class="hint" role="status">Check the assistant, skills and permissions.</p>
+      <div id="readiness-list" aria-live="polite"></div>
+    </div>
     <div class="tab-body" data-tab="key">
       <div class="panel">
         <p class="panel-title">AI key and model</p>
@@ -271,7 +278,14 @@
     </div>
   </div>
 
+  <dialog id="tasks-dialog" aria-labelledby="tasks-title">
+    <div class="tasks-head"><h2 id="tasks-title">Tasks</h2><button id="tasks-close" class="ghost small-btn" type="button">Close</button></div>
+    <p class="hint">Stop prevents further actions. Completed actions are not undone.</p>
+    <p id="tasks-message" role="status"></p>
+    <div id="task-list" aria-live="polite"></div>
+  </dialog>
   <script src="bridge.js"></script>
+  <script src="tasks.js"></script>
   <script src="voice.js"></script>
   <script src="renderer.js"></script>
 </body>

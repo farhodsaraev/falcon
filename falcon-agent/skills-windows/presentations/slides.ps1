@@ -62,8 +62,9 @@ try {
     }
     $win.View.GotoSlide($Slide)
     $current = $win.View.Slide.SlideIndex
+    if ($current -ne $Slide) { throw "The presentation did not reach the requested slide." }
   }
-  @{ ok = $true; name = $pres.Name; path = $pres.FullName; slide = $current; total = $total } | ConvertTo-Json -Compress
+  @{ ok = $true; verified = ($Slide -gt 0); name = $pres.Name; path = $pres.FullName; slide = $current; total = $total } | ConvertTo-Json -Compress
 } catch {
   @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }

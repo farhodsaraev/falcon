@@ -181,7 +181,7 @@ export async function installFalcon({
   const addonDir = path.join(path.dirname(workspace), 'falcon-words');
   fs.rmSync(addonDir, { recursive: true, force: true });
   fs.mkdirSync(addonDir, { recursive: true });
-  for (const file of ['index.js', 'words.js', 'package.json', 'openclaw.plugin.json']) {
+  for (const file of ['index.js', 'words.js', 'task-hooks.js', 'verification.js', 'inspect-slide.js', 'package.json', 'openclaw.plugin.json']) {
     fs.copyFileSync(path.join(here, 'engine-addon', file), path.join(addonDir, file));
   }
   log(`Falcon is installed in ${workspace}`);

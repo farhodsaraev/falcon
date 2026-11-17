@@ -11,6 +11,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-test-'));
 const calls = [];
 let configured = false;
 let pending = [];
+let currentSession = '';
 let telegramLive = false;
 let telegramNeedsRestart = false;
 const engine = {
@@ -28,7 +29,7 @@ const engine = {
     calls.push(args);
     if (args[0] === 'onboard') configured = true;
     if (args[0] === 'models' && args[1] === 'status') return { code: 0, out: 'engine/default-model\n' };
-    if (args[0] === 'approvals' && args[1] === 'pending') return { code: 0, out: JSON.stringify({ approvals: pending }) };
+    if (args[0] === 'approvals' && args[1] === 'pending') return { code: 0, out: JSON.stringify({ approvals: pending.map(item => ({ ...item, sessionKey: currentSession })) }) };
     if (args[0] === 'channels' && args[1] === 'add') telegramLive = !telegramNeedsRestart;
     if (args[0] === 'gateway' && args[1] === 'restart') telegramLive = true;
     if (args[0] === 'channels' && args[1] === 'status') return { code: 0, out: telegramLive ? '- Telegram default: enabled, running' : '- no configured chat channels' };
@@ -43,7 +44,8 @@ const engine = {
     if (String(url).includes('generativelanguage.googleapis.com')) {
       return new Response('{}', { status: options.headers['x-goog-api-key'].includes('Rejected') ? 400 : 200 });
     }
-    calls.push(['fetch', url, options.headers.Authorization, JSON.parse(options.body).messages[0].content]);
+    currentSession = options.headers['x-openclaw-session-key'];
+    calls.push(['fetch', url, options.headers.Authorization, JSON.parse(options.body).messages.at(-1).content]);
     const sse = ['Slide five ', 'is up, sir [1].', '\n\n[[d', 'id]] Opened Quarterly Review | Went to slide 5'].map((t) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`).join('') + 'data: [DONE]\n\n';
     await new Promise((r) => setTimeout(r, 2500));          // long enough for one approvals poll
     return new Response(sse, { status: 200 });
@@ -100,6 +102,8 @@ test('chat is relayed to the engine and streamed back; approvals show up meanwhi
   const reader = events.body.getReader();
   await reader.read();
   const chat = await call('POST', '/api/chat', { text: 'Open slide 5' });
+  const pushed = new TextDecoder().decode((await reader.read()).value);
+  assert.match(pushed, /event: (task|approval)/);
   const text = await chat.text();
   assert.match(text, /Slide five /);
   assert.match(text, /event: done/);
@@ -107,13 +111,13 @@ test('chat is relayed to the engine and streamed back; approvals show up meanwhi
   const spoken = [...text.matchAll(/event: delta\ndata: (.*)\n/g)].map((m) => JSON.parse(m[1]).text).join('');
   assert.equal(spoken.trim(), 'Slide five is up, sir [1].', 'an ordinary bracket in the answer is passed on');
   assert.doesNotMatch(text.split('event: actions')[0], /\[\[d|Opened Quarterly/, 'the "what I did" line is not shown as text');
-  assert.deepEqual(JSON.parse(text.split('event: actions\ndata: ')[1].split('\n')[0]).items, ['Opened Quarterly Review', 'Went to slide 5']);
+  assert.doesNotMatch(text, /event: actions/, 'model-written claims never make success cards');
   const relayed = calls.find((c) => c[0] === 'fetch');
   assert.equal(relayed[2], 'Bearer gw');
   assert.ok(relayed[3].startsWith('Open slide 5\n\n[Note from your own window'));
-  const pushed = new TextDecoder().decode((await reader.read()).value);
-  assert.match(pushed, /event: approval/);
-  assert.match(pushed, /whoami/);
+  assert.ok(currentSession.startsWith('agent:main:falcon-window-'));
+  const history = await (await call('GET', '/api/tasks')).json();
+  assert.equal(history.items[0].actions.length, 0);
   await reader.cancel();
   pending = [];
 });
@@ -249,10 +253,10 @@ test('Telegram: if the running engine did not take the token, Falcon restarts it
   } finally { telegramNeedsRestart = false; }
 });
 
-test('an approval answer is passed on, and odd answers are refused', async () => {
+test('stale and unscoped approvals cannot be allowed, and odd answers are refused', async () => {
   calls.length = 0;
-  assert.equal((await (await call('POST', '/api/approval', { id: 'abcd1234-aaaa', decision: 'allow-once' })).json()).ok, true);
-  assert.deepEqual(calls[0].slice(0, 4), ['approvals', 'resolve', 'abcd1234-aaaa', 'allow-once']);
+  assert.equal((await (await call('POST', '/api/approval', { id: 'abcd1234-aaaa', decision: 'allow-once' })).json()).ok, false);
+  assert.equal(calls.length, 0, 'a stale allow decision never reaches the engine');
   assert.equal((await (await call('POST', '/api/approval', { id: 'abcd1234-aaaa', decision: 'allow-always' })).json()).ok, false);
   assert.equal((await (await call('POST', '/api/approval', { id: 'x; calc', decision: 'deny' })).json()).ok, false);
 });

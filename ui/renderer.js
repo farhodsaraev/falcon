@@ -41,6 +41,7 @@ async function refreshConnections() {
 
 // Settings are split into four tabs.
 function showTab(name) {
+  if (name === 'readiness') window.falconTaskUI.refreshReadiness();
   for (const tab of document.querySelectorAll('.tab')) {
     const on = tab.dataset.tab === name;
     tab.classList.toggle('on', on);
@@ -469,6 +470,8 @@ async function sendToFalcon(text, shown = text) {
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
       onError: fail,
+      onTask: task => window.falconTaskUI.update(task),
+      onCancelled: message => { clearWaiting(); answer = message; reveal.set(message); cards = []; dossier = ''; },
     });
     await reveal.done();
     if (cards.length) showActions(cards);
@@ -696,6 +699,11 @@ $('about-quit').addEventListener('click', async () => {
 });
 
 window.falcon.listen({
+  task: task => window.falconTaskUI.update(task),
+  'approval-resolved': ({ id }) => {
+    for (let i = approvalQueue.length - 1; i >= 0; i--) if (approvalQueue[i].id === id) approvalQueue.splice(i, 1);
+    if (currentApproval?.id === id) { currentApproval = null; $('approval').hidden = true; nextApproval(); }
+  },
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
   setup: (progress) => {
     if (progress.detail) return setupLog.add(progress.detail);

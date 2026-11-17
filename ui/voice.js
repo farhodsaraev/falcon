@@ -7,6 +7,7 @@
   const handled = new Set();
   let bufferReports = false;
   const actOnce = (call) => { if (!call.call_id || handled.has(call.call_id)) return; handled.add(call.call_id); actFor(call); };
+  let voiceGeneration = 0;
   let pc = null;
   let channel = null;
   let mic = null;
@@ -62,6 +63,7 @@
   const send = (event) => { if (channel?.readyState === 'open') channel.send(JSON.stringify(event)); };
 
   async function actFor(call) {
+    const generation = voiceGeneration;
     let request = '';
     try { request = JSON.parse(call.arguments || '{}').request || ''; } catch { /* handled below */ }
     let result = '';
@@ -73,12 +75,14 @@
         await window.falcon.chat(request, {
           onDelta: (piece) => { result += piece; },
           onActions: (items) => listeners.actions(items),
+          onCancelled: message => { result = message; },
           onError: (message) => { result = message; },
         });
       } catch {
         result = 'The request could not be carried out because the connection to this computer was lost.';
       }
     }
+    if (generation !== voiceGeneration || !pc) return;
     send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: call.call_id, output: result || 'Done.' } });
     send({ type: 'response.create' });
   }
@@ -165,6 +169,7 @@
   }
 
   function stop() {
+    voiceGeneration++;
     if (pc && sound) chime(false);
     clearInterval(meterTimer);
     meterTimer = null; micMeter = null; voiceMeter = null; speaking = false;
@@ -252,6 +257,7 @@
       await window.falcon.chat(text, {
         onDelta: (piece) => { answer += piece; },
         onActions: (items) => listeners.actions(items),
+        onCancelled: message => { answer = message; },
         onError: (message) => { answer = message; },
       });
     } catch {
