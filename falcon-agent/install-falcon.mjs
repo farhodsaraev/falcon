@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const variant = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : null;
-const FALCON_SKILLS = ['files', 'presentations', 'screen', 'daily', 'scout'];
+const FALCON_SKILLS = ['files', 'presentations', 'screen', 'daily', 'scout', 'documents', 'apps'];
 const APPROVALS = '{ "version": 1, "defaults": { "security": "allowlist", "ask": "on-miss", "askFallback": "deny" } }';
 
 const read = (file) => fs.readFileSync(file, 'utf8');
@@ -52,11 +52,22 @@ function defaultRunEngine(args, { input } = {}) {
  * its own, but with an Anthropic or OpenRouter key Falcon would have none and fall back to a browser
  * that Google blocks. Falcon's window keeps the keys search needs in the engine's private .env file:
  * a Google key (searches Google itself) wins; otherwise an OpenRouter key searches through Perplexity,
- * billed to the same OpenRouter account, with no extra key.
+ * billed to the same OpenRouter account, with no extra key. With neither (an Anthropic key, or no key
+ * yet), a free search service that needs no key is switched on, unless Falcon thinks with an OpenAI
+ * model, which searches by itself.
  */
-export async function setupSearch({ step, envFile = path.join(os.homedir(), '.openclaw', '.env') }) {
+export async function setupSearch({
+  step,
+  envFile = path.join(os.homedir(), '.openclaw', '.env'),
+  configFile = path.join(os.homedir(), '.openclaw', 'openclaw.json'),
+}) {
   let env = '';
   try { env = read(envFile); } catch { /* no keys saved */ }
+  let primary = '';
+  try {
+    const model = JSON.parse(read(configFile))?.agents?.defaults?.model;
+    primary = String((typeof model === 'string' ? model : model?.primary) || '');
+  } catch { /* no engine settings yet */ }
   if (/^GEMINI_API_KEY=\S/m.test(env)) {
     await step('Google search', ['config', 'set', 'tools.web.search.provider', 'gemini']);
   } else if (/^OPENROUTER_API_KEY=\S/m.test(env)) {
@@ -65,6 +76,9 @@ export async function setupSearch({ step, envFile = path.join(os.homedir(), '.op
     await step('web search', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.baseUrl', 'https://openrouter.ai/api/v1']);
     await step('web search model', ['config', 'set', 'plugins.entries.perplexity.config.webSearch.model', 'perplexity/sonar']);
     await step('web search on', ['config', 'set', 'tools.web.search.provider', 'perplexity']);
+  } else if (!/^openai\//.test(primary)) {
+    if (!await step('free search add-on', ['plugins', 'install', '@openclaw/parallel-plugin', '--accept-capabilities', '--acknowledge-install-policy-warning'], undefined, { okIf: /already (installed|exists)/i })) return;
+    await step('free web search on', ['config', 'set', 'tools.web.search.provider', 'parallel-free']);
   }
 }
 
@@ -80,7 +94,9 @@ export async function installFalcon({
   skipSettings = false,
   profileFile = path.join(os.homedir(), '.falcon', 'profile.json'),
   envFile = path.join(os.homedir(), '.openclaw', '.env'),
+  configFile = path.join(os.homedir(), '.openclaw', 'openclaw.json'),
   runEngine = defaultRunEngine,
+  retryDelayMs = 3000,
   log = console.log,
 } = {}) {
   if (!fs.existsSync(workspace)) throw new Error(`Workspace not found at ${workspace}. Set up the engine first.`);
@@ -155,11 +171,18 @@ export async function installFalcon({
 
   // Settings (need the engine running)
   const results = [];
-  const step = async (what, args, input, { okIf } = {}) => {
-    const { code, out } = await runEngine(args, { input, timeoutMs: 300000 });
+  // An optional step may fail without making the whole setup count as failed.
+  const step = async (what, args, input, { okIf, optional = false } = {}) => {
+    let { code, out } = await runEngine(args, { input, timeoutMs: 300000 });
+    // The engine may be busy saving another change ("config changed since last load", "not applied to
+    // the active Gateway"): wait a moment and try once more.
+    if (code !== 0 && /changed since last load|retry|not applied to the active Gateway|UNAVAILABLE/i.test(out)) {
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+      ({ code, out } = await runEngine(args, { input, timeoutMs: 300000 }));
+    }
     const ok = code === 0 || Boolean(okIf && okIf.test(out));
-    results.push({ what, ok });
-    log(ok ? `  ok    ${what}` : `  FAILED ${what}: ${out.trim().split('\n')[0]}`);
+    results.push({ what, ok, optional });
+    log(ok ? `  ok    ${what}` : `  ${optional ? 'skipped' : 'FAILED'} ${what}: ${out.trim().split('\n')[0]}`);
     return ok;
   };
   log('Applying settings...');
@@ -174,15 +197,19 @@ export async function installFalcon({
   // Falcon's rules are longer than the 20,000 characters the engine reads from each file by default;
   // without this the end of them (the scout steps among them) was cut off.
   await step('read all of his rules', ['config', 'set', 'agents.defaults.bootstrapMaxChars', '60000']);
+  // Hands for desktop apps: the engine's desktop control stays off until it is switched on by name.
+  // On Windows this makes the computer tool work. On a Mac it is tried; the apps skill, which commands
+  // Mail, Notes, Calendar and the rest directly, covers the common apps either way.
+  await step('desktop control', ['plugins', 'enable', 'cua-computer'], undefined, { okIf: /already enabled/i, optional: process.platform !== 'win32' });
   await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m']);
   await step('local chat for the Falcon window', ['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
-  await setupSearch({ step, envFile });
+  await setupSearch({ step, envFile, configFile });
   await step('ask-first approvals', ['approvals', 'set', '--gateway', '--stdin'], APPROVALS);
   for (const script of scripts) {
     await step(`pre-approve ${path.basename(script)}`, ['approvals', 'allowlist', 'add', script, '--gateway']);
   }
   await step('name', ['agents', 'set-identity', '--workspace', workspace, '--name', 'Falcon']);
-  return { ok: results.every((r) => r.ok), settings: results };
+  return { ok: results.every((r) => r.ok || r.optional), settings: results };
 }
 
 // Run directly from a terminal

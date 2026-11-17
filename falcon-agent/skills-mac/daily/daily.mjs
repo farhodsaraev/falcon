@@ -12,7 +12,8 @@ function args() {
   for (let i = 0; i < argv.length; i++) if (argv[i].startsWith('--')) out[argv[i].slice(2)] = argv[i + 1] ?? '';
   return out;
 }
-const osa = (lines, argv = []) => execFileSync('osascript', [...lines.flatMap((l) => ['-e', l]), ...argv],
+// The first argument is a fixed word, so a value such as "-1" can never be read as an option.
+const osa = (lines, argv = []) => execFileSync('osascript', [...lines.flatMap((l) => ['-e', l]), ...(argv.length ? ['falcon', ...argv] : [])],
   { encoding: 'utf8', timeout: 30000 }).trim();
 const rows = (text) => text.split('\n').filter(Boolean).map((line) => line.split('\t').map((v) => (v === 'missing value' ? '' : v.trim())));
 const clock = (iso) => iso.slice(11, 16);
@@ -28,7 +29,7 @@ function calendar(day) {
     'on run argv',
     'set d1 to current date',
     'set time of d1 to 0',
-    'set d1 to d1 + ((item 1 of argv) as integer) * days',
+    'set d1 to d1 + ((item 2 of argv) as integer) * days',
     'set d2 to d1 + 1 * days',
     'set out to ""',
     'tell application "Calendar"',
@@ -57,7 +58,7 @@ function mail(max) {
     'tell application "Mail"',
     'set unreadMessages to (messages of inbox whose read status is false)',
     'set total to count of unreadMessages',
-    'set upTo to (item 1 of argv) as integer',
+    'set upTo to (item 2 of argv) as integer',
     'if total < upTo then set upTo to total',
     'repeat with i from 1 to upTo',
     'set m to item i of unreadMessages',

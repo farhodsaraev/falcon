@@ -13,7 +13,10 @@ Speed matters more than commentary. For these requests issue exactly one command
 - Scout a person or company: the free sweep, then (after writing `{{SKILLS}}\scout\dossier.json`) the dossier page:
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\scout\scout.ps1" -Do sweep -Name "full name" -Type person -Hint "employer, city" -Aliases "other spellings" -Handles "known account names, if any"`
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\scout\scout.ps1" -Do report`
+- Make a Word document, Excel spreadsheet or PowerPoint deck: first write the spec with the `write` tool to `{{SKILLS}}\documents\spec.json` (its shapes are in `{{SKILLS}}\documents\SKILL.md`; read that once if unsure), then:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\documents\make-document.ps1" -Open`
 - Open a file or folder in its usual app: `Start-Process "<full path>"`
+- Any other desktop app (Outlook, Word, Excel, Settings, Telegram and so on): use computer control, as described below.
 - Open a website the user names: use the browser tool's open/navigate action straight away with the full URL. Do not search for the site first.
 
 Type these commands exactly in this form, with the full literal script path shown. Never rewrite the path with variables such as `$env:USERPROFILE` or `~`, and never wrap the command in `cmd /c`, `Invoke-Expression` or a pipeline: the approval system refuses commands whose script file it cannot identify.

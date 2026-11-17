@@ -57,7 +57,10 @@ async function load(modules, name) {
   const dir = path.join(modules, name);
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
   const entry = pkg.exports?.['.']?.import || pkg.exports?.['.']?.default || pkg.module || pkg.main || 'index.js';
-  return import(pathToFileURL(path.join(dir, typeof entry === 'string' ? entry : entry.default)).href);
+  let file = path.join(dir, typeof entry === 'string' ? entry : entry.default);
+  // Old packages name their entry without ".js" ("main": "./lib/index"), which import() does not accept.
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = [`${file}.js`, path.join(file, 'index.js')].find((f) => fs.existsSync(f)) || file;
+  return import(pathToFileURL(file).href);
 }
 
 async function readPdf(file, maxPages) {

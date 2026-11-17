@@ -83,7 +83,16 @@ if (sweep) {
   }
   const sec = f['US SEC filings'];
   if (sec && !has('sec')) {
-    checks.push({ label: 'US SEC filings', result: sec.total ? `Mentioned in ${sec.total} filings` : 'Not mentioned in US filings', status: 'info' });
+    const others = (sec.mentionedIn || 0) - (sec.total || 0);
+    checks.push({ label: 'US SEC filings', result: sec.total
+      ? `${sec.total} filings by ${sec.filings?.[0]?.company || 'a company of this name'}`
+      : `Files nothing with the SEC${others > 0 ? ` (the name appears in ${others} filings by other companies)` : ''}`, status: 'info' });
+  }
+  const uz = f['Uzbekistan company register (orginfo.uz)'];
+  if (Array.isArray(uz) && !has('uzbek')) {
+    checks.push(uz.length
+      ? { label: 'Uzbekistan company register', result: uz.slice(0, 3).map((u) => `${u.legalName}${u.taxNumber ? `, tax number ${u.taxNumber}` : ''}${u.status ? `, ${u.status}` : ''}`).join('; '), status: 'info' }
+      : { label: 'Uzbekistan company register', result: 'No company registered in Uzbekistan under this name', status: 'unknown' });
   }
   const web = f['Website registration'];
   if (web?.registered && !has('website')) checks.push({ label: 'Website', result: `${web.domain} registered ${web.registered}${web.registrar ? ` with ${web.registrar}` : ''}`, status: 'ok' });
@@ -231,6 +240,31 @@ try {
   fs.writeFileSync(out, html);
 } catch (err) { done({ ok: false, error: `The dossier could not be saved: ${err.message}` }); }
 
+// Remember it: a plain summary goes into Falcon's own notes (the memory folder of his workspace, two
+// folders above this script), where his memory search finds it when the user asks about it later.
+let remembered = null;
+try {
+  const workspace = path.resolve(here, '..', '..');
+  if (fs.existsSync(path.join(workspace, 'AGENTS.md'))) {
+    const memory = path.join(workspace, 'memory');
+    fs.mkdirSync(memory, { recursive: true });
+    const plain = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+    const lines = [
+      `# Scout dossier: ${plain(d.name)} (${localDate})`, '',
+      `Scouted on ${localDate} at the user's request. ${plain(d.subtitle)}`.trim(),
+      `Full dossier page: ${out}`, '',
+      d.summary ? `Summary: ${plain(d.summary)}` : '',
+      ...list(d.facts).filter((x) => x?.label && x?.value).map((x) => `- ${plain(x.label)}: ${plain(x.value)}`),
+      ...list(d.sections).filter((s) => s?.title).flatMap((s) => [`## ${plain(s.title)}`, ...list(s.items).map((i) => `- ${plain(typeof i === 'string' ? i : i?.text)}`)]),
+      checks.length ? '## Checks' : '', ...checks.map((c) => `- ${plain(c.label)}: ${plain(c.result)}`),
+      social.length ? '## Social media' : '', ...social.map((a) => `- ${a.platform}: ${a.url} (${a.confidence})`),
+      list(d.unknowns).length ? '## Not found or unclear' : '', ...list(d.unknowns).map((u) => `- ${plain(u)}`),
+    ].filter((l, i, all) => l !== '' || all[i - 1] !== '');
+    remembered = path.join(memory, `scout-${fileName.replace(/\.html$/, '.md').replace(/\s+/g, '-')}`);
+    fs.writeFileSync(remembered, `${lines.join('\n').trim()}\n`);
+  }
+} catch { remembered = null; /* the dossier itself is saved */ }
+
 // Falcon's window shows the dossier itself; open it in the browser only when asked to.
 if (args.includes('--open')) {
   {
@@ -247,4 +281,4 @@ try {
   const progress = JSON.parse(fs.readFileSync(progressPath(), 'utf8'));
   fs.writeFileSync(progressPath(), JSON.stringify({ ...progress, stage: 3, dossier: out, at: Date.now() }));
 } catch { /* no window waiting */ }
-done({ ok: true, path: out, sources: sources.length, news: news.length, checks: checks.length });
+done({ ok: true, path: out, remembered: Boolean(remembered), sources: sources.length, news: news.length, checks: checks.length });

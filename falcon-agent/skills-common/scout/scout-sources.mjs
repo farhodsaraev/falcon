@@ -46,8 +46,11 @@ const clip = (text, max) => { const t = String(text ?? '').replace(/\s+/g, ' ').
 const fold = (text) => String(text ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const words = (n) => fold(n).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length > 1);
 const names = [name, ...aliases].map(words).filter((w) => w.length);
-// A result is about our target only if it carries every word of one spelling of the name (in any order).
-const mentions = (text) => { const f = fold(text); return names.some((w) => w.every((t) => f.includes(t))); };
+// A result is about our target only if it carries every word of one spelling of the name (in any order),
+// as whole words. A Cyrillic word may carry a short Russian ending (Узума, Узумом); a Latin one only a
+// plural or possessive, so "Uzumaki" is not "Uzum".
+const fits = (token, word) => token === word || (token.startsWith(word) && token.length - word.length <= (/[а-яё]/.test(word) ? 3 : 1));
+const mentions = (text) => { const tokens = words(text); return names.some((w) => w.every((t) => tokens.some((x) => fits(x, t)))); };
 const each = async (fn) => (await Promise.allSettled([name, ...aliases].map(fn))).flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value].flat() : []));
 const decode = (s) => String(s ?? '').replace(/<!\[CDATA\[|\]\]>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/<[^>]+>/g, '');
 
@@ -137,14 +140,43 @@ async function gleif() {
   }));
 }
 
-// ---- US SEC filings that mention the name ----
+// ---- Uzbekistan's company register (orginfo.uz): official name, tax number, status, address ----
+async function uzRegister() {
+  const results = await each(async (n) => {
+    const html = await get(`https://orginfo.uz/ru/search/organizations/?q=${enc(n)}`, { json: false, headers: { 'Accept-Language': 'ru' } });
+    return html.split('og-card').slice(1).map((card) => {
+      const link = (html.slice(0, html.indexOf(card)).match(/href="(\/ru\/organization\/[\w-]+\/)"[^>]*class="[^"]*$/) || [])[1];
+      const pick = (re) => decode((card.match(re) || [])[1] || '').replace(/\s+/g, ' ').trim();
+      return {
+        legalName: pick(/<h6 class="card-title">([\s\S]*?)<\/h6>/), taxNumber: pick(/rounded-5">\s*(\d{9})\s*</),
+        status: pick(/text-(?:danger|success|warning)">\s*([^<]+?)\s*</), registered: pick(/calendar"?>\s*([\d.]+)/),
+        address: pick(/location"?>\s*([^<]+)/), url: link ? `https://orginfo.uz${link}` : 'https://orginfo.uz/',
+      };
+    });
+  });
+  const seen = new Set();
+  // Same-name rule as everywhere: every word of one spelling of the name must be in the official name.
+  // Closest first: the official name is exactly the name (inside its quotes), then working companies before
+  // closed ones. "Uzum" is also an everyday word (grape), so farms named after it sink to the bottom.
+  const quoted = (r) => fold((r.legalName.match(/["«]([^"»]+)["»]/) || [])[1] || r.legalName).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const exact = (r) => names.some((w) => quoted(r) === w.join(' '));
+  const score = (r) => (exact(r) ? 0 : 4) + (/ликвид|liquid|tugatil/i.test(r.status) ? 2 : 0) + (/фермер|дехкон|fermer|dehqon/i.test(r.legalName) ? 1 : 0);
+  return results.filter((r) => r.legalName && mentions(r.legalName) && !seen.has(r.taxNumber || r.legalName) && seen.add(r.taxNumber || r.legalName))
+    .sort((a, b) => score(a) - score(b)).slice(0, 6).map((r) => ({ ...r, exactName: exact(r) }));
+}
+
+// ---- US SEC filings: companies of that name that file with the SEC, and how often the name is mentioned ----
+// A plain mention of a common word ("Uzum", "Apex") turns up in many unrelated filings, so only filings
+// made by a company whose own name matches are listed; the rest are only counted.
 async function sec() {
   const data = await get(`https://efts.sec.gov/LATEST/search-index?q=${enc(`"${name}"`)}`);
   const hits = data.hits?.hits || [];
+  const own = hits.filter((h) => (h._source.display_names || []).some((d) => mentions(d.replace(/\(CIK[^)]*\)/i, ''))));
   return {
-    total: data.hits?.total?.value || 0,
-    filings: hits.slice(0, 6).map((h) => ({
-      company: (h._source.display_names || [])[0] || '', form: h._source.form || h._source.file_type, date: h._source.file_date,
+    total: own.length,
+    mentionedIn: data.hits?.total?.value || 0,
+    filings: own.slice(0, 6).map((h) => ({
+      company: (h._source.display_names || []).find((d) => mentions(d)) || '', form: h._source.form || h._source.file_type, date: h._source.file_date,
       url: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${(h._source.ciks || [])[0] || ''}`,
     })),
   };
@@ -162,7 +194,8 @@ async function openalex() {
 async function github() {
   const q = type === 'company' ? `${name} type:org` : `${name} in:name type:user`;
   const data = await get(`https://api.github.com/search/users?q=${enc(q)}&per_page=5`, { headers: { Accept: 'application/vnd.github+json' } });
-  return (data.items || []).slice(0, 4).map((u) => ({ login: u.login, url: u.html_url }));
+  // GitHub's search also matches bios and locations; keep only accounts whose own name carries the target's.
+  return (data.items || []).filter((u) => mentions(u.login.replace(/[-_.]+/g, ' ')) || slugMatches(u.login) && fold(u.login).replace(/[^a-z0-9]/g, '') === [name, ...aliases].map((n) => fold(n).replace(/[^a-z0-9]/g, '')).find(Boolean)).slice(0, 4).map((u) => ({ login: u.login, url: u.html_url }));
 }
 
 // ---- US Treasury sanctions list (OFAC SDN), downloaded at most once a week ----
@@ -341,7 +374,7 @@ const jobs = {
   GitHub: github,
   'Social accounts (Telegram, X, YouTube, GitHub)': socialAccounts,
   ...(openRouterKey() ? { 'Social accounts (web search on 9 platforms)': webProfiles } : {}),
-  ...(type === 'company' ? { 'Global company register (GLEIF)': gleif } : { 'Research papers (OpenAlex)': openalex }),
+  ...(type === 'company' ? { 'Global company register (GLEIF)': gleif, 'Uzbekistan company register (orginfo.uz)': uzRegister } : { 'Research papers (OpenAlex)': openalex }),
 };
 
 const findings = {};

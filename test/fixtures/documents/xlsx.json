@@ -1,0 +1,1 @@
+{"type":"xlsx","title":"Falcon CI check","sheets":[{"name":"Sales","rows":[["Month","Amount"],["October",4800],["November",5200.5],["Total","=SUM(B2:B3)"]]}]}

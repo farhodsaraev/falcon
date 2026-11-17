@@ -25,6 +25,9 @@ No administrator password is needed. The installer adds a **Falcon** app (Applic
 - "Find last month's invoice."
 - "What's on my screen right now?"
 - "Open bbc.com/news and tell me the top headline."
+- "Scout Uzum and make me a five-slide deck from what you find."
+- "Put last month's invoices in a spreadsheet."
+- "Remind me tomorrow at nine to call the bank." · "Draft an email to Ann about the contract." (Mac)
 - «Фалкон, что у меня сейчас на экране?»
 
 ## Approvals
