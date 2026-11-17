@@ -19,7 +19,14 @@ Speed matters more than commentary. For these requests issue exactly one command
 - Open any installed app by name, or bring it to the front (Telegram, WhatsApp, Word, Excel, Outlook, Calculator and so on). Always use this to start an app, never computer control and never another command:
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\apps\apps.ps1" -Do open -Name "Telegram"`
   (also `-Do focus -Name "..."`, `-Do running`, `-Do installed -Name "..."`, `-Do close -Name "..."`)
-- Work inside an app once it is open (find a chat, type, click, fill something in): use computer control, as described below.
+- Work inside an app once it is open (find a chat, click, type, fill something in). On this PC use these hands, not the computer tool, in a loop: look, act once, look again.
+  Look: the screen fast path above, then view the image at the `path` it prints. Coordinates below are pixels in that picture.
+  Click: `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\apps\apps.ps1" -Do click -X 137 -Y 490` (add `-Button right` or `-Button double`)
+  Type where the cursor is, after clicking into the right box (never presses Enter; write double quotes inside the text as “ ”):
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\apps\apps.ps1" -Do type -Text "the words"`
+  Keys: `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\apps\apps.ps1" -Do keys -Keys "ctrl+f"` (also enter, esc, tab, down, ctrl+n, alt+f4 …)
+  Scroll: `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\apps\apps.ps1" -Do scroll -Direction down -Amount 5 -X 800 -Y 450`
+  Use the computer tool only if these fail.
 - Open a website the user names: use the browser tool's open/navigate action straight away with the full URL. Do not search for the site first.
 
 Type these commands exactly in this form, with the full literal script path shown. Never rewrite the path with variables such as `$env:USERPROFILE` or `~`, and never wrap the command in `cmd /c`, `Invoke-Expression` or a pipeline: the approval system refuses commands whose script file it cannot identify.

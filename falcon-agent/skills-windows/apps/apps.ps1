@@ -8,8 +8,15 @@
 # Apps are found the way the Start menu lists them, so desktop and Store apps both work. Uninstallers,
 # setup and repair entries are never started.
 param(
-  [ValidateSet("open", "focus", "running", "installed", "close")][string]$Do = "open",
-  [string]$Name = ""
+  [ValidateSet("open", "focus", "running", "installed", "close", "type", "click", "keys", "scroll")][string]$Do = "open",
+  [string]$Name = "",
+  [string]$Text = "",
+  [int]$X = -1,
+  [int]$Y = -1,
+  [ValidateSet("left", "right", "double")][string]$Button = "left",
+  [string]$Keys = "",
+  [ValidateSet("up", "down")][string]$Direction = "down",
+  [int]$Amount = 3
 )
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -25,6 +32,26 @@ public static class FalconWin {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, int data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+  // Windows lets only the app that has the keyboard pick the front window, so borrow its input queue
+  // for a moment instead of pressing a key (Alt opens menus in some apps).
+  public static void Front(IntPtr h) {
+    if (IsIconic(h)) ShowWindow(h, 9);
+    uint mine = GetCurrentThreadId();
+    uint theirs = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero);
+    bool joined = theirs != 0 && theirs != mine && AttachThreadInput(mine, theirs, true);
+    BringWindowToTop(h);
+    SetForegroundWindow(h);
+    if (joined) AttachThreadInput(mine, theirs, false);
+  }
 }
 "@
 
@@ -52,14 +79,84 @@ function Find-Window([string]$want) {
   return $hit
 }
 function Bring-Front($window) {
-  $h = [IntPtr]$window.MainWindowHandle
-  if ([FalconWin]::IsIconic($h)) { [void][FalconWin]::ShowWindow($h, 9) }
-  # Windows only lets the app that last had input take the front; a tap of Alt counts as input.
-  [FalconWin]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [FalconWin]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-  [void][FalconWin]::SetForegroundWindow($h)
+  [FalconWin]::Front([IntPtr]$window.MainWindowHandle)
 }
 
+# Clicks and scrolls use the coordinates of the screen picture (the screen skill's screenshot, at most
+# 1600 pixels wide), turned into real screen pixels here, so scaling such as 150% does not matter.
+[void][FalconWin]::SetProcessDPIAware()
+$screenW = [FalconWin]::GetSystemMetrics(0); $screenH = [FalconWin]::GetSystemMetrics(1)
+$pictureScale = [Math]::Min(1.0, 1600 / $screenW)
+function To-Screen([int]$px, [int]$py) {
+  $sx = [int][Math]::Round($px / $pictureScale); $sy = [int][Math]::Round($py / $pictureScale)
+  if ($px -lt 0 -or $py -lt 0 -or $sx -ge $screenW -or $sy -ge $screenH) { Fail "That point is outside the screen picture ($([int]($screenW * $pictureScale)) x $([int]($screenH * $pictureScale)))." }
+  return @($sx, $sy)
+}
+$named = @{ enter = 0x0D; return = 0x0D; esc = 0x1B; escape = 0x1B; tab = 0x09; space = 0x20; backspace = 0x08; delete = 0x2E; del = 0x2E
+  up = 0x26; down = 0x28; left = 0x25; right = 0x27; home = 0x24; end = 0x23; pageup = 0x21; pagedown = 0x22
+  f1 = 0x70; f2 = 0x71; f3 = 0x72; f4 = 0x73; f5 = 0x74; f6 = 0x75; f7 = 0x76; f8 = 0x77; f9 = 0x78; f10 = 0x79; f11 = 0x7A; f12 = 0x7B }
+$mods = @{ ctrl = 0x11; control = 0x11; shift = 0x10; alt = 0x12; win = 0x5B; windows = 0x5B }
+
 switch ($Do) {
+  "click" {
+    if ($X -lt 0 -or $Y -lt 0) { Fail "Give the point to click as -X and -Y from the screen picture." }
+    $p = To-Screen $X $Y
+    [void][FalconWin]::SetCursorPos($p[0], $p[1])
+    Start-Sleep -Milliseconds 80
+    $down = 0x02; $up = 0x04
+    if ($Button -eq "right") { $down = 0x08; $up = 0x10 }
+    $times = $(if ($Button -eq "double") { 2 } else { 1 })
+    for ($i = 0; $i -lt $times; $i++) { [FalconWin]::mouse_event($down, 0, 0, 0, [UIntPtr]::Zero); [FalconWin]::mouse_event($up, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60 }
+    Start-Sleep -Milliseconds 400
+    Say @{ ok = $true; clicked = @($X, $Y); button = $Button; note = "Take a new screen picture to see the result." }
+  }
+  "scroll" {
+    if ($X -ge 0 -and $Y -ge 0) { $p = To-Screen $X $Y; [void][FalconWin]::SetCursorPos($p[0], $p[1]) }
+    $delta = 120 * [Math]::Max(1, [Math]::Min(20, $Amount)) * $(if ($Direction -eq "up") { 1 } else { -1 })
+    [FalconWin]::mouse_event(0x0800, 0, 0, $delta, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 300
+    Say @{ ok = $true; scrolled = $Direction; amount = $Amount }
+  }
+  "keys" {
+    # One key or a combination: "enter", "esc", "ctrl+f", "ctrl+shift+n", "alt+f4", "down".
+    if (-not $Keys) { Fail "Say which keys to press, for example ctrl+f or enter." }
+    if ($Name) { $win = Find-Window $Name; if (-not $win) { Fail "$Name has no open window." }; Bring-Front $win; Start-Sleep -Milliseconds 300 }
+    $parts = @($Keys.ToLower() -split '\+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $held = @(); $main = $null
+    foreach ($k in $parts) {
+      if ($mods.ContainsKey($k)) { $held += $mods[$k] }
+      elseif ($named.ContainsKey($k)) { $main = $named[$k] }
+      elseif ($k.Length -eq 1 -and $k -match '[a-z0-9]') { $main = [int][char]$k.ToUpper() }
+      else { Fail "I do not know the key '$k'." }
+    }
+    if ($null -eq $main -and $held.Count -eq 0) { Fail "Say which keys to press." }
+    foreach ($m in $held) { [FalconWin]::keybd_event([byte]$m, 0, 0, [UIntPtr]::Zero) }
+    if ($null -ne $main) { [FalconWin]::keybd_event([byte]$main, 0, 0, [UIntPtr]::Zero); [FalconWin]::keybd_event([byte]$main, 0, 2, [UIntPtr]::Zero) }
+    [array]::Reverse($held)
+    foreach ($m in $held) { [FalconWin]::keybd_event([byte]$m, 0, 2, [UIntPtr]::Zero) }
+    Start-Sleep -Milliseconds 300
+    Say @{ ok = $true; pressed = $Keys }
+  }
+  "type" {
+    # Puts text where the cursor is, in one go: the text goes on the clipboard, Ctrl+V pastes it, and
+    # whatever the user had on the clipboard is put back. Any language, any length; it never presses Enter.
+    if (-not $Text) { Fail "Say what to type." }
+    if ($Name) {
+      $win = Find-Window $Name
+      if (-not $win) { Fail "$Name has no open window. Open it first." }
+      Bring-Front $win
+      Start-Sleep -Milliseconds 300
+    }
+    $saved = $null
+    try { $saved = Get-Clipboard -Raw -ErrorAction Stop } catch { $saved = $null }
+    Set-Clipboard -Value $Text
+    Start-Sleep -Milliseconds 150
+    [FalconWin]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero); [FalconWin]::keybd_event(0x56, 0, 0, [UIntPtr]::Zero)
+    [FalconWin]::keybd_event(0x56, 0, 2, [UIntPtr]::Zero); [FalconWin]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 400
+    if ($null -ne $saved) { Set-Clipboard -Value $saved } else { try { Set-Clipboard -Value $null } catch { } }
+    Say @{ ok = $true; typed = $Text.Length; into = $(if ($Name) { $Name } else { "the active window" }) }
+  }
   "running" {
     Say @{ ok = $true; windows = @(Windows | ForEach-Object { @{ app = $_.app; title = $_.title } }) }
   }
