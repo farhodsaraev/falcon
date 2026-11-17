@@ -44,11 +44,11 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.ok(once.includes('config set gateway.http.endpoints.chatCompletions.enabled true'));
   assert.ok(once.some((c) => c.startsWith('approvals set --gateway --stdin')));
   assert.match(calls.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').input, /"ask": "on-miss"/);
-  // Windows: 5 earlier scripts + scout.ps1 and its three Node scripts + the document maker and its wrapper;
+  // Windows: 5 earlier scripts + scout.ps1 and its three Node scripts + the document maker and its wrapper + the apps helper;
   // Mac: 5 + the three scout scripts + the document maker + the apps helper
-  assert.equal(once.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'windows' ? 11 : 10);
+  assert.equal(once.filter((c) => c.startsWith('approvals allowlist add')).length, variant === 'windows' ? 12 : 10);
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'documents', 'make-document.mjs')));
-  if (variant === 'mac') assert.ok(fs.existsSync(path.join(ws, 'skills', 'apps', 'apps.mjs')));
+  assert.ok(fs.existsSync(path.join(ws, 'skills', 'apps', variant === 'mac' ? 'apps.mjs' : 'apps.ps1')));
   assert.match(agents, /documents[\\/]+make-document\.(ps1|mjs)/);
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'scout', 'scout-sources.mjs')));
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'scout', 'scout-report.mjs')));

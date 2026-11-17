@@ -25,7 +25,7 @@ Speed matters more than commentary. For these requests issue exactly one command
   `"{{NODE}}" "{{SKILLS}}/apps/apps.mjs" --do music --cmd play` (pause, next, previous, now), `--do volume --level 40` (or `--mute`, `--unmute`)
   `"{{NODE}}" "{{SKILLS}}/apps/apps.mjs" --do open-app --name "Safari"`, `--do quit-app --name "..."`, `--do reveal --path "<full path>"`, `--do frontmost`
 - Open a file or folder in its usual app: `open "<full path>"`
-- Any other app (Word, Excel, Telegram, WhatsApp, System Settings and so on): use computer control, as described below.
+- Any other app (Word, Excel, Telegram, WhatsApp, System Settings and so on): start or bring it forward with the apps fast path `--do open-app --name "Telegram"`, then work inside it with computer control, as described below.
 - Open a website the user names: use the browser tool's open/navigate action straight away with the full URL. Do not search for the site first.
 
 Type these commands exactly in this form, with the full literal paths shown. Never rewrite a path with `~` or `$HOME`, and never wrap the command in `sh -c`, `eval` or a pipeline: the approval system refuses commands whose script file it cannot identify.
