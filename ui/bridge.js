@@ -33,6 +33,7 @@
     searchStatus: () => call('GET', '/api/search'),
     saveSearchKey: (key) => call('POST', '/api/search', { key }),
     openDossier: (name) => call('POST', '/api/dossier/open', { name }),
+    quit: () => call('POST', '/api/quit'),
     dossierUrl: (name) => `/api/dossier/view?name=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`,
     briefing: () => call('GET', '/api/briefing'),
     setBriefing: (enabled, time) => call('POST', '/api/briefing', { enabled, time }),

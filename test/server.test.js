@@ -255,3 +255,26 @@ test('a sleeping engine is woken once, not again while it is still starting', as
     assert.equal(starts.length, 1);
   } finally { await slow.close(); }
 });
+
+test('Falcon stops by himself once his window is gone, and when Quit is pressed', async () => {
+  const stops = [];
+  const s = await startServer({ engine, idleMs: 150, onIdle: (why) => stops.push(why) });
+  try {
+    const base2 = `http://127.0.0.1:${s.port}`;
+    // Before any window has connected, nothing stops.
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(stops, []);
+    // A window connects, then goes away: after the grace time Falcon stops.
+    const controller = new AbortController();
+    const events = await fetch(`${base2}/api/events?token=${s.token}`, { signal: controller.signal });
+    assert.equal(events.status, 200);
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 500));
+    assert.deepEqual(stops, ['window-closed']);
+    // Quit stops him straight away.
+    const quit = await fetch(`${base2}/api/quit`, { method: 'POST', headers: { 'X-Falcon-Token': s.token } });
+    assert.equal((await quit.json()).ok, true);
+    await new Promise((r) => setTimeout(r, 450));
+    assert.ok(stops.includes('quit'));
+  } finally { await s.close(); }
+});

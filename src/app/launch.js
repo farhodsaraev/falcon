@@ -28,13 +28,21 @@ function findAppBrowser() {
   return undefined;
 }
 
-const server = await startServer();
+let window = null;
+// Falcon stops when his window has been closed for a while, or when the user presses Quit in Settings.
+const server = await startServer({
+  onIdle: async () => {
+    try { window?.kill(); } catch { /* already gone */ }
+    await server.close();
+    process.exit(0);
+  },
+});
 const url = `http://127.0.0.1:${server.port}/#token=${server.token}`;
 const browser = findAppBrowser();
 
 if (browser) {
   const started = Date.now();
-  const window = spawn(browser, [
+  window = spawn(browser, [
     `--app=${url}`,
     `--user-data-dir=${path.join(os.homedir(), '.falcon', 'window')}`,
     '--window-size=520,760',
@@ -43,7 +51,8 @@ if (browser) {
   ], { stdio: 'ignore' });
   console.log('Falcon is running. Close his window to stop.');
   window.on('exit', async () => {
-    // If the browser handed the window to another process, keep serving until stopped.
+    // If the browser handed the window to another process, keep serving: Falcon stops by himself once
+    // his window has been gone for half a minute (see onIdle above).
     if (Date.now() - started < 5000) return;
     await server.close();
     process.exit(0);

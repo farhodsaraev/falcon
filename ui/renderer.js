@@ -672,6 +672,13 @@ $('allow').addEventListener('click', () => answerApproval('allow-once'));
 $('deny').addEventListener('click', () => answerApproval('deny'));
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') answerApproval('deny'); });
 
+// Quit: stops Falcon's window and his background part. His engine keeps running for Telegram and briefings.
+$('about-quit').addEventListener('click', async () => {
+  try { await window.falcon.quit(); } catch { /* stopping anyway */ }
+  note('quit-message', 'Falcon has stopped. You can close this window.', 'ok');
+  setTimeout(() => window.close(), 800);
+});
+
 window.falcon.listen({
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
   setup: (progress) => {

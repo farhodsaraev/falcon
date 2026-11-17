@@ -157,7 +157,12 @@ export function progressLine(line) {
   return text.length > 140 ? `${text.slice(0, 139)}…` : text;
 }
 
-export async function startServer({ port = 0, engine = {} } = {}) {
+/**
+ * @param {object} [options]
+ * @param {Function} [options.onIdle]  called when Falcon's window has been gone for `idleMs`, or the user
+ *                                     pressed Quit; the launcher stops Falcon then
+ */
+export async function startServer({ port = 0, engine = {}, onIdle = () => {}, idleMs = 30000 } = {}) {
   // `engine` lets tests replace the real engine with stand-ins.
   const installFalcon = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
@@ -187,6 +192,21 @@ export async function startServer({ port = 0, engine = {} } = {}) {
   let chatsInFlight = 0;
   let pollerRunning = false;
   let setupRunning = false;
+  // Falcon stops when his window is gone: once it has connected, if no window is connected for
+  // `idleMs` (a reload reconnects in a moment) and nothing is running, he stops by himself.
+  let windowSeen = false;
+  let idleTimer = null;
+  const busy = () => setupRunning || chatsInFlight > 0;
+  function watchForGoodbye() {
+    clearTimeout(idleTimer);
+    if (!windowSeen || clients.size > 0) return;
+    idleTimer = setTimeout(() => {
+      if (clients.size > 0) return;
+      if (busy()) { watchForGoodbye(); return; }
+      onIdle('window-closed');
+    }, idleMs);
+    idleTimer.unref?.();
+  }
   // Waking the engine: at most one start at a time, and then give it time to come up.
   const WAKE_PATIENCE_MS = engine.wakePatienceMs ?? 5 * 60000;
   let waking = false;
@@ -572,6 +592,12 @@ export async function startServer({ port = 0, engine = {} } = {}) {
       return { ok: true };
     },
 
+    // ---- Quit: stop Falcon's window and background part (his engine keeps running for Telegram and briefings) ----
+    'POST /api/quit': async () => {
+      setTimeout(() => onIdle('quit'), 300).unref?.();
+      return { ok: true };
+    },
+
     // ---- Voice ----
     'GET /api/voice': async () => ({ available: Boolean(await api.voiceKey.get()) }),
 
@@ -703,7 +729,9 @@ export async function startServer({ port = 0, engine = {} } = {}) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
         res.write(': connected\n\n');
         clients.add(res);
-        req.on('close', () => clients.delete(res));
+        windowSeen = true;
+        clearTimeout(idleTimer);
+        req.on('close', () => { clients.delete(res); watchForGoodbye(); });
         return;
       }
       // A finished dossier, shown inside Falcon's window. Only a page from the "Falcon Scout" folder;
@@ -803,6 +831,7 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     port: server.address().port,
     token,
     close: () => new Promise((resolve) => {
+      clearTimeout(idleTimer);
       for (const res of clients) res.end();
       server.close(resolve);
       server.closeAllConnections?.();
