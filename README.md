@@ -30,6 +30,14 @@ No administrator password is needed. The installer adds a **Falcon** app (Applic
 - "Remind me tomorrow at nine to call the bank." · "Draft an email to Ann about the contract." (Mac)
 - «Фалкон, что у меня сейчас на экране?»
 
+## Tasks and checked results
+
+Open **Tasks** in the title bar to see current and recent requests, their progress and action checks. **Stop task** cancels that request in the assistant and blocks further tool calls; it also stops speech. Completed actions are not undone. If the assistant cannot confirm a stop, the panel says so and offers Retry Stop instead of claiming cancellation.
+
+Action checks say **Verified**, **Failed** or **Not confirmed**. Files are read back, generated Office packages are inspected and supported presentation apps are queried independently. Other tool results remain unconfirmed. An assistant-written claim never produces a verified card.
+
+Open **Settings → Readiness** to check the assistant connection, execution tracking, skill dependencies, presentation app and microphone permission. Unknown permissions stay unconfirmed; checks do not open permission dialogs. Existing installations can use **Update tracking (restarts assistant)** to install and reload the execution add-on. A restart affects the assistant connection, including Telegram; finish other work first.
+
 ## Approvals
 
 When Falcon wants to run a command he has not been allowed before, a card appears in his window showing the exact command. Choose **Allow once** or **Don't allow**. If nobody answers, the command is refused.

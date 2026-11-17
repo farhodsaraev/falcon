@@ -13,6 +13,10 @@
 
   window.falcon = {
     state: () => call('GET', '/api/state'),
+    tasks: () => call('GET', '/api/tasks'),
+    cancelTask: (id) => call('POST', '/api/tasks/cancel', { id }),
+    readiness: () => call('GET', '/api/readiness'),
+    repairTracking: () => call('POST', '/api/readiness/repair-tracking', {}),
     setup: (key, accepted, model) => call('POST', '/api/setup', { key, accepted, model }),
     inspectKey: (key) => call('POST', '/api/key/inspect', { key }),
     voiceStatus: () => call('GET', '/api/voice'),
@@ -51,9 +55,13 @@
       }
     },
     // Sends a message and calls onDelta for each piece of the answer as it arrives.
-    async chat(text, { onDelta, onError, onActions, onScout, onDossier }) {
+    async chat(text, { onDelta, onError, onActions, onScout, onDossier, onTask, onCancelled }) {
       const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text }) });
-      if (!response.ok || !response.body) return onError('I have lost my connection, sir.');
+      if (!response.ok || !response.body) {
+        let message = 'The request could not be started.';
+        try { message = (await response.json()).error || message; } catch {}
+        onError(message); return { failed: true };
+      }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -69,6 +77,8 @@
           const data = (block.match(/^data: (.+)$/m) || [])[1];
           if (!event || !data) continue;
           const payload = JSON.parse(data);
+          if (event === 'task' && onTask) onTask(payload);
+          if (event === 'cancelled' && onCancelled) onCancelled(payload.text);
           if (event === 'delta') onDelta(payload.text);
           if (event === 'actions' && onActions) onActions(payload.items);
           if (event === 'scout' && onScout) onScout(payload);

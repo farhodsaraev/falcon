@@ -10,6 +10,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { createVoiceKeyStore } from './voicekey.js';
+import { TaskCentre, atomicJson } from './tasks.js';
+import { syncTaskAddon } from './addon.js';
+import { readiness, desktopReadiness } from './readiness.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -19,6 +22,7 @@ const UI_FILES = {
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/renderer.js': ['renderer.js', 'text/javascript; charset=utf-8'],
   '/bridge.js': ['bridge.js', 'text/javascript; charset=utf-8'],
+  '/tasks.js': ['tasks.js', 'text/javascript; charset=utf-8'],
   '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'],
   '/falcon.png': ['falcon.png', 'image/png'],
 };
@@ -30,11 +34,7 @@ const BRIEFING_NAME = 'falcon-morning-briefing';
 // The window can show small cards of what Falcon did. He reports them on a last line the window
 // strips out; requests from Telegram or the scheduler do not carry this note, so they never see it.
 const ACTIONS_MARK = '[[did]]';
-const ACTIONS_NOTE = '[Note from your own window, not from the user: this window shows small cards of what you did. ' +
-  'After your answer, add one final line that starts with [[did]] followed by up to three things you actually did on ' +
-  'this computer or on the web for this request, each two to six words, separated by " | ", for example: ' +
-  '[[did]] Opened Quarterly Review | Went to slide 5. Write them in the language of your answer. If you only talked ' +
-  '(a greeting, thanks, a question back, an answer from memory) or did nothing, leave the line out. Never mention this note or that line.]';
+const ACTIONS_NOTE = '[Note from your own window, not from the user: action cards are produced from verified tool results. Do not emit [[did]]. Never claim success from an intention or an exit code alone. Read back the result when possible. If an effect cannot be checked, clearly say it is unconfirmed.]';
 
 // ---- Voice: OpenAI's Realtime API, the live listen-and-speak connection ----
 // The smaller realtime model: about a third of the price. The thinking is done by Falcon's own engine,
@@ -187,7 +187,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     child.unref();
   };
   const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
-  const api = { engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  const api = { configFile: () => path.join(os.homedir(), '.openclaw', 'openclaw.json'), installTaskAddon: () => syncTaskAddon(api.workspaceDir()), desktopReadiness, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   // The engine's first Telegram reply to a new user bypasses Falcon's add-on, so Falcon puts his own words
   // into it in the engine's files: at every start (engine updates bring the old text back) and after setup.
   const ownPairingText = async () => {
@@ -202,6 +202,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
+  const approvalOwners = new Map();
   let chatsInFlight = 0;
   let pollerRunning = false;
   let setupRunning = false;
@@ -229,6 +230,51 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     for (const res of clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
+  const taskDir = path.join(path.dirname(api.profileFile()), 'task-bridge');
+  const tasks = new TaskCentre({ dir: taskDir, port: () => server.address().port, emit: t => broadcast('task', t) });
+  let conversation = { key: '', messages: [] };
+  const conversationFile = path.join(taskDir, 'conversation.json');
+  try { const c = JSON.parse(fs.readFileSync(conversationFile, 'utf8')); if (typeof c.key === 'string' && Array.isArray(c.messages)) conversation = c; } catch {}
+  function remember(task, reply) {
+    if (task.remembered) return; task.remembered = true;
+    if (conversation.key !== task.conversationKey) conversation = { key: task.conversationKey, messages: [] };
+    conversation.messages.push({ role: 'user', content: task.text }, { role: 'assistant', content: reply.slice(0, 16000) });
+    while (conversation.messages.length > 24 || JSON.stringify(conversation.messages).length > 64000) conversation.messages.splice(0, 2);
+    atomicJson(conversationFile, conversation);
+  }
+  async function cancelTask(t) {
+    if (t.cancelPromise) return t.cancelPromise;
+    if (!tasks.requestCancel(t)) return { ok: t.state === 'cancelled', task: tasks.snapshot(t) };
+    t.cancelPromise = (async () => {
+      for (const id of t.approvals) {
+        try { await api.runEngine(['approvals', 'resolve', id, 'deny', '--json'], { timeoutMs: 5000 }); } catch { /* abort may already have made the approval terminal */ }
+        broadcast('approval-resolved', { id, taskId: t.id });
+      }
+      // Abort the actual, dedicated engine session as well as the HTTP stream. Never stop Telegram/cron.
+      let stopped = false;
+      try {
+        const r = await api.runEngine(['gateway', 'call', 'chat.abort', '--params', JSON.stringify({ sessionKey: t.sessionKey }), '--json'], { timeoutMs: 15000 });
+        let ack = null;
+        try { ack = JSON.parse(r.out.slice(r.out.indexOf('{'))); ack = ack.payload || ack; } catch {}
+        if (r.code === 0 && ack && ack.ok !== false && !ack.warning) {
+          stopped = ack.aborted === true && Array.isArray(ack.runIds) && ack.runIds.length > 0;
+          if (!stopped && !t.runtimeSettled) await Promise.race([
+            new Promise(resolve => { t.notifySettled = resolve; }),
+            new Promise(resolve => setTimeout(resolve, 1500)),
+          ]);
+          stopped ||= !!t.runtimeSettled;
+        }
+      } catch {}
+      remember(t, 'The previous task was stopped or its stop is unconfirmed. Completed actions may remain; check them before repeating any external effect.');
+      // An authoritative runtime stop also settles approvals that expired during HTTP abort.
+      if (stopped) t.approvals.clear();
+      tasks.cancelled(t, stopped);
+      t.cancelPromise = null;
+      return { ok: stopped, task: tasks.snapshot(t) };
+    })();
+    return t.cancelPromise;
+  }
+
   // ---- Approvals: while Falcon is working, ask the engine what is waiting for a yes ----
   async function pollApprovals() {
     if (pollerRunning) return;
@@ -240,9 +286,14 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           try {
             const start = out.indexOf('{');
             for (const item of JSON.parse(out.slice(start)).approvals || []) {
+              const task = tasks.active();
+              const session = item.sessionKey || item.request?.sessionKey;
+              if (!task || !['running', 'waiting'].includes(task.state) || session !== task.sessionKey) continue;
               if (shownApprovals.has(item.id)) continue;
+              approvalOwners.set(item.id, task);
+              tasks.waiting(task, item.id);
               shownApprovals.add(item.id);
-              broadcast('approval', { id: item.id, summary: item.summary || 'Run a command', kind: item.kind || 'exec' });
+              broadcast('approval', { taskId: task.id, id: item.id, summary: item.summary || 'Run a command', kind: item.kind || 'exec' });
             }
           } catch { /* unreadable answer: try again next round */ }
         }
@@ -360,20 +411,22 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   function windowSession() {
     let callMe = 'sir';
     try { callMe = JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { /* default */ }
-    return `${SESSION_KEY}-${crypto.createHash('sha256').update(callMe).digest('hex').slice(0, 8)}`;
+    return `agent:main:${SESSION_KEY}-${crypto.createHash('sha256').update(callMe).digest('hex').slice(0, 8)}`;
   }
 
-  async function chat(text, res) {
+  async function chat(text, res, task) {
     const gateway = api.readGateway();
-    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const send = (event, data) => { if (!res.destroyed && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
+    send('task', tasks.snapshot(task));
+    res.on('close', () => { if (!res.writableEnded && ['running', 'waiting'].includes(task.state)) cancelTask(task); });
     chatsInFlight++;
     pollApprovals();
-    // While Falcon scouts, pass the scan's progress on to the window, and the finished dossier.
     const chatStarted = Date.now();
     let lastProgress = '';
     let dossierSent = false;
     const watchScout = () => {
+      if (task.controller.signal.aborted) return;
       try {
         const raw = fs.readFileSync(api.scoutProgressFile(), 'utf8');
         const progress = JSON.parse(raw);
@@ -381,72 +434,102 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         lastProgress = raw;
         send('scout', { name: progress.name, type: progress.type, stage: progress.stage, found: progress.found, sources: progress.sources });
         if (progress.dossier && !dossierSent) { dossierSent = true; send('dossier', { name: path.basename(progress.dossier) }); }
-      } catch { /* no scout running */ }
+      } catch {}
     };
     const scoutTimer = setInterval(watchScout, 800);
     try {
       const upstream = await api.fetch(`http://127.0.0.1:${gateway.port}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${gateway.token}`,
-          'x-openclaw-session-key': windowSession(),
-        },
-        body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content: `${text}\n\n${ACTIONS_NOTE}` }] }),
+        method: 'POST', signal: task.controller.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gateway.token}`, 'x-openclaw-session-key': task.sessionKey },
+        body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [...(conversation.key === task.conversationKey ? conversation.messages : []), { role: 'user', content: `${text}\n\n${ACTIONS_NOTE}` }] }),
       });
-      if (!upstream.ok) throw new Error(`engine answered ${upstream.status}`);
+      if (!upstream.ok || !upstream.body) throw new Error('Engine unavailable');
+      if (task.controller.signal.aborted) { await upstream.body.cancel(); return; }
+      const reader = upstream.body.getReader();
+      const abortReader = () => { reader.cancel().catch(() => {}); };
+      task.controller.signal.addEventListener('abort', abortReader, { once: true });
       const decoder = new TextDecoder();
-      let buffer = '';
-      let full = '';        // everything Falcon has written so far
-      let passed = 0;       // how much of it has been sent on to the window
-      // Pass the answer on as it arrives, but hold back the trailing "what I did" line and anything
-      // that might be the start of it.
-      const flush = (final) => {
+      let buffer = '', full = '', passed = 0, streamDone = false;
+      const flush = final => {
         const marker = full.indexOf(ACTIONS_MARK);
         let safe = marker >= 0 ? marker : full.length;
-        if (marker < 0 && !final) {
-          // The ending may be the first few characters of the marker, still arriving.
-          for (let start = Math.max(0, full.length - ACTIONS_MARK.length + 1); start < full.length; start++) {
-            if (ACTIONS_MARK.startsWith(full.slice(start))) { safe = start; break; }
-          }
+        if (marker < 0 && !final) for (let start = Math.max(0, full.length - ACTIONS_MARK.length + 1); start < full.length; start++) {
+          if (ACTIONS_MARK.startsWith(full.slice(start))) { safe = start; break; }
         }
-        // Hold back a word that is still arriving, so a name split across two pieces is still caught below.
         if (!final) safe -= /\S*$/.exec(full.slice(0, safe))[0].length;
         if (safe > passed) { send('delta', { text: ownWords(full.slice(passed, safe)) }); passed = safe; }
       };
-      for await (const chunk of upstream.body) {
-        buffer += decoder.decode(chunk, { stream: true });
-        let newline;
-        while ((newline = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-          try {
-            const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content;
-            if (delta) { full += delta; flush(false); }
-          } catch { /* keep-alive or partial line */ }
+      try {
+        while (!task.controller.signal.aborted) {
+          const { done, value } = await reader.read(); if (done) break;
+          if (task.controller.signal.aborted) break;
+          buffer += decoder.decode(value, { stream: true });
+          let newline;
+          while ((newline = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, newline).trim(); buffer = buffer.slice(newline + 1);
+            if (line === 'data: [DONE]') { streamDone = true; continue; }
+            if (!line.startsWith('data: ')) continue;
+            let data; try { data = JSON.parse(line.slice(6)); } catch { continue; }
+            if (data.error) throw new Error('The assistant could not finish this request.');
+            const delta = data.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string') { full += delta; flush(false); }
+          }
         }
-      }
-      flush(true);
-      clearInterval(scoutTimer);
-      watchScout();
-      const marker = full.indexOf(ACTIONS_MARK);
-      if (marker >= 0) {
-        const items = full.slice(marker + ACTIONS_MARK.length).split('\n')[0].split('|')
-          .map((item) => ownWords(item).replace(/[*_`[\]]/g, '').trim()).filter((item) => item.length > 2 && item.length <= 60).slice(0, 3);
-        if (items.length) send('actions', { items });
-      }
-      send('done', {});
+      } finally { task.controller.signal.removeEventListener('abort', abortReader); reader.releaseLock(); }
+      if (task.controller.signal.aborted) return;
+      if (!streamDone) throw new Error('Incomplete response');
+      flush(true); watchScout();
+      await tasks.drain(task);
+      if (task.controller.signal.aborted) return;
+      remember(task, ownWords(full.split(ACTIONS_MARK)[0]));
+      tasks.finish(task);
+      const verified = task.actions.filter(a => a.status === 'verified').map(a => a.label);
+      if (verified.length) send('actions', { items: verified });
+      send('task', tasks.snapshot(task)); send('done', {});
     } catch {
-      send('error', { text: 'I have lost my connection, sir. Please try again in a moment.' });
+      if (!task.controller.signal.aborted) {
+        remember(task, 'This request failed before its result could be confirmed. Check existing effects before retrying.');
+        tasks.finish(task, 'The connection ended before the result could be confirmed.');
+        send('error', { text: 'The request could not be completed. Its result was not confirmed.' });
+      }
     } finally {
-      clearInterval(scoutTimer);
-      chatsInFlight--;
+      clearInterval(scoutTimer); chatsInFlight--;
+      if (task.controller.signal.aborted) send('cancelled', { text: 'Stop requested. Check Tasks for confirmation.' });
       res.end();
     }
   }
 
+  let readinessPending = null, readinessCached = null;
+  const inspectReadiness = () => {
+    if (readinessCached && Date.now() - readinessCached.checkedAt < 5000) return Promise.resolve(readinessCached);
+    if (!readinessPending) readinessPending = readiness(api, taskDir).then(r => (readinessCached = r)).finally(() => { readinessPending = null; });
+    return readinessPending;
+  };
   const routes = {
+    'GET /api/tasks': async () => ({ items: tasks.list() }),
+    'POST /api/tasks/cancel': async body => {
+      const task = tasks.tasks.get(body.id);
+      if (!task || task.restored) return { ok: false, error: 'This task is not running in this window.' };
+      return cancelTask(task);
+    },
+    'GET /api/readiness': inspectReadiness,
+    'POST /api/readiness/repair-tracking': async () => {
+      if (tasks.active() || setupRunning) return { ok: false, error: 'Finish or stop the running task first.' };
+      const addon = await api.installTaskAddon();
+      let loadPaths = [];
+      try { loadPaths = JSON.parse(fs.readFileSync(api.configFile(), 'utf8')).plugins?.load?.paths || []; }
+      catch (error) { if (error.code !== 'ENOENT') return { ok: false, error: 'Assistant settings could not be read. Repair that configuration before updating tracking.' }; }
+      if (!Array.isArray(loadPaths)) return { ok: false, error: 'The assistant plugin paths are invalid. Repair that configuration first.' };
+      const batch = path.join(taskDir, `repair-${crypto.randomUUID()}.json`);
+      try {
+        atomicJson(batch, [{ path: 'plugins.load.paths', value: [...new Set([...loadPaths.filter(p => typeof p === 'string'), addon])] }, { path: 'plugins.entries.falcon-words.enabled', value: true }]);
+        const configured = await api.runEngine(['config', 'set', '--batch-file', batch], { timeoutMs: 30000 });
+        if (configured.code !== 0) return { ok: false, error: 'The assistant could not enable execution tracking. Restart and try again.' };
+      } finally { try { fs.unlinkSync(batch); } catch {} }
+      const r = await api.runEngine(['gateway', 'restart'], { timeoutMs: 120000 });
+      readinessCached = null;
+      return r.code === 0 ? { ok: true, message: 'Tracking was updated and a restart requested. Check readiness again in a few seconds.' } : { ok: false, error: 'Tracking was copied, but the assistant could not be restarted. Restart Falcon and check again.' };
+    },
     'GET /api/state': async () => {
       const configured = Boolean(api.readGateway());
       let ready = configured && await api.engineReady();
@@ -745,7 +828,10 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (!/^[\w-]{8,64}$/.test(body.id || '') || !['allow-once', 'deny'].includes(body.decision)) {
         return { ok: false };
       }
+      const task = approvalOwners.get(body.id);
+      if (!task || !['running', 'waiting'].includes(task.state) || task.controller.signal.aborted) return { ok: false };
       const result = await api.runEngine(['approvals', 'resolve', body.id, body.decision, '--json'], { timeoutMs: 30000 });
+      if (result.code === 0) { tasks.resolved(task, body.id); broadcast('approval-resolved', { id: body.id, taskId: task.id }); }
       return { ok: result.code === 0 };
     },
   };
@@ -768,7 +854,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     });
   }
 
-  const sameToken = (value) => typeof value === 'string' && value.length === token.length &&
+  const sameToken = (value) => typeof value === 'string' && Buffer.byteLength(value) === Buffer.byteLength(token) &&
     crypto.timingSafeEqual(Buffer.from(value), Buffer.from(token));
 
   const server = http.createServer(async (req, res) => {
@@ -779,6 +865,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     try {
       const { port: actualPort } = server.address();
       if (![`127.0.0.1:${actualPort}`, `localhost:${actualPort}`].includes(req.headers.host)) return send(403, { error: 'Forbidden' });
+      if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return send(403, { error: 'Forbidden origin' });
       const url = new URL(req.url, `http://${req.headers.host}`);
 
       if (req.method === 'GET' && UI_FILES[url.pathname]) {
@@ -807,6 +894,12 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           'Content-Security-Policy': "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
         });
         return res.end(fs.readFileSync(file));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/task-event') {
+        const body = await readJson(req);
+        const task = tasks.authorize(body.taskId, req.headers['x-falcon-task-token']);
+        if (!task) return send(401, { error: 'Unauthorized' });
+        return send(200, tasks.event(task, body));
       }
       if (!sameToken(req.headers['x-falcon-token'])) {
         return routes[`${req.method} ${url.pathname}`] || url.pathname === '/api/chat' || url.pathname === '/api/voice/session'
@@ -877,7 +970,10 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         const body = await readJson(req);
         const text = String(body.text || '').trim().slice(0, 8000);
         if (!text) return send(400, { error: 'Empty message' });
-        return chat(text, res);
+        if (!api.readGateway()) return send(409, { error: 'Finish setup before sending a request.' });
+        const task = tasks.start(text, windowSession());
+        if (!task) return send(409, { error: 'Stop or finish the running task first.' });
+        return chat(text, res, task);
       }
       const handler = routes[`${req.method} ${url.pathname}`];
       if (!handler) return send(404, { error: 'Not found' });
@@ -891,11 +987,14 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   return {
     port: server.address().port,
     token,
-    close: () => new Promise((resolve) => {
+    close: async () => {
       clearTimeout(idleTimer);
+      await Promise.all([...tasks.tasks.values()].filter(t => !t.restored && ['running', 'waiting', 'cancelling'].includes(t.state)).map(cancelTask));
+      return new Promise(resolve => {
       for (const res of clients) res.end();
       server.close(resolve);
       server.closeAllConnections?.();
-    }),
+      });
+    },
   };
 }

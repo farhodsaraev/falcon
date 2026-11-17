@@ -424,3 +424,24 @@ button.small-btn { padding: 6px 12px; font-size: 12.5px; }
 .uninstall-confirm .check { margin-top: 8px; }
 button.danger-btn { padding: 10px 14px; border-radius: 8px; font: inherit; cursor: pointer; background: transparent; color: var(--bad); border: 1px solid var(--bad); }
 button.danger-btn:hover { background: rgba(255, 122, 122, 0.1); }
+
+/* Execution history and readiness use text, keyboard controls and explicit unknown states. */
+#tasks-dialog { color: inherit; background: #101c2c; border: 1px solid #31506c; border-radius: 20px; width: min(560px, calc(100vw - 32px)); max-height: 85vh; padding: 22px; overflow: auto; }
+#tasks-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+.tasks-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tasks-head h2, .tasks-head h3 { margin: 0; }
+.task-card, .readiness-item { margin: 12px 0; padding: 14px; border: 1px solid #31506c; border-radius: 12px; text-align: left; overflow-wrap: anywhere; }
+.task-card h3, .readiness-item h3 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
+.task-state, .readiness-item strong { font-size: 13px; color: #a1c6e4; }
+.task-state.cancelling, .task-state.cancel_failed { color: #ffd596; }
+.task-action { margin: 10px 0; padding-left: 10px; border-left: 2px solid #8aa2b7; }
+.task-action strong { font-size: 12px; font-weight: 500; }
+.task-action.verified { border-color: #80d4b0; }
+.task-action.failed, .readiness-item.blocked { border-color: #e99c93; }
+.task-action .hint, .readiness-item .hint { margin: 6px 0; text-align: left; }
+.readiness-item.ready strong { color: #80d4b0; }
+.readiness-item.blocked strong { color: #e99c93; }
+.remedy { color: #bed7ec; }
+.tabs { flex-wrap: wrap; }
+#open-tasks { white-space: nowrap; }
+@media (max-width: 480px) { #status-dots { display: none; } #tasks-dialog { padding: 14px; } }
