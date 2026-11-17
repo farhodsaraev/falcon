@@ -675,7 +675,22 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         return { ok: false, error: 'That does not look like a Telegram bot token. It looks like 123456789:AAE… and comes from @BotFather.' };
       }
       const result = await api.runEngine(['channels', 'add', '--channel', 'telegram', '--token', botToken], { timeoutMs: 90000 });
-      return result.code === 0 ? { ok: true } : { ok: false, error: 'Telegram did not accept that token.' };
+      if (result.code !== 0) return { ok: false, error: 'Telegram did not accept that token.' };
+      // The running engine is meant to pick the token up by itself. On some Windows PCs that live reload is
+      // refused ("operation not permitted"), so the token sat saved but unused and the bot never answered.
+      // If Telegram is not live yet, restart the engine so it starts with the token.
+      const live = async () => {
+        const { code, out } = await api.runEngine(['channels', 'status', '--probe'], { timeoutMs: 90000 });
+        // e.g. "- Telegram default: enabled, configured, running, … works"
+        return code === 0 && /telegram[^\n]*\brunning\b/i.test(out);
+      };
+      if (await live()) return { ok: true };
+      await api.runEngine(['gateway', 'restart'], { timeoutMs: 600000 });
+      for (let i = 0; i < 30; i++) {
+        if (await live()) return { ok: true, restarted: true };
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+      }
+      return { ok: false, error: 'The token is saved, but Falcon could not switch Telegram on. Restart the computer, then send your bot a message.' };
     },
     'POST /api/telegram/pair': async (body) => {
       const code = String(body.code || '').trim().toUpperCase();

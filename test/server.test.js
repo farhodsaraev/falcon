@@ -11,6 +11,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-test-'));
 const calls = [];
 let configured = false;
 let pending = [];
+let telegramLive = false;
+let telegramNeedsRestart = false;
 const engine = {
   findEngine: () => ({ command: 'node', prefix: [] }),
   workspaceDir: () => tmp,
@@ -27,6 +29,9 @@ const engine = {
     if (args[0] === 'onboard') configured = true;
     if (args[0] === 'models' && args[1] === 'status') return { code: 0, out: 'engine/default-model\n' };
     if (args[0] === 'approvals' && args[1] === 'pending') return { code: 0, out: JSON.stringify({ approvals: pending }) };
+    if (args[0] === 'channels' && args[1] === 'add') telegramLive = !telegramNeedsRestart;
+    if (args[0] === 'gateway' && args[1] === 'restart') telegramLive = true;
+    if (args[0] === 'channels' && args[1] === 'status') return { code: 0, out: telegramLive ? '- Telegram default: enabled, running' : '- no configured chat channels' };
     return { code: 0, out: '{}' };
   },
   fetch: async (url, options) => {
@@ -213,6 +218,18 @@ test('Telegram: a well-formed token and code are passed on; malformed ones never
   assert.deepEqual(calls[0].slice(0, 5), ['channels', 'add', '--channel', 'telegram', '--token']);
   assert.equal((await post('/api/telegram/pair', { code: 'ab12cd34' })).ok, true);
   assert.deepEqual(calls.find((c) => c[1] === 'approve').slice(0, 4), ['pairing', 'approve', 'telegram', 'AB12CD34']);
+  assert.ok(!calls.some((c) => c[0] === 'gateway' && c[1] === 'restart'), 'no restart when the engine took the token by itself');
+});
+
+test('Telegram: if the running engine did not take the token, Falcon restarts it so the bot answers', async () => {
+  calls.length = 0;
+  telegramNeedsRestart = true;
+  try {
+    const r = await (await call('POST', '/api/telegram/connect', { token: '123456789:AAEabcdefghijklmnopqrstuvwxyz0123456' })).json();
+    assert.equal(r.ok, true);
+    assert.equal(r.restarted, true);
+    assert.ok(calls.some((c) => c[0] === 'gateway' && c[1] === 'restart'));
+  } finally { telegramNeedsRestart = false; }
 });
 
 test('an approval answer is passed on, and odd answers are refused', async () => {

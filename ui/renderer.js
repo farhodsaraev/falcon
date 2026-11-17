@@ -172,7 +172,7 @@ $('search-save').addEventListener('click', () => withButton($('search-save'), as
 }));
 
 $('tg-connect').addEventListener('click',() => withButton($('tg-connect'), async () => {
-  note('tg-message', 'Connecting to Telegram, this can take half a minute', 'working');
+  note('tg-message', 'Connecting to Telegram. If Falcon has to restart for it, this can take a few minutes', 'working');
   try {
     const r = await window.falcon.telegramConnect($('tg-token').value);
     if (!r.ok) return note('tg-message', r.error, 'bad');
