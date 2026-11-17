@@ -8,7 +8,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
+import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { createVoiceKeyStore } from './voicekey.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -188,6 +188,17 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   };
   const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
   const api = { engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  // The engine's first Telegram reply to a new user bypasses Falcon's add-on, so Falcon puts his own words
+  // into it in the engine's files: at every start (engine updates bring the old text back) and after setup.
+  const ownPairingText = async () => {
+    try {
+      const dir = engineDir(api.findEngine());
+      if (!dir) return;
+      const { patchPairingText } = await import(pathToFileURL(path.join(PACK_DIR, 'engine-addon', 'pairing.js')).href);
+      patchPairingText(dir);
+    } catch { /* the engine keeps its own wording; nothing else depends on this */ }
+  };
+  ownPairingText();
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
@@ -323,6 +334,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     }
 
     step('Starting…', 'start');
+    await ownPairingText();   // the engine was just installed: its files hold the original wording
     await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
 
     step('Teaching Falcon his manners…', 'manners');

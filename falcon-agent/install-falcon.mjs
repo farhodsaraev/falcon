@@ -176,6 +176,14 @@ export async function installFalcon({
       else if (/\.(ps1|mjs)$/.test(file)) scripts.push(full);
     }
   }
+  // His add-on for the engine: keeps the engine's own name out of every message sent to the user.
+  // It sits beside the workspace (not in it, so it is never mistaken for a skill).
+  const addonDir = path.join(path.dirname(workspace), 'falcon-words');
+  fs.rmSync(addonDir, { recursive: true, force: true });
+  fs.mkdirSync(addonDir, { recursive: true });
+  for (const file of ['index.js', 'words.js', 'package.json', 'openclaw.plugin.json']) {
+    fs.copyFileSync(path.join(here, 'engine-addon', file), path.join(addonDir, file));
+  }
   log(`Falcon is installed in ${workspace}`);
   if (skipSettings) return { ok: true, settings: [] };
 
@@ -242,6 +250,18 @@ export async function installFalcon({
     // ordinary automation jobs) and reject the setting, so it is sent on its own and may fail harmlessly;
     // in the batch it made every other setting fail with it.
     await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m'], undefined, { okIf: /Unrecognized key: "heartbeat"/i, optional: true });
+
+    // Load his add-on from its folder. Kept out of the main batch: if an engine ever refuses these keys,
+    // only this step is lost. Loaded straight from the folder, not "installed", because installing makes
+    // the engine create links that some Windows PCs refuse.
+    let loadPaths = [];
+    try { loadPaths = JSON.parse(fs.readFileSync(configFile, 'utf8')).plugins?.load?.paths || []; } catch { /* no settings yet */ }
+    const addonFile = path.join(temp, 'addon.json');
+    fs.writeFileSync(addonFile, JSON.stringify([
+      { path: 'plugins.load.paths', value: [...new Set([...loadPaths.filter((p) => typeof p === 'string'), addonDir])] },
+      { path: 'plugins.entries.falcon-words.enabled', value: true },
+    ]));
+    await step('his own words in every message', ['config', 'set', '--batch-file', addonFile], undefined, { optional: true });
 
     // Ask-first approvals, with Falcon's own small programs pre-approved in the same document.
     const approvals = JSON.parse(APPROVALS);

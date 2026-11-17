@@ -1,0 +1,8 @@
+{
+  "id": "falcon-words",
+  "name": "Falcon words",
+  "description": "Keeps outgoing messages in Falcon's own words.",
+  "categories": ["other"],
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

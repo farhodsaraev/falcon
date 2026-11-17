@@ -70,7 +70,14 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.equal(patterns.length, variant === 'windows' ? 14 : 11);
   assert.ok(!once.some((c) => c.startsWith('approvals allowlist add')), 'nothing needed adding one by one');
   // 6, plus the check-in setting sent on its own for older engines.
-  assert.ok(firstRun.length <= 7, `few engine commands (${firstRun.length}): ${once.join(' | ')}`);
+  assert.ok(firstRun.length <= 8, `few engine commands (${firstRun.length}): ${once.join(' | ')}`);
+  // His add-on, which keeps the engine's name out of messages, is copied beside the workspace and loaded from there.
+  const addonDir = path.join(path.dirname(ws), 'falcon-words');
+  assert.ok(fs.existsSync(path.join(addonDir, 'index.js')) && fs.existsSync(path.join(addonDir, 'openclaw.plugin.json')));
+  const addon = firstRun.find((c) => c.file?.some?.((s) => s.path === 'plugins.load.paths')).file;
+  assert.deepEqual(addon.find((s) => s.path === 'plugins.load.paths').value, [addonDir]);
+  assert.equal(addon.find((s) => s.path === 'plugins.entries.falcon-words.enabled').value, true);
+  fs.rmSync(addonDir, { recursive: true, force: true });
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'documents', 'make-document.mjs')));
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'apps', variant === 'mac' ? 'apps.mjs' : 'apps.ps1')));
   assert.match(agents, /documents[\\/]+make-document\.(ps1|mjs)/);
@@ -123,7 +130,7 @@ test('a setting refused because the engine was busy is tried once more', { skip:
   };
   const result = await installFalcon({ workspace: ws, runEngine, retryDelayMs: 1, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), configFile: path.join(ws, 'none-config.json'), log: () => {} });
   assert.equal(result.ok, true);
-  const batchRuns = [...seen].filter(([k]) => k.includes('--batch-file'));
+  const batchRuns = [...seen].filter(([k]) => k.includes('--batch-file') && k.includes('settings.json'));
   assert.equal(batchRuns.length, 1);
   assert.equal(batchRuns[0][1], 2, 'the batch was sent a second time');
   assert.ok(![...seen.keys()].includes('config set agents.defaults.thinkingDefault low'), 'no need to fall back once the retry worked');

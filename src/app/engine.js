@@ -71,6 +71,21 @@ export function findEngine() {
   return null;
 }
 
+/** The engine's own folder (where its package.json is), or null. */
+export function engineDir(engine = findEngine()) {
+  if (!engine) return null;
+  let start;
+  if (engine.prefix?.length && /index\.js$/.test(engine.prefix[0])) start = engine.prefix[0];
+  else if (engine.viaShell) start = path.join(path.dirname(engine.prefix.at(-1)), 'node_modules', 'openclaw', 'package.json');
+  else { try { start = fs.realpathSync(engine.command); } catch { return null; } }
+  for (let dir = path.dirname(start), i = 0; i < 6; i++, dir = path.dirname(dir)) {
+    try { if (JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).name === 'openclaw') return dir; } catch { /* keep looking */ }
+  }
+  // A launcher script in <prefix>/bin, with the engine in <prefix>/lib/node_modules (the Mac install).
+  const beside = path.join(path.dirname(path.dirname(start)), 'lib', 'node_modules', 'openclaw');
+  return fs.existsSync(path.join(beside, 'package.json')) ? beside : null;
+}
+
 function childEnv(extraDirs = []) {
   const env = { ...process.env, NODE_NO_WARNINGS: '1' };
   if (!WINDOWS) env.PATH = [...new Set([path.dirname(process.execPath), ...extraDirs, ...(env.PATH || '').split(':')])].join(':');
