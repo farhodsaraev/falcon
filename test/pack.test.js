@@ -56,9 +56,11 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.equal(settings['tools.web.search.provider'], 'parallel-free', 'with no search key, free search is switched on');
   assert.equal(settings['agents.defaults.bootstrapMaxChars'], 60000);
   assert.equal(settings['gateway.http.endpoints.chatCompletions.enabled'], true);
-  assert.equal(settings['agents.defaults.heartbeat.every'], '0m');
+  // Newer engines reject the check-in setting, so it never rides in the batch (it would sink the rest).
+  assert.equal(settings['agents.defaults.heartbeat.every'], undefined);
+  assert.ok(once.includes('config set agents.defaults.heartbeat.every 0m'), 'check-ins are switched off on their own');
   assert.ok(once.includes('plugins enable cua-computer'), 'desktop control is switched on');
-  assert.ok(!once.some((c) => /^config set (?!--batch-file)/.test(c)), 'no setting is sent on its own');
+  assert.ok(!once.some((c) => /^config set (?!--batch-file|agents\.defaults\.heartbeat)/.test(c)), 'no other setting is sent on its own');
   // Ask-first approvals and the pre-approvals go in one document.
   const approvals = firstRun.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').file;
   assert.equal(approvals.defaults.ask, 'on-miss');
@@ -67,7 +69,8 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   // Mac: 5 + the three scout scripts + the document maker + the apps helper + share-file
   assert.equal(patterns.length, variant === 'windows' ? 14 : 11);
   assert.ok(!once.some((c) => c.startsWith('approvals allowlist add')), 'nothing needed adding one by one');
-  assert.ok(firstRun.length <= 6, `few engine commands (${firstRun.length}): ${once.join(' | ')}`);
+  // 6, plus the check-in setting sent on its own for older engines.
+  assert.ok(firstRun.length <= 7, `few engine commands (${firstRun.length}): ${once.join(' | ')}`);
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'documents', 'make-document.mjs')));
   assert.ok(fs.existsSync(path.join(ws, 'skills', 'apps', variant === 'mac' ? 'apps.mjs' : 'apps.ps1')));
   assert.match(agents, /documents[\\/]+make-document\.(ps1|mjs)/);
@@ -180,4 +183,17 @@ test('web search: a Google key wins, an OpenRouter key searches through Perplexi
   fs.writeFileSync(envFile, 'OPENROUTER_API_KEY=sk-or-v1-abc\nGEMINI_API_KEY=AIzaX\n');
   assert.deepEqual(await run(), ['config set tools.web.search.provider gemini']);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a newer engine that rejects the check-in setting still gets every other setting', { skip: !variant }, async () => {
+  const ws = freshWorkspace();
+  const runEngine = async (args) => {
+    if (args.join(' ').startsWith('config set agents.defaults.heartbeat')) {
+      return { code: 1, out: 'invalid config: agents.defaults: Unrecognized key: "heartbeat" | INVALID_REQUEST' };
+    }
+    return { code: 0, out: '' };
+  };
+  const result = await installFalcon({ workspace: ws, runEngine, retryDelayMs: 1, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), configFile: path.join(ws, 'none-config.json'), log: () => {} });
+  assert.equal(result.ok, true);
+  fs.rmSync(ws, { recursive: true, force: true });
 });

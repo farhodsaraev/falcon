@@ -245,8 +245,15 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // Which Telegram chat is the user's own: remembered from pairing, or found from his first message to Falcon.
   const telegramFile = () => path.join(path.dirname(api.profileFile()), 'telegram.json');
   function saveTelegramChat(chat) {
+    let before = null;
+    try { before = JSON.parse(fs.readFileSync(telegramFile(), 'utf8')).chat; } catch { /* first time */ }
     fs.mkdirSync(path.dirname(telegramFile()), { recursive: true });
     fs.writeFileSync(telegramFile(), JSON.stringify({ chat }));
+    // Make it the engine's default Telegram chat too, so Falcon can send him a file or a note on Telegram
+    // from any door (his window, voice) without knowing the number.
+    if (String(before) !== String(chat)) {
+      api.runEngine(['config', 'set', 'channels.telegram.defaultTo', String(chat)], { timeoutMs: 120000 }).catch(() => {});
+    }
   }
   async function telegramChat() {
     try {

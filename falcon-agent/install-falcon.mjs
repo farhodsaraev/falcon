@@ -126,9 +126,17 @@ export async function installFalcon({
   const userFacts = facts.length
     ? `What you know about the user from his own introduction: ${facts.join(' ')}`
     : 'The user has not yet told you about himself. If he does, remember it.';
+  // His own Telegram chat, saved by Falcon's window at pairing: the send action needs it named exactly.
+  let telegramChat = '';
+  try { telegramChat = String(JSON.parse(read(path.join(path.dirname(profileFile), 'telegram.json'))).chat || ''); } catch { /* not paired yet */ }
+  if (!/^-?\d{5,}$/.test(telegramChat)) telegramChat = '';
+  const telegramRule = telegramChat
+    ? `use the message tool with channel \`telegram\` and target \`${telegramChat}\`, which is his own Telegram chat.`
+    : 'his Telegram is not connected to you yet; say so in one sentence and that he can connect it with the Telegram button in your window.';
   const personalise = (text) => (custom ? text.replace(/\bsir\b/g, callMe).replace(/сэр/g, callMe) : text)
     .replaceAll('{{ADDRESS_RULE}}', addressRule)
-    .replaceAll('{{USER_FACTS}}', userFacts);
+    .replaceAll('{{USER_FACTS}}', userFacts)
+    .replaceAll('{{TELEGRAM_RULE}}', telegramRule);
   const fill = (text, skillDir = '') => text
     .replaceAll('{{SKILLS}}', skillsDir)
     .replaceAll('{{NODE}}', node)
@@ -205,8 +213,13 @@ export async function installFalcon({
   // Falcon's rules are longer than the 20,000 characters the engine reads from each file by default;
   // without this the end of them (the scout steps among them) was cut off.
   set('read all of his rules', 'agents.defaults.bootstrapMaxChars', 60000);
-  set('no background check-ins', 'agents.defaults.heartbeat.every', '0m');
   set('local chat for the Falcon window', 'gateway.http.endpoints.chatCompletions.enabled', true);
+  // His own Telegram chat (saved by Falcon's window at pairing) as the default, so "send it to me on
+  // Telegram" works from his window and by voice too, not only from inside Telegram.
+  try {
+    const chat = String(JSON.parse(fs.readFileSync(path.join(path.dirname(profileFile), 'telegram.json'), 'utf8')).chat || '');
+    if (/^-?\d{5,}$/.test(chat)) set('his Telegram chat', 'channels.telegram.defaultTo', chat);
+  } catch { /* not paired yet */ }
   // Hands for desktop apps: the engine's desktop control stays off until it is switched on by name.
   // On Windows this makes the computer tool work. On a Mac it is tried; the apps skill, which commands
   // Mail, Notes, Calendar and the rest directly, covers the common apps either way.
@@ -225,6 +238,10 @@ export async function installFalcon({
     if (!await step(`${sets.length} settings at once`, ['config', 'set', '--batch-file', batchFile], undefined, { optional: true })) {
       for (const s of sets) await step(s.what, ['config', 'set', s.path, String(s.value)]);
     }
+    // No background check-ins. Engines from 2026.11.5 have no such monitor (scheduled checks became
+    // ordinary automation jobs) and reject the setting, so it is sent on its own and may fail harmlessly;
+    // in the batch it made every other setting fail with it.
+    await step('no background check-ins', ['config', 'set', 'agents.defaults.heartbeat.every', '0m'], undefined, { okIf: /Unrecognized key: "heartbeat"/i, optional: true });
 
     // Ask-first approvals, with Falcon's own small programs pre-approved in the same document.
     const approvals = JSON.parse(APPROVALS);
