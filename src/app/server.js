@@ -187,6 +187,10 @@ export async function startServer({ port = 0, engine = {} } = {}) {
   let chatsInFlight = 0;
   let pollerRunning = false;
   let setupRunning = false;
+  // Waking the engine: at most one start at a time, and then give it time to come up.
+  const WAKE_PATIENCE_MS = engine.wakePatienceMs ?? 5 * 60000;
+  let waking = false;
+  let lastWake = 0;
 
   const broadcast = (event, data) => {
     for (const res of clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -405,11 +409,19 @@ export async function startServer({ port = 0, engine = {} } = {}) {
     'GET /api/state': async () => {
       const configured = Boolean(api.readGateway());
       let ready = configured && await api.engineReady();
-      if (configured && !ready && !setupRunning) {
-        // Set up before but asleep (for example after a restart): wake it quietly.
-        await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
-        await api.runEngine(['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
-        ready = await api.engineReady();
+      // Set up before but asleep (for example after a restart): wake it quietly, once. The engine can take
+      // minutes to start on a busy computer; starting it again meanwhile ran several copies that blocked
+      // each other, so none of them ever answered.
+      if (configured && !ready && !setupRunning && !waking && Date.now() - lastWake > WAKE_PATIENCE_MS) {
+        waking = true;
+        lastWake = Date.now();
+        try {
+          await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+          await api.runEngine(['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
+          ready = await api.engineReady();
+        } finally {
+          waking = false;
+        }
       }
       return { configured, ready };
     },

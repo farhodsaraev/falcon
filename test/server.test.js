@@ -238,3 +238,20 @@ test('what Falcon says in the window never names what he runs on', () => {
   assert.equal(ownWords('OpenClaw refused it'), 'Falcon refused it');
   assert.equal(ownWords('Nothing to change here.'), 'Nothing to change here.');
 });
+
+test('a sleeping engine is woken once, not again while it is still starting', async () => {
+  const starts = [];
+  const slow = await startServer({ engine: {
+    ...engine,
+    readGateway: () => ({ port: 1, token: 'gw' }),
+    engineReady: async () => false,
+    runEngine: async (args) => { if (args[1] === 'start') starts.push(Date.now()); await new Promise((r) => setTimeout(r, 200)); return { code: 0, out: '' }; },
+  } });
+  try {
+    const state = () => fetch(`http://127.0.0.1:${slow.port}/api/state`, { headers: { 'X-Falcon-Token': slow.token } }).then((r) => r.json());
+    // The window asks again and again while the engine starts: only one start may go out.
+    await Promise.all([state(), state(), state()]);
+    await state();
+    assert.equal(starts.length, 1);
+  } finally { await slow.close(); }
+});
