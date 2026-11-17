@@ -162,6 +162,8 @@ export function progressLine(line) {
  * @param {Function} [options.onIdle]  called when Falcon's window has been gone for `idleMs`, or the user
  *                                     pressed Quit; the launcher stops Falcon then
  */
+const uninstallerPath = () => path.join(root, 'installer', process.platform === 'win32' ? 'uninstall.ps1' : 'uninstall.sh');
+
 export async function startServer({ port = 0, engine = {}, onIdle = () => {}, idleMs = 30000 } = {}) {
   // `engine` lets tests replace the real engine with stand-ins.
   const installFalcon = async (options) => {
@@ -593,6 +595,20 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     },
 
     // ---- Quit: stop Falcon's window and background part (his engine keeps running for Telegram and briefings) ----
+    // Removes Falcon from this computer by running his uninstaller on its own, then this window closes.
+    'GET /api/uninstall': async () => ({ available: fs.existsSync(uninstallerPath()) }),
+    'POST /api/uninstall': async (body) => {
+      const script = uninstallerPath();
+      if (!fs.existsSync(script)) return { ok: false, error: 'The uninstaller is missing. Run the install line again, then try once more.' };
+      const keep = body.deleteData !== true;
+      const child = process.platform === 'win32'
+        ? spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script, '-Quiet', keep ? '-KeepData' : '-DeleteData'],
+          { detached: true, stdio: 'ignore', windowsHide: true })
+        : spawn('/bin/bash', [script, '--yes', keep ? '--keep-data' : '--delete-data'], { detached: true, stdio: 'ignore' });
+      child.unref();
+      return { ok: true };
+    },
     'POST /api/quit': async () => {
       setTimeout(() => onIdle('quit'), 300).unref?.();
       return { ok: true };

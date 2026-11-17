@@ -122,6 +122,17 @@ jobs:
       - name: Unit checks
         run: node --test "test/*.test.js"
 
+      - name: Uninstall removes Falcon and the engine, and with --delete-data what he knew
+        run: |
+          bash "$HOME/Library/Application Support/Falcon/app/installer/uninstall.sh" --yes --delete-data
+          sleep 3
+          for gone in "$HOME/Applications/Falcon.app" "$HOME/Library/Application Support/Falcon" "$HOME/.openclaw" "$HOME/.falcon" "$HOME/Desktop/Falcon"; do
+            if [ -e "$gone" ]; then echo "still there: $gone"; exit 1; fi
+          done
+          if ls "$HOME"/Library/LaunchAgents/*openclaw* >/dev/null 2>&1; then echo "start-at-login entry still there"; ls "$HOME"/Library/LaunchAgents; exit 1; fi
+          if pgrep -f "openclaw.*gateway" >/dev/null; then echo "engine still running"; exit 1; fi
+          echo "Falcon, the engine and their data are gone."
+
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -202,3 +213,42 @@ jobs:
         run: |
           & $env:FALCON_NODE --test (Get-ChildItem test\*.test.js | ForEach-Object FullName)
           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Falcon is listed in Settings > Apps, and his icon can sit by the clock
+        shell: powershell
+        run: |
+          $key = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Falcon"
+          "listed as: $($key.DisplayName) $($key.DisplayVersion)"
+          "uninstall: $($key.UninstallString)"
+          if ($key.DisplayName -ne "Falcon") { throw "not listed in Settings > Apps" }
+          $script = ($key.UninstallString -split '"')[3]
+          if (-not (Test-Path $script)) { throw "the uninstaller the entry points to is missing: $script" }
+          $startup = Join-Path ([Environment]::GetFolderPath("Startup")) "Falcon.lnk"
+          if (-not (Test-Path $startup)) { throw "no sign-in entry for the icon" }
+          $s = (New-Object -ComObject WScript.Shell).CreateShortcut($startup)
+          $p = Start-Process $s.TargetPath -ArgumentList $s.Arguments -PassThru
+          Start-Sleep 8
+          $icon = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*tray.ps1*" }
+          if (-not $icon) { throw "the icon did not stay running" }
+          "icon running: pid $($icon.ProcessId)"
+
+      - name: Uninstall removes Falcon and the engine, and with -DeleteData what he knew
+        shell: powershell
+        run: |
+          $nodeBefore = $env:FALCON_NODE
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Falcon\app\installer\uninstall.ps1" -Quiet -DeleteData -NoMessage
+          # The uninstaller hands over to a copy of itself and finishes in the background: wait for it.
+          foreach ($i in 1..60) { if (-not (Test-Path "$env:LOCALAPPDATA\Falcon\app") -and -not (Test-Path "$env:USERPROFILE\.openclaw")) { break }; Start-Sleep 2 }
+          Start-Sleep 4
+          $problems = @()
+          if (Test-Path "$env:LOCALAPPDATA\Falcon\app") { $problems += "app folder still there" }
+          if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Falcon") { $problems += "still listed in Settings > Apps" }
+          foreach ($l in (Join-Path ([Environment]::GetFolderPath("Desktop")) "Falcon.lnk"), (Join-Path ([Environment]::GetFolderPath("Startup")) "Falcon.lnk"), (Join-Path ([Environment]::GetFolderPath("StartMenu")) "Programs\Falcon.lnk")) { if (Test-Path $l) { $problems += "shortcut still there: $l" } }
+          if (Test-Path "$env:USERPROFILE\.openclaw") { $problems += "engine data still there" }
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
+          if (Get-Command openclaw.cmd -ErrorAction SilentlyContinue) { $problems += "engine still installed: $((Get-Command openclaw.cmd).Source)" }
+          if (Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue) { $problems += "engine still running" }
+          if (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*tray.ps1*" }) { $problems += "icon still running" }
+          if (-not (Test-Path $nodeBefore)) { $problems += "removed a Node.js that Falcon had not installed" }
+          if ($problems) { $problems; exit 1 }
+          "Falcon, the engine and their data are gone; the computer's own Node.js was left alone."

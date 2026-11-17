@@ -415,3 +415,12 @@ button.small-btn { padding: 6px 12px; font-size: 12.5px; }
 .status.working::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.4s steps(4, end) infinite; }
 .loading-detail { max-width: 26em; line-height: 1.5; margin-top: 6px; }
 @media (prefers-reduced-motion: reduce) { .status.working::after { animation: none; content: "…"; } }
+
+/* ---- Uninstall ---- */
+.uninstall { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.link.danger { color: var(--muted); margin-top: 0; }
+.link.danger:hover { color: var(--bad); }
+.uninstall-confirm { text-align: left; }
+.uninstall-confirm .check { margin-top: 8px; }
+button.danger-btn { padding: 10px 14px; border-radius: 8px; font: inherit; cursor: pointer; background: transparent; color: var(--bad); border: 1px solid var(--bad); }
+button.danger-btn:hover { background: rgba(255, 122, 122, 0.1); }

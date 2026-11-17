@@ -34,6 +34,7 @@ async function refreshConnections() {
   $('about-callme').textContent = callMe;
   showVoiceSetting();
   $('chrome-state').textContent = chromeKnown ? '✓ connected' : '';
+  refreshUninstall();
   await refreshDots();
   try { showBriefing(await window.falcon.briefing()); } catch { /* leave as is */ }
 }
@@ -49,6 +50,21 @@ function showTab(name) {
 }
 for (const tab of document.querySelectorAll('.tab')) tab.addEventListener('click', () => showTab(tab.dataset.tab));
 $('about-intro').addEventListener('click', () => showScreen('intro'));
+
+// ---- Uninstall from Settings > About ----
+async function refreshUninstall() {
+  try { $('uninstall-box').hidden = !(await window.falcon.uninstallStatus()).available; } catch { $('uninstall-box').hidden = true; }
+}
+$('uninstall-open').addEventListener('click', () => { $('uninstall-confirm').hidden = false; $('uninstall-open').hidden = true; $('uninstall-cancel').focus(); });
+$('uninstall-cancel').addEventListener('click', () => { $('uninstall-confirm').hidden = true; $('uninstall-open').hidden = false; $('uninstall-data').checked = false; });
+$('uninstall-go').addEventListener('click', () => withButton($('uninstall-go'), async () => {
+  try {
+    const r = await window.falcon.uninstall($('uninstall-data').checked);
+    if (!r.ok) return note('uninstall-message', r.error, 'bad');
+    $('uninstall-confirm').hidden = true;
+    note('uninstall-message', `Falcon is being removed. Goodbye, ${address()}.`, 'ok');
+  } catch { note('uninstall-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+}));
 
 // Shows a spinner in the pressed button until the job is finished.
 async function withButton(button, work) {

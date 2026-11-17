@@ -30,6 +30,8 @@
     profile: () => call('GET', '/api/profile'),
     saveProfile: (profile) => call('POST', '/api/profile', profile),
     saveKey: (key, model) => call('POST', '/api/key', { key, model }),
+    uninstallStatus: () => call('GET', '/api/uninstall'),
+    uninstall: (deleteData) => call('POST', '/api/uninstall', { deleteData }),
     searchStatus: () => call('GET', '/api/search'),
     saveSearchKey: (key) => call('POST', '/api/search', { key }),
     openDossier: (name) => call('POST', '/api/dossier/open', { name }),

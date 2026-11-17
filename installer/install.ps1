@@ -33,6 +33,12 @@ function Copy-Falcon([string]$from) {
   Copy-Item (Join-Path $from "falcon-agent") $app -Recurse -Force
   $icon = @("falcon.ico", "installer\falcon.ico") | ForEach-Object { Join-Path $from $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
   if ($icon) { Copy-Item $icon (Join-Path $app "falcon.ico") -Force }
+  # The uninstaller and the icon among the hidden icons
+  New-Item -ItemType Directory -Force (Join-Path $app "installer") | Out-Null
+  foreach ($file in "uninstall.ps1", "tray.ps1") {
+    $source = Join-Path $from "installer\$file"
+    if (Test-Path $source) { Copy-Item $source (Join-Path $app "installer\$file") -Force }
+  }
   '{ "name": "falcon", "version": "0.1.0", "private": true, "type": "module" }' | Set-Content (Join-Path $app "package.json") -Encoding ascii
   # Sample files so the "things to try" work on a fresh PC
   $samples = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Falcon Samples"
@@ -111,6 +117,8 @@ if (-not $node) {
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
   if ($userPath -notlike "*$dest*") { [Environment]::SetEnvironmentVariable("Path", ($userPath.TrimEnd(';') + ";$dest"), "User") }
   $node = Join-Path $dest "node.exe"
+  # Remember that Falcon installed Node.js, so his uninstaller removes it again (and only then).
+  Set-Content (Join-Path $InstallDir "node-installed-by-falcon.txt") $dest -Encoding ascii
 }
 
 # ---- 3. Icons: Desktop and Start menu. conhost --headless keeps the black console window away ----
@@ -130,10 +138,45 @@ if (-not $NoShortcuts) {
   }
 }
 
-# ---- 4. Open Falcon ----
+# ---- 4. Falcon in Settings > Apps, and his icon among the hidden icons ----
+$version = "0.1.0"
+try { $version = (Get-Content (Join-Path $app "package.json") -Raw | ConvertFrom-Json).version } catch { }
+$powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$uninstaller = Join-Path $app "installer\uninstall.ps1"
+if (Test-Path $uninstaller) {
+  $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Falcon"
+  New-Item -Path $key -Force | Out-Null
+  $sizeKb = [int]((Get-ChildItem $app -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1KB)
+  $values = @{
+    DisplayName = "Falcon"; DisplayVersion = $version; Publisher = "Falcon"
+    DisplayIcon = (Join-Path $app "falcon.ico"); InstallLocation = $InstallDir
+    InstallDate = (Get-Date -Format "yyyyMMdd"); URLInfoAbout = "https://farhodsaraev.github.io/falcon/"
+    UninstallString = "`"$powershell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$uninstaller`""
+    QuietUninstallString = "`"$powershell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$uninstaller`" -Quiet -KeepData -NoMessage"
+  }
+  foreach ($name in $values.Keys) { Set-ItemProperty -Path $key -Name $name -Value $values[$name] }
+  foreach ($name in "NoModify", "NoRepair") { Set-ItemProperty -Path $key -Name $name -Value 1 -Type DWord }
+  Set-ItemProperty -Path $key -Name EstimatedSize -Value $sizeKb -Type DWord
+}
+$tray = Join-Path $app "installer\tray.ps1"
+$trayArgs = "--headless `"$powershell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tray`" -Node `"$node`" -Launch `"$launch`""
+if ((Test-Path $tray) -and -not $NoShortcuts) {
+  # The icon among the hidden icons appears at every sign-in, like other apps that live there.
+  $link = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath("Startup")) "Falcon.lnk"))
+  $link.TargetPath = Join-Path $env:SystemRoot "System32\conhost.exe"
+  $link.Arguments = $trayArgs
+  $link.WorkingDirectory = $app
+  $link.IconLocation = (Join-Path $app "falcon.ico")
+  $link.Description = "Falcon among the hidden icons"
+  $link.Save()
+}
+
+# ---- 5. Open Falcon ----
 Say "Done."
 if (-not $NoLaunch) {
   Say "Opening Falcon..."
   Start-Process (Join-Path $env:SystemRoot "System32\conhost.exe") -ArgumentList "--headless `"$node`" `"$launch`"" -WorkingDirectory $app
+  if (Test-Path $tray) { Start-Process (Join-Path $env:SystemRoot "System32\conhost.exe") -ArgumentList $trayArgs -WorkingDirectory $app }
 }
+Say "To remove Falcon later: Settings > Apps > Falcon > Uninstall."
 Write-Host ""

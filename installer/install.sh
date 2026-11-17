@@ -78,6 +78,8 @@ copy_falcon() {
   cp -R "$from/src/app" "$APP_DIR/src/app"
   cp -R "$from/ui" "$APP_DIR/ui"
   cp -R "$from/falcon-agent" "$APP_DIR/falcon-agent"
+  mkdir -p "$APP_DIR/installer"
+  cp "$from/installer/uninstall.sh" "$APP_DIR/installer/uninstall.sh" 2>/dev/null && chmod +x "$APP_DIR/installer/uninstall.sh" || true
   cp "$from/installer/falcon.png" "$APP_DIR/falcon.png" 2>/dev/null || cp "$from/falcon.png" "$APP_DIR/falcon.png" 2>/dev/null || true
   printf '{ "name": "falcon", "version": "0.1.0", "private": true, "type": "module" }\n' >"$APP_DIR/package.json"
   # Sample files so the "things to try" work on a fresh Mac
@@ -153,4 +155,6 @@ if [ -z "${FALCON_NO_LAUNCH:-}" ]; then
   say "Opening Falcon..."
   open "$BUNDLE" || fail "Falcon was installed but did not open; double-click Falcon in Applications"
 fi
+say "To remove Falcon later: Falcon's Settings > About > Uninstall, or run:"
+say "  bash \"$APP_DIR/installer/uninstall.sh\""
 printf '\n'

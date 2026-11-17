@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startServer } from './server.js';
 
 function findAppBrowser() {
@@ -38,6 +39,17 @@ const server = await startServer({
   },
 });
 const url = `http://127.0.0.1:${server.port}/#token=${server.token}`;
+
+// Windows: Falcon's icon among the hidden icons, by the clock. It stays when the window is closed, so he
+// can be opened again from there. The icon allows only one copy of itself, so starting it again is harmless.
+const tray = path.join(path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url)))), 'installer', 'tray.ps1');
+if (process.platform === 'win32' && fs.existsSync(tray)) {
+  try {
+    spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', tray, '-Node', process.execPath, '-Launch', fileURLToPath(import.meta.url)],
+      { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  } catch { /* Falcon works without the icon */ }
+}
 const browser = findAppBrowser();
 
 if (browser) {
