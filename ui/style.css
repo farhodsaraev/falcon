@@ -410,3 +410,8 @@ button.small-btn { padding: 6px 12px; font-size: 12.5px; }
 .dossier-small { border: 1px solid #2a3d50; background: transparent; color: #e6eef6; border-radius: 10px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
 .dossier-small.primary { background: #54c2e4; border-color: #54c2e4; color: #04121c; font-weight: 700; }
 #dossier-frame { flex: 1; width: 100%; border: 0; background: #f4f2ee; }
+
+/* ---- Waiting for the engine ---- */
+.status.working::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.4s steps(4, end) infinite; }
+.loading-detail { max-width: 26em; line-height: 1.5; margin-top: 6px; }
+@media (prefers-reduced-motion: reduce) { .status.working::after { animation: none; content: "…"; } }

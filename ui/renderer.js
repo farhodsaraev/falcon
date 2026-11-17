@@ -691,19 +691,54 @@ window.falcon.listen({
 // ---- Start ----
 // "?screen=" and "?preview=allow" exist only so the design can be checked.
 const query = new URLSearchParams(location.search);
+const WAKE_GIVE_UP_MS = 15 * 60000;     // after this, say so, but keep trying
 if (screens.includes(query.get('screen'))) {
   showScreen(query.get('screen'));
+} else if (query.get('waited')) {
+  // Design check only: show the waiting screen as it looks after this many seconds.
+  showScreen('loading');
+  showWaiting(Number(query.get('waited')) * 1000, 0);
 } else {
-  const wake = (attempt = 0) => window.falcon.state()
+  // Right after the computer starts, Falcon's engine can take several minutes to be ready (about
+  // eight and a half on a busy PC). Wait for it as long as that takes, and say honestly what is
+  // happening, instead of giving up after a minute with advice to restart, which only starts the
+  // wait again.
+  const startedWaiting = Date.now();
+  let failures = 0;
+  let done = false;
+  const ticker = setInterval(() => { if (!done) showWaiting(Date.now() - startedWaiting, failures); }, 1000);
+  const wake = () => window.falcon.state()
     .then((s) => {
-      if (s.ready) return enterFalcon();
-      if (!s.configured) return showScreen('setup');
-      // Set up before but still waking (for example right after the PC started): keep trying for a while.
-      if (attempt < 20) return setTimeout(() => wake(attempt + 1), 3000);
-      $('screen-loading').querySelector('.status').textContent = 'I could not wake up, sir. Please restart the computer.';
+      failures = 0;
+      if (s.ready) { done = true; clearInterval(ticker); return enterFalcon(); }
+      if (!s.configured) { done = true; clearInterval(ticker); return showScreen('setup'); }
+      setTimeout(wake, Date.now() - startedWaiting > WAKE_GIVE_UP_MS ? 10000 : 3000);
     })
-    .catch(() => showScreen('setup'));
+    .catch(() => { failures += 1; setTimeout(wake, 3000); });
   wake();
+}
+
+// What the waiting screen says, by how long Falcon has been waiting for his engine.
+function showWaiting(waitedMs, failures) {
+  const status = $('loading-status');
+  const detail = $('loading-detail');
+  const minutes = Math.floor(waitedMs / 60000);
+  const set = (title, text, working) => {
+    status.textContent = title;
+    status.classList.toggle('working', working);
+    detail.textContent = text;
+  };
+  if (failures >= 5) {
+    set('I have lost my connection.', 'Close this window and open Falcon again.', false);
+  } else if (waitedMs > WAKE_GIVE_UP_MS) {
+    set('I am taking unusually long to wake up.',
+      'I am still trying. If nothing changes in a few minutes, close this window and open Falcon again.', true);
+  } else if (waitedMs > 60000) {
+    set(`Still waking up, ${minutes} min`,
+      'Right after the computer starts this can take up to ten minutes. You may leave this window open; I shall come in by myself.', true);
+  } else if (waitedMs > 6000) {
+    set('Waking up', 'Right after the computer starts this can take a few minutes. I shall be with you as soon as I am ready.', true);
+  }
 }
 if (query.get('preview') === 'allow') {
   approvalQueue.push({ id: 'preview', summary: 'powershell -Command "Remove-Item C:\\Users\\you\\Desktop\\old-report.docx"' });
