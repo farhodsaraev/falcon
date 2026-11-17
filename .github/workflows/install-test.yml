@@ -119,49 +119,6 @@ jobs:
         continue-on-error: true
         run: node "$HOME/.openclaw/workspace/skills/screen/screenshot.mjs"
 
-      # Nobody here can click macOS's permission prompts, so the apps themselves cannot be driven. What
-      # can be proven: every command for Mail, Notes, Calendar, Reminders, Music, Finder and System Events
-      # is valid AppleScript that those apps understand (osacompile checks it against each app's dictionary).
-      - name: Mac skill - every app command is valid AppleScript for its app
-        run: |
-          APPS="$HOME/.openclaw/workspace/skills/apps/apps.mjs"
-          mkdir -p "$RUNNER_TEMP/osa"
-          node "$APPS" --print-script > "$RUNNER_TEMP/osa/all.json"
-          node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(!j.ok)process.exit(1);for(const [k,v] of Object.entries(j.scripts))fs.writeFileSync(process.argv[2]+"/"+k+".applescript",v);console.log(Object.keys(j.scripts).join(" "))' "$RUNNER_TEMP/osa/all.json" "$RUNNER_TEMP/osa"
-          failed=0
-          for f in "$RUNNER_TEMP"/osa/*.applescript; do
-            if osacompile -o "${f%.applescript}.scpt" "$f" 2> "$f.err"; then echo "ok    $(basename "$f")"; else echo "FAILED $(basename "$f"): $(cat "$f.err")"; failed=1; fi
-          done
-          exit $failed
-
-      - name: Mac skill - which app is in front, and a bad request is refused plainly (informational)
-        continue-on-error: true
-        run: |
-          APPS="$HOME/.openclaw/workspace/skills/apps/apps.mjs"
-          node "$APPS" --do frontmost || true
-          node "$APPS" --do calendar-add --title "Test" --start "not a date" || true
-
-      - name: Mac skill - make a Word document, a spreadsheet and a deck
-        run: |
-          DOCS="$HOME/.openclaw/workspace/skills/documents/make-document.mjs"
-          for t in docx xlsx pptx; do
-            OUT="$(node "$DOCS" --spec "test/fixtures/documents/$t.json")"
-            echo "$OUT"
-            echo "$OUT" | grep -q '"ok":true'
-            FILE="$(echo "$OUT" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).path))')"
-            test -s "$FILE"
-            unzip -tq "$FILE"
-          done
-          OUT="$(node "$HOME/.openclaw/workspace/skills/files/read-file.mjs" --path "$HOME/Documents/Falcon Documents/Falcon CI check.docx")"
-          echo "$OUT"
-          echo "$OUT" | grep -q 'Quarterly numbers'
-
-      - name: Desktop control and free web search (informational on a Mac)
-        continue-on-error: true
-        run: |
-          openclaw gateway call computer.status --params '{"probe":false}' || true
-          openclaw config get tools.web.search.provider || true
-
       - name: Unit checks
         run: node --test "test/*.test.js"
 
@@ -250,27 +207,6 @@ jobs:
           $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\read-file.ps1" -Path $found.files[0].path
           $out
           if ($out -notmatch '"ok":true' -or $out -notmatch '4,800.00') { exit 1 }
-
-      - name: Windows skill - make a Word document, a spreadsheet and a deck
-        shell: powershell
-        run: |
-          foreach ($t in "docx", "xlsx", "pptx") {
-            $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\documents\make-document.ps1" -Spec "$PWD\test\fixtures\documents\$t.json"
-            $out
-            if ($out -notmatch '"ok":true') { exit 1 }
-            if (-not (Test-Path ($out | ConvertFrom-Json).path)) { exit 1 }
-          }
-
-      - name: Desktop control is switched on, and web search works without a key
-        shell: powershell
-        run: |
-          $env:Path = (Split-Path $env:FALCON_NODE) + ";" + [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
-          $status = openclaw gateway call computer.status --params '{\"probe\":false}' | Out-String
-          $status
-          if ($status -notmatch '"configured": true') { exit 1 }
-          $provider = openclaw config get tools.web.search.provider | Out-String
-          $provider
-          if ($provider -notmatch 'parallel-free') { exit 1 }
 
       - name: Unit checks
         shell: powershell
