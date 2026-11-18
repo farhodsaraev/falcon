@@ -57,7 +57,8 @@
     },
     // Sends a message and calls onDelta for each piece of the answer as it arrives.
     // `signal` lets the caller stop the request (the Stop button).
-    async chat(text, { onDelta, onError, onActions, onScout, onDossier, onStep }, signal) {
+    openFile: (path, reveal) => call('POST', '/api/file/open', { path, reveal }),
+    async chat(text, { onDelta, onError, onActions, onScout, onDossier, onStep, onFile }, signal) {
       const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text }), signal });
       if (!response.ok || !response.body) return onError(`I have lost my connection, ${window.falconAddress ? window.falconAddress() : 'sir'}.`);
       const reader = response.body.getReader();
@@ -78,6 +79,7 @@
           if (event === 'delta') onDelta(payload.text);
           if (event === 'actions' && onActions) onActions(payload.items);
           if (event === 'step' && onStep) onStep(payload.text);
+          if (event === 'file' && onFile) onFile(payload);
           if (event === 'scout' && onScout) onScout(payload);
           if (event === 'dossier' && onDossier) onDossier(payload.name);
           if (event === 'error') onError(payload.text);

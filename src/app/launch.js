@@ -41,6 +41,13 @@ const onIdle = async () => {
 let server;
 try { server = await startServer({ port: 47615, onIdle }); } catch { server = await startServer({ onIdle }); }
 const url = `http://127.0.0.1:${server.port}/#token=${server.token}`;
+// Where the keyboard shortcut (Ctrl+Alt+Space, held by the icon by the clock) finds this window to ask it
+// to listen. Readable by this user only; replaced at every start.
+try {
+  const where = path.join(os.homedir(), '.falcon', 'window.json');
+  fs.mkdirSync(path.dirname(where), { recursive: true });
+  fs.writeFileSync(where, JSON.stringify({ port: server.port, token: server.token }), { mode: 0o600 });
+} catch { /* the shortcut still brings the window forward */ }
 
 // Windows: Falcon's icon among the hidden icons, by the clock. It stays when the window is closed, so he
 // can be opened again from there. The icon allows only one copy of itself, so starting it again is harmless.

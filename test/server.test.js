@@ -16,6 +16,7 @@ let telegramNeedsRestart = false;
 const engine = {
   findEngine: () => ({ command: 'node', prefix: [] }),
   fastLane: async () => null,     // these checks never drive real apps; the fast lane has its own checks
+  approvalPollMs: 200,
   directLine: null,               // and never open a real line to an engine; the direct line has its own checks
   workspaceDir: () => tmp,
   voiceKey: { get: async () => null, set: async () => {} },
@@ -382,4 +383,46 @@ test('the window can say which version and build it is', async () => {
   const about = await (await call('GET', '/api/about')).json();
   assert.match(about.version, /^\d+\.\d+\.\d+$/);
   assert.match(about.build, /^[0-9a-f]{7}$/);
+});
+
+test('the keyboard shortcut asks the open window to come forward and listen; nothing happens without the token', async () => {
+  const events = await fetch(`${base}/api/events?token=${server.token}`);
+  const reader = events.body.getReader();
+  await reader.read();
+  assert.equal((await call('POST', '/api/summon', {}, 'wrong')).status, 401);
+  const r = await (await call('POST', '/api/summon', {})).json();
+  assert.equal(r.ok, true);
+  assert.ok(r.windows >= 1);
+  assert.match(new TextDecoder().decode((await reader.read()).value), /event: summon/);
+  await reader.cancel();
+});
+
+test('right after an update the window is told to wait while Falcon re-learns his skills', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-updating-'));
+  let finish;
+  const s = await startServer({ engine: { ...engine, profileFile: () => path.join(dir, 'profile.json'), readGateway: () => ({ port: 1, token: 'gw' }), engineReady: async () => true,
+    packStamp: () => 'new', installFalcon: () => new Promise((resolve) => { finish = () => resolve({ ok: true }); }) } });
+  const state = () => fetch(`http://127.0.0.1:${s.port}/api/state`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+  try {
+    assert.deepEqual(await state(), { configured: true, ready: false, updating: true });
+    finish();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(await state(), { configured: true, ready: true });
+  } finally { await s.close(); }
+});
+
+test('the window can open only a file Falcon himself offered', async () => {
+  const opened = [];
+  const file = path.join(tmp, 'Invoice.pdf');
+  fs.writeFileSync(file, 'x');
+  const s = await startServer({ engine: { ...engine, openPath: (f) => opened.push(f),
+    fastLane: async (text) => (/find/.test(text) ? { reply: 'I found Invoice.pdf, sir.', actions: [], note: 'found', file } : null) } });
+  const post = (route, body) => fetch(`http://127.0.0.1:${s.port}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await (await post('/api/file/open', { path: file })).json()).ok, false, 'not offered yet');
+    assert.match(await (await post('/api/chat', { text: 'find my invoice' })).text(), /event: file\ndata: {"path":/);
+    assert.equal((await (await post('/api/file/open', { path: file })).json()).ok, true);
+    assert.deepEqual(opened, [file]);
+    assert.equal((await (await post('/api/file/open', { path: 'C:\Windows\System32\cmd.exe' })).json()).ok, false);
+  } finally { await s.close(); }
 });

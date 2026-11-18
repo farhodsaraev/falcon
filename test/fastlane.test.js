@@ -114,3 +114,35 @@ test('fast lane in the window: answered at once without the AI, and the AI is to
     assert.match(sent[1], /^And then\?/, 'the note is passed on once');
   } finally { await s.close(); }
 });
+
+test('fast lane: a plain hello or thank-you is answered at once, by the time of day', async () => {
+  const go = (text, hour) => fastLane(text, { packDir: 'C:\\pack', callMe: 'Farhod', platform: 'win32', now: new Date(2026, 10, 18, hour, 0), run: async () => { throw new Error('nothing should run'); } });
+  assert.equal((await go('Hi!', 22)).reply, 'Good evening, Farhod. What can I do for you?');
+  assert.equal((await go('Привет', 9)).reply, 'Доброе утро, Farhod. Чем могу помочь?');
+  assert.equal((await go('Thank you, Falcon.', 12)).reply, 'My pleasure, Farhod.');
+  assert.equal(matchFast('Hi, can you find my invoice and email it?'), null);
+});
+
+test('fast lane: a found file can be opened with a plain yes; his own made files do not crowd out the user\'s', async () => {
+  const memory = {};
+  const opened = [];
+  const files = { ok: true, files: [
+    { path: 'C:\\Users\\a\\Documents\\Falcon Documents\\Invoice October 2026.xlsx' },
+    { path: 'C:\\Users\\a\\Downloads\\Invoice October 2026.pdf' },
+  ] };
+  const go = (text) => fastLane(text, { packDir: 'C:\\pack', platform: 'win32', memory, open: (f) => opened.push(f), run: async () => files });
+
+  const found = await go('Find my latest invoice');
+  assert.match(found.reply, /^I found Invoice October 2026\.pdf in Downloads, sir\./, 'the user\'s own file, not the spreadsheet Falcon made');
+  assert.equal(found.file, 'C:\\Users\\a\\Downloads\\Invoice October 2026.pdf');
+
+  const yes = await go('Yes, please.');
+  assert.equal(yes.reply, 'Invoice October 2026.pdf is open, sir.');
+  assert.deepEqual(opened, ['C:\\Users\\a\\Downloads\\Invoice October 2026.pdf']);
+
+  assert.equal(await fastLane('yes', { packDir: 'C:\\pack', platform: 'win32', memory, open: (f) => opened.push(f) }), null, 'a yes with nothing on offer goes to the AI');
+  await go('Find my latest invoice');
+  await fastLane('what time is it', { packDir: 'C:\\pack', platform: 'win32', memory });
+  assert.equal(await fastLane('yes', { packDir: 'C:\\pack', platform: 'win32', memory, open: (f) => opened.push(f) }), null, 'another request in between drops the offer');
+  assert.equal(opened.length, 1);
+});

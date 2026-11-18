@@ -19,6 +19,7 @@ export function createDirectLine({ readGateway, WebSocketImpl = globalThis.WebSo
   let counter = 0;
   const pending = new Map(); // request id -> { resolve, reject, timer }
   const runs = new Map();    // run id -> (event, payload) => void
+  const watchers = new Map(); // conversation key -> { onStep, seen }
 
   function drop(reason) {
     const error = new DirectLineUnavailable(reason);
@@ -73,6 +74,20 @@ export function createDirectLine({ readGateway, WebSocketImpl = globalThis.WebSo
           if (frame.ok) waiting.resolve(frame.payload);
           else waiting.reject(new DirectLineUnavailable(String(frame.error?.message || 'the engine refused the request')));
           return;
+        }
+        // A step starting in a conversation someone is watching (a request sent the engine's web way).
+        if (frame.type === 'event' && frame.event === 'agent' && watchers.size) {
+          const p = frame.payload || {};
+          const starting = (p.stream === 'item' && p.data?.kind === 'tool' && p.data?.phase === 'start') || (p.stream === 'tool' && p.data?.phase === 'start');
+          if (starting) {
+            const id = p.data.toolCallId || p.data.itemId || '';
+            for (const [key, watcher] of watchers) {
+              if (!String(p.sessionKey || '').endsWith(`:${key}`) && p.sessionKey !== key) continue;
+              if (id && watcher.seen.has(id)) continue;      // announced twice by the engine, shown once
+              if (id) watcher.seen.add(id);
+              try { watcher.onStep({ name: p.data.name, args: p.data.args || {}, meta: p.data.meta || '' }); } catch { /* display only */ }
+            }
+          }
         }
         if (frame.type === 'event' && (frame.event === 'chat' || frame.event === 'agent')) {
           const handler = runs.get(frame.payload?.runId);
@@ -150,14 +165,33 @@ export function createDirectLine({ readGateway, WebSocketImpl = globalThis.WebSo
     }
   }
 
-  return { chat, connect, close: () => drop('closed'), connected: () => Boolean(ready && ws) };
+  /** Reports each step started in a conversation, however the request was sent. Returns a function that ends the watch. */
+  function watch(sessionKey, onStep) {
+    watchers.set(sessionKey, { onStep, seen: new Set() });
+    connect().catch(() => {});   // without the line there are simply no step notices
+    return () => { watchers.delete(sessionKey); };
+  }
+
+  /** Tells the engine to abandon whatever is running in a conversation. */
+  function stop(sessionKey) {
+    return connect().then(() => send('chat.abort', { sessionKey }, 10000)).then(() => true, () => false);
+  }
+
+  return { chat, watch, stop, connect, close: () => drop('closed'), connected: () => Boolean(ready && ws) };
 }
 
 /**
  * One line, in the user's own terms, for a step Falcon has just started. Never names the machinery:
  * it says what is being done for him, not which tool does it.
  */
-export function stepText({ name, args = {} }, russian = false) {
+export function stepText({ name, args = {}, meta = '' }, russian = false) {
+  // Watching a conversation, the engine gives a short title for the step instead of its details.
+  if (meta && !Object.keys(args).length) {
+    if (name === 'web_search') args = { query: meta.replace(/^for\s+/i, '').replace(/^["“]|["”]$/g, '') };
+    else if (name === 'web_fetch' || name === 'browser') args = { url: /^https?:/.test(meta) ? meta : (meta.match(/https?:\/\/\S+/) || [''])[0] };
+    else if (name === 'read' || name === 'write' || name === 'edit') args = { path: meta };
+    else if (name === 'exec') args = { command: meta, title: meta };
+  }
   const say = (en, ru) => (russian ? ru : en);
   const short = (text, max = 48) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t; };
   const host = (url) => { try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; } };
@@ -174,6 +208,8 @@ export function stepText({ name, args = {} }, russian = false) {
       if (/scout[\w.-]*\.(ps1|mjs)/.test(command)) return say('Scouting public sources', 'Изучаю открытые источники');
       if (/daily\.mjs/.test(command)) return say('Checking your day', 'Смотрю ваш день');
       if (/apps\.(ps1|mjs)/.test(command)) return say('Working in the app', 'Работаю в приложении');
+      // His own short title for the step ("List pictures for a nature wallpaper"), when there is one.
+      if (args.title && !/[\\/]|powershell|\.ps1|\.mjs|cmd |node /i.test(args.title)) return short(args.title, 60);
       return say('Running a command', 'Выполняю команду');
     case 'web_search': return args.query ? say(`Searching the web: ${short(args.query)}`, `Ищу в интернете: ${short(args.query)}`) : say('Searching the web', 'Ищу в интернете');
     case 'web_fetch': return host(args.url) ? say(`Reading ${host(args.url)}`, `Читаю ${host(args.url)}`) : say('Reading a page', 'Читаю страницу');

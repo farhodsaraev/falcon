@@ -5,7 +5,7 @@ function showScreen(name) {
   for (const s of screens) $(`screen-${s}`).hidden = s !== name;
   $('open-connections').hidden = name !== 'main';
   $('status-dots').hidden = name !== 'main';
-  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); }
+  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); }
   if (name !== 'main' && voice && voice.active()) voice.stop();
   if (name === 'connections') refreshConnections();
 }
@@ -376,6 +376,18 @@ function dossierButton(name) {
   button.addEventListener('click', () => showDossier(name));
   return button;
 }
+// Under a file Falcon found: open it, or show where it is.
+function fileButtons(file) {
+  return [['Open', false], ['Show in folder', true]].map(([label, reveal]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = reveal ? 'file-button ghost' : 'file-button primary';
+    button.textContent = label;
+    button.title = file.name;
+    button.addEventListener('click', () => window.falcon.openFile(file.path, reveal).catch(() => {}));
+    return button;
+  });
+}
 // Shows the dossier inside Falcon's window, over everything, with Close and "Open in browser".
 let dossierShown = '';
 function showDossier(name) {
@@ -473,6 +485,7 @@ async function sendToFalcon(text, shown = text) {
   let answer = '';
   let cards = [];
   let dossier = '';
+  let found = null;
   $('scout').hidden = true;
   const reveal = createReveal($('reply'));
   // If the answer takes a moment, say so instead of sitting silent.
@@ -504,12 +517,14 @@ async function sendToFalcon(text, shown = text) {
       onStep: (line) => { step = line; if (!answer) setOrb('thinking'); },
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
+      onFile: (file) => { found = file; },
       onError: fail,
     }, stopper.signal);
     await reveal.done();
     if (cards.length) showActions(cards);
     $('scout').hidden = true;
     if (dossier) { $('actions').append(dossierButton(dossier)); scrollTalk(); showDossier(dossier); }
+    if (found) { $('actions').append(...fileButtons(found)); scrollTalk(); }
   } catch {
     if (stopped) {
       clearWaiting();
@@ -746,7 +761,18 @@ $('about-quit').addEventListener('click', async () => {
   setTimeout(() => window.close(), 800);
 });
 
+// The keyboard shortcut (Ctrl+Alt+Space): come forward and listen; pressed again while listening, stop.
+function summoned() {
+  try { window.focus(); } catch { /* the icon by the clock has already brought the window forward */ }
+  if ($('screen-main').hidden) return;
+  if (voice && voice.active()) return voice.stop();
+  const canListen = (liveVoice && voiceReady) || window.falconSpeech.supported();
+  if (busy || !canListen) return $('ask-text').focus();
+  $('mic').click();
+}
+
 window.falcon.listen({
+  summon: summoned,
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
   setup: (progress) => {
     if (progress.detail) return setupLog.add(progress.detail);
@@ -754,6 +780,19 @@ window.falcon.listen({
     setupLog.eta(progress.left);
   },
 });
+
+// The shortcut exists on Windows, where Falcon's icon by the clock holds it and says which keys it took.
+function showShortcut() {
+  window.falcon.about().then((a) => {
+    if (!a.shortcut) return;
+    $('shortcut-hint').replaceChildren('Press ', ...a.shortcut.split('+').flatMap((key) => {
+      const k = document.createElement('kbd');
+      k.textContent = key;
+      return [k, ' '];
+    }), 'anywhere to call me.');
+    $('shortcut-hint').hidden = false;
+  }).catch(() => {});
+}
 
 // ---- Start ----
 // "?screen=" and "?preview=allow" exist only so the design can be checked.
@@ -773,10 +812,18 @@ if (screens.includes(query.get('screen'))) {
   const startedWaiting = Date.now();
   let failures = 0;
   let done = false;
-  const ticker = setInterval(() => { if (!done) showWaiting(Date.now() - startedWaiting, failures); }, 1000);
+  let updating = false;
+  const ticker = setInterval(() => {
+    if (done) return;
+    if (!updating) return showWaiting(Date.now() - startedWaiting, failures);
+    $('loading-status').textContent = 'Learning my new skills';
+    $('loading-status').classList.add('working');
+    $('loading-detail').textContent = 'I have just been updated. This takes about a minute, once; then I shall be quicker than before.';
+  }, 1000);
   const wake = () => window.falcon.state()
     .then((s) => {
       failures = 0;
+      updating = Boolean(s.updating);
       if (s.ready) { done = true; clearInterval(ticker); return enterFalcon(); }
       if (!s.configured) { done = true; clearInterval(ticker); return showScreen('setup'); }
       setTimeout(wake, Date.now() - startedWaiting > WAKE_GIVE_UP_MS ? 10000 : 3000);

@@ -229,6 +229,9 @@ button.primary.busy::after { border-color: rgba(3, 18, 28, 0.3); border-top-colo
 .ask button.stop { background: transparent; color: var(--warn); border-color: var(--warn); font-size: 13px; }
 .ask button.stop:hover { background: rgba(255, 180, 84, 0.12); }
 .hint a { color: var(--glow); }
+.file-button { padding: 6px 14px !important; border-radius: 9px !important; font-size: 12.5px !important; }
+.hint.shortcut { margin: 8px 0 0; flex: none; opacity: 0.8; }
+kbd { font: 11px/1 Consolas, "Cascadia Mono", monospace; color: var(--text); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 2px 5px; background: var(--bg); }
 
 /* ---- Allow prompt ---- */
 .overlay {

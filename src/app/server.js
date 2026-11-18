@@ -191,6 +191,7 @@ const uninstallerPath = () => path.join(root, 'installer', process.platform === 
 export async function startServer({ port = 0, engine = {}, onIdle = () => {}, idleMs = 30000 } = {}) {
   // How long one request may take before the window gives up on it.
   const CHAT_LIMIT_MS = engine.chatLimitMs ?? 10 * 60000;
+  const APPROVAL_POLL_MS = engine.approvalPollMs ?? 8000;
   // `engine` lets tests replace the real engine with stand-ins.
   const installFalcon = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
@@ -238,6 +239,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   let windowSeen = false;
   let idleTimer = null;
   const fastNotes = [];            // what the fast lane did since the AI last heard from the window
+  const fastMemory = {};           // a file just offered, so "yes" can open it
+  const offeredFiles = new Set();  // files Falcon found and showed buttons for
   let refreshing = false;
   let refreshChecked = false;
   const busy = () => setupRunning || refreshing || chatsInFlight > 0;
@@ -303,7 +306,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
             }
           } catch { /* unreadable answer: try again next round */ }
         }
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        // Each check starts a heavy program (6 to 9 seconds on a real PC), so leave room between them.
+        await new Promise((resolve) => setTimeout(resolve, APPROVAL_POLL_MS));
       }
     } finally {
       pollerRunning = false;
@@ -427,9 +431,15 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     // The fast lane: a few very common requests are done at once, without the AI.
     try {
       chatsInFlight++;
-      const quick = await api.fastLane(text, { packDir: PACK_DIR, callMe: callMeNow() });
+      const quick = await api.fastLane(text, { packDir: PACK_DIR, callMe: callMeNow(), memory: fastMemory, open: (file) => api.openPath(file) });
       if (quick) {
         send('delta', { text: quick.reply });
+        // A found file gets Open and Show buttons in the window; only files offered this way can be opened by it.
+        if (quick.file) {
+          offeredFiles.add(quick.file);
+          if (offeredFiles.size > 30) offeredFiles.delete(offeredFiles.values().next().value);
+          send('file', { path: quick.file, name: path.win32.basename(quick.file) });
+        }
         if (quick.actions?.length) send('actions', { items: quick.actions });
         send('done', {});
         res.end();
@@ -461,6 +471,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     const scoutTimer = setInterval(watchScout, 800);
     // The user pressed Stop (the window dropped the request), or it ran far too long: let go of the engine.
     const control = new AbortController();
+    let unwatch = () => {};
     let tooLong = false;
     const limit = setTimeout(() => { tooLong = true; control.abort(); }, CHAT_LIMIT_MS);
     res.on('close', () => {
@@ -488,30 +499,22 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         if (!final) safe -= /\S*$/.exec(full.slice(0, safe))[0].length;
         if (safe > passed) { send('delta', { text: ownWords(full.slice(passed, safe)) }); passed = safe; }
       };
-      // First choice: his direct line. The answer arrives as it is written, each step is announced as it
-      // starts, and Stop reaches the engine itself. Only a request that never got through goes the old way.
-      let direct = false;
-      if (api.directLine) {
-        const russian = /[а-яё]/i.test(text);
-        try {
-          await api.directLine.chat({
-            sessionKey: windowSession(), message: content, signal: control.signal,
-            onDelta: (piece) => { full += piece; flush(false); },
-            onStep: (step) => send('step', { text: stepText(step, russian) }),
-          });
-          direct = true;
-        } catch (err) {
-          if (err.started !== false || control.signal.aborted) throw err;
-        }
-      }
-      if (!direct) {
+      // The request itself goes to the engine's web address: only there does the engine treat it as
+      // coming from the owner. (Sent over the direct line, he was refused screen control: "this turn was
+      // not started by the owner".) The direct line watches the same conversation, so each step he starts
+      // shows in the window, and it carries Stop to the engine.
+      const russian = /[а-яё]/i.test(text);
+      const sessionKey = windowSession();
+      unwatch = api.directLine?.watch(sessionKey, (step) => send('step', { text: ownWords(stepText(step, russian)) })) || (() => {});
+      control.signal.addEventListener('abort', () => { api.directLine?.stop(sessionKey); }, { once: true });
+      {
         pollApprovals();
         const upstream = await api.fetch(`http://127.0.0.1:${gateway.port}/v1/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${gateway.token}`,
-            'x-openclaw-session-key': windowSession(),
+            'x-openclaw-session-key': sessionKey,
           },
           body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content }] }),
           signal: control.signal,
@@ -547,6 +550,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       send('error', { text: tooLong ? `That took too long, ${callMeNow()}, so I stopped. Please ask again, perhaps in smaller steps.`
         : `I have lost my connection, ${callMeNow()}. Please try again in a moment.` });
     } finally {
+      unwatch();
       clearTimeout(limit);
       clearInterval(scoutTimer);
       chatsInFlight--;
@@ -572,13 +576,21 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           waking = false;
         }
       }
+      // After an update he re-learns his rules and skills, which keeps the engine busy for a minute or
+      // so. Seen on a real install: a "Hi!" typed meanwhile took over 50 seconds. So the window waits on
+      // its opening screen, and says why, until that is done.
       if (ready) refreshPack().catch(() => {});
+      if (ready && refreshing) return { configured, ready: false, updating: true };
       return { configured, ready };
     },
     'GET /api/about': async () => {
       let version = '0.1.0';
       try { version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version || version; } catch { /* default */ }
-      return { version, build: api.packStamp().slice(0, 7) };
+      // Which keyboard shortcut calls Falcon: the icon by the clock takes the first free one and notes it.
+      let shortcut = '';
+      try { shortcut = fs.readFileSync(path.join(path.dirname(api.profileFile()), 'shortcut.txt'), 'utf8').trim().slice(0, 30); } catch { /* none */ }
+      if (!/^[A-Za-z+]+$/.test(shortcut)) shortcut = '';
+      return { version, build: api.packStamp().slice(0, 7), shortcut };
     },
     'POST /api/setup': async (body) => {
       if (setupRunning) return { ok: false, error: 'Setup is already running.' };
@@ -751,6 +763,22 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         : spawn('/bin/bash', [script, '--yes', keep ? '--keep-data' : '--delete-data'], { detached: true, stdio: 'ignore' });
       child.unref();
       return { ok: true };
+    },
+    // The Open and Show buttons under a found file. Only a file Falcon himself offered in this window.
+    'POST /api/file/open': async (body) => {
+      const file = String(body.path || '');
+      if (!offeredFiles.has(file) || !fs.existsSync(file)) return { ok: false, error: 'That file is no longer there.' };
+      if (body.reveal && process.platform === 'win32') {
+        const child = spawn('explorer.exe', [`/select,${file}`], { detached: true, stdio: 'ignore' });
+        child.on('error', () => {});
+        child.unref();
+      } else api.openPath(body.reveal ? path.dirname(file) : file);
+      return { ok: true };
+    },
+    // The keyboard shortcut was pressed: ask the open window to come forward and listen.
+    'POST /api/summon': async () => {
+      broadcast('summon', {});
+      return { ok: true, windows: clients.size };
     },
     'POST /api/quit': async () => {
       setTimeout(() => onIdle('quit'), 300).unref?.();

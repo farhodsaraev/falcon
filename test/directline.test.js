@@ -106,30 +106,49 @@ test('direct line: each step is described in the user\'s terms, never by the nam
   assert.equal(stepText({ name: 'web_search', args: { query: 'курс доллара' } }, true), 'Ищу в интернете: курс доллара');
 });
 
-test('the window uses the direct line first: steps reach it, Stop is remembered, and a line that is down falls back to the old way', async () => {
-  const asked = [];
-  let lineUp = true;
+test('direct line: watching a conversation reports each step once, whoever sent the request; stop names the conversation', async () => {
+  const { FakeSocket, sockets, seen } = fakeEngine((method, params, engine, reply) => { if (method === 'chat.abort') reply(true, { ok: true }); });
+  const line = createDirectLine({ readGateway: () => ({ port: 1, token: 't' }), WebSocketImpl: FakeSocket });
+  const steps = [];
+  const unwatch = line.watch('falcon-window-ab12', (s) => steps.push(s));
+  await line.connect();
+  const engine = sockets[0];
+  const item = (sessionKey, id, name, meta) => engine.event('agent', { sessionKey, stream: 'item', data: { kind: 'tool', phase: 'start', toolCallId: id, name, meta } });
+  item('agent:falcon:falcon-window-ab12', 't1', 'web_search', 'population of Samarkand');
+  engine.event('agent', { sessionKey: 'agent:falcon:falcon-window-ab12', stream: 'tool', data: { phase: 'start', toolCallId: 't1', name: 'web_search', args: { query: 'population of Samarkand' } } });
+  item('agent:falcon:someone-else', 't2', 'exec', 'Something private');
+  item('agent:falcon:falcon-window-ab12', 't3', 'exec', 'List pictures for a nature wallpaper');
+  assert.deepEqual(steps.map((s) => stepText(s)), ['Searching the web: population of Samarkand', 'List pictures for a nature wallpaper']);
+  assert.equal(await line.stop('falcon-window-ab12'), true);
+  assert.deepEqual(seen.find(([m]) => m === 'chat.abort')[1], { sessionKey: 'falcon-window-ab12' });
+  unwatch();
+  item('agent:falcon:falcon-window-ab12', 't4', 'exec', 'After the watch ended');
+  assert.equal(steps.length, 2);
+  line.close();
+});
+
+test('the window sends requests the owner\'s way and uses the direct line to show steps and to stop', async () => {
+  const stopped = [];
+  let report;
   const directLine = {
     close() {},
-    async chat({ sessionKey, message, onDelta, onStep, signal }) {
-      if (!lineUp) throw Object.assign(new DirectLineUnavailable('down'), { started: false });
-      asked.push([sessionKey, message]);
-      if (/long job/.test(message)) {
-        await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('stopped'), { name: 'AbortError' }))));
-      }
-      onStep({ name: 'web_search', args: { query: 'weather tashkent' } });
-      onDelta('Sunny, sir.\n\n[[did]] Checked the weather');
-      return 'Sunny, sir.';
-    },
+    watch(sessionKey, onStep) { report = onStep; return () => { report = null; }; },
+    stop(sessionKey) { stopped.push(sessionKey); return Promise.resolve(true); },
   };
-  const engineCalls = [];
+  const sent = [];
   const s = await startServer({ engine: {
     readGateway: () => ({ port: 1, token: 'gw' }),
-    profileFile: () => 'Z:\\none\\profile.json',
+    profileFile: () => 'Z:\none\profile.json',
     fastLane: async () => null,
     directLine,
-    runEngine: async (args) => { engineCalls.push(args.join(' ')); return { code: 0, out: '{"approvals":[]}' }; },
-    fetch: async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: 'The old way, sir.' } }] })}\n\ndata: [DONE]\n\n`, { status: 200 }),
+    runEngine: async () => ({ code: 0, out: '{"approvals":[]}' }),
+    fetch: async (url, options) => {
+      const said = JSON.parse(options.body).messages[0].content;
+      sent.push([options.headers['x-openclaw-session-key'], said]);
+      if (/long job/.test(said)) return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+      report({ name: 'web_search', args: {}, meta: 'weather tashkent' });
+      return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Sunny, sir.\n\n[[did]] Checked the weather' } }] })}\n\ndata: [DONE]\n\n`, { status: 200 });
+    },
   } });
   const ask = (text, signal) => fetch(`http://127.0.0.1:${s.port}/api/chat`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ text }) }).then((r) => r.text());
   try {
@@ -137,9 +156,8 @@ test('the window uses the direct line first: steps reach it, Stop is remembered,
     assert.match(text, /event: step\ndata: {"text":"Searching the web: weather tashkent"}/);
     assert.match(text, /Sunny, sir\./);
     assert.match(text, /event: actions\ndata: {"items":\["Checked the weather"\]}/);
-    assert.doesNotMatch(text, /\[\[did/);
-    assert.match(asked[0][0], /^falcon-window-/);
-    assert.ok(!engineCalls.some((c) => c.startsWith('approvals pending')), 'no approval checking on the direct line');
+    assert.match(sent[0][0], /^falcon-window-/, 'sent to the engine\'s web address, where it counts as the owner\'s');
+    assert.equal(report, null, 'the watch ends with the request');
 
     const control = new AbortController();
     const going = ask('Do a long job', control.signal).catch(() => 'stopped');
@@ -147,11 +165,8 @@ test('the window uses the direct line first: steps reach it, Stop is remembered,
     control.abort();
     assert.equal(await going, 'stopped');
     await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(stopped, [sent[0][0]], 'Stop reaches the engine for this conversation');
     await ask('And now?');
-    assert.match(asked.at(-1)[1], /pressed Stop on your previous request/, 'he is told the last job was cancelled');
-
-    lineUp = false;
-    const fallback = await ask('Still there?');
-    assert.equal([...fallback.matchAll(/event: delta\ndata: (.*)\n/g)].map((m) => JSON.parse(m[1]).text).join(''), 'The old way, sir.');
+    assert.match(sent.at(-1)[1], /pressed Stop on your previous request/, 'he is told the last job was cancelled');
   } finally { await s.close(); }
 });

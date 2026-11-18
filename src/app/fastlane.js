@@ -24,7 +24,7 @@ const NOT_A_FILE_NAME = /\b(month|week|year|yesterday|today|tomorrow|about|who|w
 
 /** What the user wants, if it is one of the fast-lane requests; otherwise null. */
 export function matchFast(input) {
-  let t = String(input || '').toLowerCase().replace(/[“”"«»]/g, '').replace(/\s+/g, ' ').trim();
+  let t = String(input || '').toLowerCase().replace(/[“”"«»]/g, '').replace(/\s+/g, ' ').trim().replace(/[.!?…]+$/, '');
   t = t.replace(/^(?:hey |ok |okay )?(?:falcon|фалкон|фалькон)[,.! ]+/, '').replace(/[,.! ]+(?:falcon|фалкон|фалькон)$/, '');
   t = t.replace(/^(?:please |could you |can you |would you |now |and now |then |пожалуйста,? |а теперь |теперь )+/, '');
   t = t.replace(/[.!?…]+$/, '').replace(/,? (?:please|пожалуйста)$/, '').replace(/,? (?:sir|madam|boss|сэр)$/, '').trim();
@@ -54,6 +54,10 @@ export function matchFast(input) {
   if (/^(?:pause|pause (?:the |my )?(?:music|song|video)|stop (?:the |my )?music|play|resume|play (?:the |my )?music|resume (?:the |my )?music|пауза|поставь на паузу|останови музыку|продолжи|включи музыку)$/.test(t)) return { do: 'keys', keys: 'playpause', times: 1, say: 'playpause' };
   if (/^(?:next (?:song|track)|skip(?: this)?(?: song| track)?|следующ(?:ая|ую) песн[яю]|следующий трек)$/.test(t)) return { do: 'keys', keys: 'nexttrack', times: 1, say: 'next' };
   if (/^(?:previous (?:song|track)|last (?:song|track)|предыдущ(?:ая|ую) песн[яю]|предыдущий трек)$/.test(t)) return { do: 'keys', keys: 'prevtrack', times: 1, say: 'previous' };
+
+  // ---- A plain hello or thank-you: answered at once (the AI took 20 seconds over "Hi!") ----
+  if (/^(?:hi|hello|hey|hi there|hello there|hey there|greetings|привет|здравствуй|здравствуйте|добрый день|добрый вечер)$/.test(t)) return { do: 'hello' };
+  if (/^(?:thanks|thank you|thanks a lot|thank you very much|many thanks|cheers|спасибо|благодарю|спасибо большое)$/.test(t)) return { do: 'thanks' };
 
   // ---- The time and the date ----
   if (/^(?:what(?:'s| is) the time|what time is it|the time|time|который час|сколько (?:сейчас )?времени)$/.test(t)) return { do: 'time' };
@@ -98,14 +102,37 @@ const RU_ADDRESS = { sir: 'сэр', madam: 'мадам', boss: 'босс' };
  * with a plain reason), or null to hand the request to the AI instead.
  *   note: one line telling the AI later what was done here, so the conversation stays in one piece.
  */
-export async function fastLane(text, { packDir, callMe = 'sir', run = runScript, platform = process.platform, now = new Date() } = {}) {
+export async function fastLane(text, { packDir, callMe = 'sir', run = runScript, platform = process.platform, now = new Date(), memory = {}, open = () => {} } = {}) {
   if (platform !== 'win32') return null;
+  // A file he was just offered: a plain "yes" or "open it" opens it at once. Any other request drops the offer.
+  const offered = memory.offer;
+  memory.offer = null;
+  if (offered) {
+    const said = String(text || '').toLowerCase().replace(/[.!?…,]+/g, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/ (?:please|falcon|sir|madam|boss|пожалуйста|сэр)$/g, '');
+    if (/^(?:yes|yes please|yes open it|yep|yeah|sure|ok|okay|do|please do|go ahead|open|open it|open that|open the file|да|ага|давай|открой|открывай|открой его|да открой)$/.test(said)) {
+      const ruSaid = /[а-яё]/i.test(text);
+      const who = ruSaid ? (RU_ADDRESS[String(callMe).toLowerCase()] || callMe) : callMe;
+      const name = path.win32.basename(offered);
+      open(offered);
+      return { reply: ruSaid ? `«${name}» открыт, ${who}.` : `${name} is open, ${who}.`, actions: [ruSaid ? `Открыл «${name}»` : `Opened ${name}`],
+        note: `"${String(text).trim().slice(0, 60)}": opened the file ${offered} for him` };
+    }
+  }
   const want = matchFast(text);
   if (!want) return null;
   const ru = /[а-яё]/i.test(text);
   const you = ru ? (RU_ADDRESS[String(callMe).toLowerCase()] || callMe) : callMe;
   const skill = (...parts) => path.join(packDir, 'skills-windows', ...parts);
   const done = (reply, actions, note) => ({ reply, actions, note: `"${String(text).trim().slice(0, 120)}": ${note}` });
+
+  if (want.do === 'hello') {
+    const hour = now.getHours();
+    const part = ru ? (hour < 5 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер')
+      : (hour < 5 ? 'Good evening' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening');
+    return done(ru ? `${part}, ${you}. Чем могу помочь?` : `${part}, ${you}. What can I do for you?`, [], 'greeted him and asked what he needs');
+  }
+  if (want.do === 'thanks') return done(ru ? `Всегда к вашим услугам, ${you}.` : `My pleasure, ${you}.`, [], 'he thanked you; you acknowledged it');
 
   if (want.do === 'time' || want.do === 'date') {
     const locale = ru ? 'ru-RU' : 'en-GB';
@@ -178,16 +205,22 @@ export async function fastLane(text, { packDir, callMe = 'sir', run = runScript,
   if (want.do === 'find') {
     // A short wait only: when nothing turns up quickly, the slow folder-by-folder search is the AI's job.
     const r = await run(skill('files', 'find-files.ps1'), ['-Query', want.query], { timeoutMs: 4000 });
-    const files = r && r.ok && Array.isArray(r.files) ? r.files : [];
-    if (!files.length) return null; // nothing by that name: the AI can look further or ask
+    const all = r && r.ok && Array.isArray(r.files) ? r.files : [];
+    if (!all.length) return null; // nothing by that name: the AI can look further or ask
+    // Files Falcon made himself (his documents, dossiers, test files) are not what "my invoice" means:
+    // seen live, the spreadsheet he had just made from the invoice came first. Prefer the user's own.
+    const own = all.filter((f) => !/\\Falcon (?:Documents|Scout|Test)\\/i.test(String(f.path)));
+    const files = own.length ? own : all;
+    memory.offer = files[0].path;
     const name = path.win32.basename(files[0].path);
     const folder = path.win32.basename(path.win32.dirname(files[0].path));
     const more = files.length - 1;
     const reply = ru
       ? `Нашёл «${name}» в папке «${folder}», ${you}.${more ? ` Есть ещё ${more} с похожим названием.` : ''} Открыть?`
       : `I found ${name} in ${folder}, ${you}.${more ? ` There ${more === 1 ? 'is 1 more' : `are ${more} more`} with a similar name.` : ''} Shall I open it?`;
-    return done(reply, [ru ? `Нашёл «${name}»` : `Found ${name}`],
-      `found these files, newest first: ${files.slice(0, 5).map((f) => f.path).join(' ; ')}. I offered to open the first one; if he says yes, open it`);
+    return { ...done(reply, [ru ? `Нашёл «${name}»` : `Found ${name}`],
+      `found these files, newest first: ${files.slice(0, 5).map((f) => f.path).join(' ; ')}. I offered to open the first one; if he says yes, open it`),
+    file: files[0].path };
   }
   return null;
 }
