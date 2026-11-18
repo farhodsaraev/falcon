@@ -59,6 +59,12 @@ export function matchFast(input) {
   if (/^(?:hi|hello|hey|hi there|hello there|hey there|greetings|привет|здравствуй|здравствуйте|добрый день|добрый вечер)$/.test(t)) return { do: 'hello' };
   if (/^(?:thanks|thank you|thanks a lot|thank you very much|many thanks|cheers|спасибо|благодарю|спасибо большое)$/.test(t)) return { do: 'thanks' };
 
+  // ---- The desktop picture ----
+  if (/^(?:change|switch|replace|update|set) (?:my |the )?(?:desktop |pc |computer )?(?:wallpaper|background|background image|background picture|desktop image|desktop picture|desktop background)(?: (?:to|for|with) (?:something else|sth else|another one|a new one|something new|a different one|anything))?$/.test(t)
+    || /^(?:new|another|next|different) (?:wallpaper|background|desktop picture|desktop image)$/.test(t)
+    || /^(?:смени|поменяй|измени|поставь друг(?:ие|ую)) (?:мои |мой |мою )?(?:обои|фон|фон рабочего стола|картинку на рабочем столе|заставку)(?: на (?:что-нибудь другое|другие|другую|другой))?$/.test(t)
+    || /^(?:другие|новые|следующие) обои$/.test(t)) return { do: 'wallpaper' };
+
   // ---- The time and the date ----
   if (/^(?:what(?:'s| is) the time|what time is it|the time|time|который час|сколько (?:сейчас )?времени)$/.test(t)) return { do: 'time' };
   if (/^(?:what(?:'s| is) the date(?: today)?|what(?:'s| is) today'?s date|what day is it(?: today)?|what(?:'s| is) the day today|какое сегодня число|какой сегодня день)$/.test(t)) return { do: 'date' };
@@ -119,7 +125,11 @@ export async function fastLane(text, { packDir, callMe = 'sir', run = runScript,
         note: `"${String(text).trim().slice(0, 60)}": opened the file ${offered} for him` };
     }
   }
-  const want = matchFast(text);
+  // Right after a new desktop picture, "another" or "next" brings the next one.
+  const again = memory.wallpaper;
+  memory.wallpaper = false;
+  const want = again && /^(?:another|another one|next|next one|one more|again|different|a different one|try another|not this one|ещё|еще|другую|другой|следующую|следующий|ещё одну)[.!]?$/i.test(String(text || '').trim().replace(/,? (?:please|falcon|пожалуйста)[.!]?$/i, ''))
+    ? { do: 'wallpaper' } : matchFast(text);
   if (!want) return null;
   const ru = /[а-яё]/i.test(text);
   const you = ru ? (RU_ADDRESS[String(callMe).toLowerCase()] || callMe) : callMe;
@@ -170,6 +180,14 @@ export async function fastLane(text, { packDir, callMe = 'sir', run = runScript,
     const actions = want.do === 'deck' ? [ru ? `Открыл «${name}»` : `Opened ${name}`, ru ? `Перешёл на слайд ${r.slide}` : `Went to slide ${r.slide}`]
       : [ru ? `Перешёл на слайд ${r.slide}` : `Went to slide ${r.slide}`];
     return done(ru ? `Слайд ${r.slide} из ${r.total} на экране, ${you}.` : `Slide ${r.slide} of ${r.total} is up, ${you}.`, actions, `now showing slide ${r.slide} of ${where}`);
+  }
+
+  if (want.do === 'wallpaper') {
+    const r = await run(skill('apps', 'apps.ps1'), ['-Do', 'wallpaper']);
+    if (!r || !r.ok) return null;
+    memory.wallpaper = true;
+    return done(ru ? `На рабочем столе новая картинка, ${you}. Скажите «другую», если хотите ещё.` : `Your desktop has a new picture, ${you}. Say "another" if you would like a different one.`,
+      [ru ? 'Сменил обои' : 'Changed the desktop picture'], `changed the desktop picture to ${r.picture} (before: ${r.previous || 'unknown'}); ${r.choices} built-in pictures to choose from`);
   }
 
   if (want.do === 'keys') {

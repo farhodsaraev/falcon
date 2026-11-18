@@ -4,9 +4,19 @@ param(
   [string]$Query = "",
   [string]$Ext = "",
   [string]$Folders = "",       # semicolon-separated; default: Desktop, Documents, Downloads
+  [string]$Known = "",         # instead of -Folders: pictures, desktop, documents, downloads, music or videos,
+                               # wherever Windows really keeps them (often inside OneDrive). Leave -Query empty to list the folder.
   [int]$Max = 8
 )
 $ErrorActionPreference = "Stop"
+if ($Known) {
+  $special = @{ pictures = "MyPictures"; desktop = "Desktop"; documents = "MyDocuments"; music = "MyMusic"; videos = "MyVideos" }
+  $Folders = (@($Known -split '[,; ]+' | Where-Object { $_ } | ForEach-Object {
+    $k = $_.ToLower()
+    if ($k -eq "downloads") { Join-Path $env:USERPROFILE "Downloads" } elseif ($special.ContainsKey($k)) { [Environment]::GetFolderPath($special[$k]) }
+  }) | Where-Object { $_ }) -join ';'
+  if (-not $Query -and $Max -eq 8) { $Max = 40 }
+}
 function Esc([string]$s) { $s.Replace("'", "''").Replace("%", "").Replace("[", "").Replace("]", "") }
 try {
   if (-not $Folders) {

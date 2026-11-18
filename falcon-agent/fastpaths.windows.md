@@ -6,6 +6,10 @@ Speed matters more than commentary. For these requests issue exactly one command
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\presentations\slides.ps1" -Find "words from the name" -Slide 5`
 - Find a file by name (add `-Ext "pdf"` or `"docx,doc"` when the type is known):
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\find-files.ps1" -Query "words from the name"`
+- See what is in his Pictures, Desktop, Documents, Downloads, Music or Videos folder (wherever Windows really keeps it; never guess that path yourself), newest first; add `-Ext "jpg,png"` or a `-Query` to narrow it:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\find-files.ps1" -Known pictures`
+- Change the desktop picture (wallpaper). With no `-Path` it moves to the next of the pictures that come with Windows, so repeat it for "another one"; with `-Path "<full path>"` it uses that picture. He asked for it, so it needs no extra question, and it is the only right way: do not use the screen, the mouse or Settings for this.
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\apps\apps.ps1" -Do wallpaper`
 - Read what is inside a file, to answer questions about its contents (PDF, Word .docx, text; read-only):
   `powershell -NoProfile -ExecutionPolicy Bypass -File "{{SKILLS}}\files\read-file.ps1" -Path "<full path>"`
 - Get a file ready to send on Telegram or another chat (prints the `sendPath` to send; dossiers and new documents already come with one):

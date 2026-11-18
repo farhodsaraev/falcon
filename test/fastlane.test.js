@@ -115,6 +115,24 @@ test('fast lane in the window: answered at once without the AI, and the AI is to
   } finally { await s.close(); }
 });
 
+test('fast lane: the desktop picture changes at once, and "another" brings the next one', async () => {
+  for (const said of ['Can you change my desktop image to sth else?', 'Change my wallpaper', 'change the desktop background to something else', 'new wallpaper', 'Смени обои']) {
+    assert.deepEqual(matchFast(said.replace(/^Can you /, '')), { do: 'wallpaper' }, said);
+  }
+  assert.equal(matchFast('change my wallpaper to the photo of my daughter'), null, 'a particular picture is for the AI');
+  const memory = {};
+  const ran = [];
+  const go = (text) => fastLane(text, { packDir: 'C:\\pack', platform: 'win32', memory,
+    run: async (file, args) => { ran.push(args.join(' ')); return { ok: true, picture: 'C:\\WINDOWS\\Web\\Wallpaper\\ThemeA\\img21.jpg', previous: 'C:\\old.jpg', choices: 22 }; } });
+  const first = await go('Can you change my desktop image to sth else?');
+  assert.equal(first.reply, 'Your desktop has a new picture, sir. Say "another" if you would like a different one.');
+  assert.match(first.note, /img21\.jpg \(before: C:\\old\.jpg\)/);
+  assert.equal((await go('Another one, please.')).actions[0], 'Changed the desktop picture');
+  assert.deepEqual(ran, ['-Do wallpaper', '-Do wallpaper']);
+  await go('what time is it');
+  assert.equal(await go('another'), null, 'after something else, "another" means nothing in particular');
+});
+
 test('fast lane: a plain hello or thank-you is answered at once, by the time of day', async () => {
   const go = (text, hour) => fastLane(text, { packDir: 'C:\\pack', callMe: 'Farhod', platform: 'win32', now: new Date(2026, 10, 18, hour, 0), run: async () => { throw new Error('nothing should run'); } });
   assert.equal((await go('Hi!', 22)).reply, 'Good evening, Farhod. What can I do for you?');

@@ -8,7 +8,8 @@
 # Apps are found the way the Start menu lists them, so desktop and Store apps both work. Uninstallers,
 # setup and repair entries are never started.
 param(
-  [ValidateSet("open", "focus", "running", "installed", "close", "type", "click", "keys", "scroll")][string]$Do = "open",
+  [ValidateSet("open", "focus", "running", "installed", "close", "type", "click", "keys", "scroll", "wallpaper")][string]$Do = "open",
+  [string]$Path = "",            # for -Do wallpaper: a picture file to use; without it, the next built-in picture
   [string]$Name = "",
   [string]$Text = "",
   [int]$X = -1,
@@ -100,6 +101,33 @@ $named = @{ enter = 0x0D; return = 0x0D; esc = 0x1B; escape = 0x1B; tab = 0x09; 
 $mods = @{ ctrl = 0x11; control = 0x11; shift = 0x10; alt = 0x12; win = 0x5B; windows = 0x5B }
 
 switch ($Do) {
+  "wallpaper" {
+    # Changes the desktop picture. With -Path, to that picture; without, to the next of the pictures that
+    # come with Windows (or, with -Name, the next whose folder or file name contains those words).
+    Add-Type -Namespace FalconDesk -Name Wall -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool SystemParametersInfo(uint action, uint param, string value, uint flags);'
+    $current = ""
+    try { $current = [string](Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name WallPaper -ErrorAction Stop).WallPaper } catch { }
+    if ($Path) {
+      if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { Fail "There is no picture at $Path." }
+      if ([IO.Path]::GetExtension($Path) -notmatch '^\.(jpe?g|png|bmp)$') { Fail "That file is not a picture Windows can use as a desktop background (jpg, png or bmp)." }
+      $pick = (Resolve-Path -LiteralPath $Path).Path
+      $count = 1
+    } else {
+      $roots = @((Join-Path $env:SystemRoot "Web\Wallpaper"), (Join-Path $env:SystemRoot "Web\4K\Wallpaper")) | Where-Object { Test-Path $_ }
+      $all = @($roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Include *.jpg, *.jpeg, *.png -ErrorAction SilentlyContinue } |
+        Where-Object { $_.Length -gt 100kb } | Sort-Object FullName)
+      if ($Name) { $words = @($Name -split '\s+' | Where-Object { $_ }); $all = @($all | Where-Object { $f = $_.FullName; -not ($words | Where-Object { $f -notlike "*$_*" }) }) }
+      if ($all.Count -eq 0) { Fail "I found no built-in desktop pictures on this computer." }
+      $count = $all.Count
+      $at = -1
+      for ($i = 0; $i -lt $all.Count; $i++) { if ($all[$i].FullName -ieq $current) { $at = $i } }
+      # From a picture of his own, start somewhere new each time rather than always at the first.
+      if ($at -lt 0) { $at = (Get-Random -Minimum 0 -Maximum $all.Count) - 1 }
+      $pick = $all[($at + 1) % $all.Count].FullName
+    }
+    if (-not [FalconDesk.Wall]::SystemParametersInfo(20, 0, $pick, 3)) { Fail "Windows did not accept that picture." }
+    Say @{ ok = $true; picture = $pick; name = [IO.Path]::GetFileNameWithoutExtension($pick); set = (Split-Path (Split-Path $pick -Parent) -Leaf); previous = $current; choices = $count }
+  }
   "click" {
     if ($X -lt 0 -or $Y -lt 0) { Fail "Give the point to click as -X and -Y from the screen picture." }
     $p = To-Screen $X $Y
