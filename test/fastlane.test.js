@@ -91,6 +91,7 @@ test('fast lane in the window: answered at once without the AI, and the AI is to
   const sent = [];
   const s = await startServer({ engine: {
     readGateway: () => ({ port: 1, token: 'gw' }),
+    directLine: null,
     profileFile: () => 'Z:\\none\\profile.json',
     runEngine: async () => ({ code: 0, out: '{"approvals":[]}' }),
     fastLane: async (text) => (/slide/.test(text) ? { reply: 'Slide 6 of 8 is up, sir.', actions: ['Went to slide 6'], note: '"next slide": now showing slide 6 of Q.pptx' } : null),

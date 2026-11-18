@@ -16,6 +16,7 @@ let telegramNeedsRestart = false;
 const engine = {
   findEngine: () => ({ command: 'node', prefix: [] }),
   fastLane: async () => null,     // these checks never drive real apps; the fast lane has its own checks
+  directLine: null,               // and never open a real line to an engine; the direct line has its own checks
   workspaceDir: () => tmp,
   voiceKey: { get: async () => null, set: async () => {} },
   profileFile: () => path.join(tmp, 'profile.json'),

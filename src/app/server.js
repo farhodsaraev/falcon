@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
+import { createDirectLine, stepText } from './directline.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -213,6 +214,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   };
   const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
   const api = { fastLane, packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  // His direct line to the engine (see directline.js). A stand-in engine may pass its own, or null for none.
+  if (!('directLine' in engine)) api.directLine = createDirectLine({ readGateway: () => api.readGateway() });
   // The engine's first Telegram reply to a new user bypasses Falcon's add-on, so Falcon puts his own words
   // into it in the engine's files: at every start (engine updates bring the old text back) and after setup.
   const ownPairingText = async () => {
@@ -441,7 +444,6 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       : '';
     fastNotes.length = 0;
     chatsInFlight++;
-    pollApprovals();
     // While Falcon scouts, pass the scan's progress on to the window, and the finished dossier.
     const chatStarted = Date.now();
     let lastProgress = '';
@@ -461,21 +463,14 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     const control = new AbortController();
     let tooLong = false;
     const limit = setTimeout(() => { tooLong = true; control.abort(); }, CHAT_LIMIT_MS);
-    res.on('close', () => { if (!res.writableEnded) control.abort(); });
+    res.on('close', () => {
+      if (res.writableEnded) return;
+      control.abort();
+      // Seen on the real engine: asked anything afterwards, he quietly picked the stopped job up again.
+      if (!tooLong) fastNotes.push('the user pressed Stop on your previous request while you were working on it; it is cancelled, so do not continue or restart it unless he asks you to');
+    });
     try {
-      const upstream = await api.fetch(`http://127.0.0.1:${gateway.port}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${gateway.token}`,
-          'x-openclaw-session-key': windowSession(),
-        },
-        body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content: `${meanwhile}${text}\n\n${ACTIONS_NOTE}` }] }),
-        signal: control.signal,
-      });
-      if (!upstream.ok) throw new Error(`engine answered ${upstream.status}`);
-      const decoder = new TextDecoder();
-      let buffer = '';
+      const content = `${meanwhile}${text}\n\n${ACTIONS_NOTE}`;
       let full = '';        // everything Falcon has written so far
       let passed = 0;       // how much of it has been sent on to the window
       // Pass the answer on as it arrives, but hold back the trailing "what I did" line and anything
@@ -493,17 +488,49 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         if (!final) safe -= /\S*$/.exec(full.slice(0, safe))[0].length;
         if (safe > passed) { send('delta', { text: ownWords(full.slice(passed, safe)) }); passed = safe; }
       };
-      for await (const chunk of upstream.body) {
-        buffer += decoder.decode(chunk, { stream: true });
-        let newline;
-        while ((newline = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-          try {
-            const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content;
-            if (delta) { full += delta; flush(false); }
-          } catch { /* keep-alive or partial line */ }
+      // First choice: his direct line. The answer arrives as it is written, each step is announced as it
+      // starts, and Stop reaches the engine itself. Only a request that never got through goes the old way.
+      let direct = false;
+      if (api.directLine) {
+        const russian = /[а-яё]/i.test(text);
+        try {
+          await api.directLine.chat({
+            sessionKey: windowSession(), message: content, signal: control.signal,
+            onDelta: (piece) => { full += piece; flush(false); },
+            onStep: (step) => send('step', { text: stepText(step, russian) }),
+          });
+          direct = true;
+        } catch (err) {
+          if (err.started !== false || control.signal.aborted) throw err;
+        }
+      }
+      if (!direct) {
+        pollApprovals();
+        const upstream = await api.fetch(`http://127.0.0.1:${gateway.port}/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${gateway.token}`,
+            'x-openclaw-session-key': windowSession(),
+          },
+          body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content }] }),
+          signal: control.signal,
+        });
+        if (!upstream.ok) throw new Error(`engine answered ${upstream.status}`);
+        const decoder = new TextDecoder();
+        let buffer = '';
+        for await (const chunk of upstream.body) {
+          buffer += decoder.decode(chunk, { stream: true });
+          let newline;
+          while ((newline = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+            try {
+              const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content;
+              if (delta) { full += delta; flush(false); }
+            } catch { /* keep-alive or partial line */ }
+          }
         }
       }
       flush(true);
@@ -989,6 +1016,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     port: server.address().port,
     token,
     close: () => new Promise((resolve) => {
+      try { api.directLine?.close(); } catch { /* already closed */ }
       clearTimeout(idleTimer);
       for (const res of clients) res.end();
       server.close(resolve);

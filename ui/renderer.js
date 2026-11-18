@@ -479,13 +479,17 @@ async function sendToFalcon(text, shown = text) {
   const russian = /[а-яё]/i.test(text);
   // After a while, also say how long it has been, so a long job never looks frozen.
   const asked = Date.now();
+  let step = '';
   const patience = setInterval(() => {
     const seconds = Math.round((Date.now() - asked) / 1000);
     if (answer || seconds < 2 || !$('scout').hidden) return;
     if ($('reply').textContent && !$('reply').classList.contains('waiting')) return;
-    $('reply').textContent = seconds < 10
-      ? (russian ? `Одну минуту, ${addressRu()}.` : `One moment, ${address()}.`)
-      : (russian ? `Работаю над этим, ${addressRu()}. Прошло ${seconds} с.` : `Still working on it, ${address()}. ${seconds} seconds so far.`);
+    // What he is doing right now, when the engine says so; otherwise a holding phrase and the time.
+    $('reply').textContent = step
+      ? `${step}… ${seconds >= 10 ? (russian ? `${seconds} с` : `${seconds} s`) : ''}`.trim()
+      : seconds < 10
+        ? (russian ? `Одну минуту, ${addressRu()}.` : `One moment, ${address()}.`)
+        : (russian ? `Работаю над этим, ${addressRu()}. Прошло ${seconds} с.` : `Still working on it, ${address()}. ${seconds} seconds so far.`);
     $('reply').classList.add('waiting');
   }, 1000);
   const clearWaiting = () => {
@@ -497,6 +501,7 @@ async function sendToFalcon(text, shown = text) {
     await window.falcon.chat(text, {
       onDelta: (piece) => { clearWaiting(); answer += piece; reveal.set(plainSpeech(answer)); setOrb('speaking'); },
       onActions: (items) => { cards = items; },
+      onStep: (line) => { step = line; if (!answer) setOrb('thinking'); },
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
       onError: fail,
