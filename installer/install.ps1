@@ -39,7 +39,7 @@ function Copy-Falcon([string]$from) {
     $source = Join-Path $from "installer\$file"
     if (Test-Path $source) { Copy-Item $source (Join-Path $app "installer\$file") -Force }
   }
-  '{ "name": "falcon", "version": "0.1.0", "private": true, "type": "module" }' | Set-Content (Join-Path $app "package.json") -Encoding ascii
+  '{ "name": "falcon", "version": "0.2.0", "private": true, "type": "module" }' | Set-Content (Join-Path $app "package.json") -Encoding ascii
   # Sample files so the "things to try" work on a fresh PC
   $samples = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Falcon Samples"
   if ((Test-Path (Join-Path $from "demo")) -and -not (Test-Path $samples) -and -not $NoShortcuts) {
@@ -139,7 +139,7 @@ if (-not $NoShortcuts) {
 }
 
 # ---- 4. Falcon in Settings > Apps, and his icon among the hidden icons ----
-$version = "0.1.0"
+$version = "0.2.0"
 try { $version = (Get-Content (Join-Path $app "package.json") -Raw | ConvertFrom-Json).version } catch { }
 $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $uninstaller = Join-Path $app "installer\uninstall.ps1"

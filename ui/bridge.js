@@ -1,7 +1,11 @@
 // Connects the window to Falcon's local server on this PC.
 (() => {
   const params = new URLSearchParams(location.hash.slice(1));
-  const token = params.get('token') || '';
+  // The token arrives in the address once; keep it for this window so a refresh does not lose it.
+  let token = params.get('token') || '';
+  try {
+    if (token) sessionStorage.setItem('falcon-token', token); else token = sessionStorage.getItem('falcon-token') || '';
+  } catch { /* storage unavailable */ }
   history.replaceState(null, '', location.pathname + location.search);
   const headers = { 'Content-Type': 'application/json', 'X-Falcon-Token': token };
 
@@ -26,6 +30,7 @@
       return { ok: false, error };
     },
     currentModel: () => call('GET', '/api/model'),
+    about: () => call('GET', '/api/about'),
     answerApproval: (id, decision) => call('POST', '/api/approval', { id, decision }),
     profile: () => call('GET', '/api/profile'),
     saveProfile: (profile) => call('POST', '/api/profile', profile),
@@ -51,9 +56,10 @@
       }
     },
     // Sends a message and calls onDelta for each piece of the answer as it arrives.
-    async chat(text, { onDelta, onError, onActions, onScout, onDossier }) {
-      const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text }) });
-      if (!response.ok || !response.body) return onError('I have lost my connection, sir.');
+    // `signal` lets the caller stop the request (the Stop button).
+    async chat(text, { onDelta, onError, onActions, onScout, onDossier }, signal) {
+      const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text }), signal });
+      if (!response.ok || !response.body) return onError(`I have lost my connection, ${window.falconAddress ? window.falconAddress() : 'sir'}.`);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';

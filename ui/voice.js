@@ -298,7 +298,9 @@
       if (on) return;
       if (!this.supported()) return listeners.error('This browser has no built-in speech. Open Falcon in Chrome or Edge, or add an OpenAI key for the live voice.');
       on = true;
-      synth.getVoices();                  // ask early; some browsers load the list lazily
+      // Listen in Russian when the user last wrote in Russian; otherwise he could never start in it.
+      lang = window.falconLastRussian ? 'ru-RU' : 'en-GB';
+      synth.getVoices();                 // ask early; some browsers load the list lazily
       listen();
     },
     stop() {

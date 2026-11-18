@@ -31,13 +31,15 @@ function findAppBrowser() {
 
 let window = null;
 // Falcon stops when his window has been closed for a while, or when the user presses Quit in Settings.
-const server = await startServer({
-  onIdle: async () => {
-    try { window?.kill(); } catch { /* already gone */ }
-    await server.close();
-    process.exit(0);
-  },
-});
+const onIdle = async () => {
+  try { window?.kill(); } catch { /* already gone */ }
+  await server.close();
+  process.exit(0);
+};
+// The same local address every time, so the window keeps what the browser remembers for it between
+// starts (the microphone permission, small choices). If that address is taken, any free one will do.
+let server;
+try { server = await startServer({ port: 47615, onIdle }); } catch { server = await startServer({ onIdle }); }
 const url = `http://127.0.0.1:${server.port}/#token=${server.token}`;
 
 // Windows: Falcon's icon among the hidden icons, by the clock. It stays when the window is closed, so he

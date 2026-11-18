@@ -312,3 +312,72 @@ test('Falcon stops by himself once his window is gone, and when Quit is pressed'
     assert.ok(stops.includes('quit'));
   } finally { await s.close(); }
 });
+
+test('an update re-teaches Falcon once: an older install gets the new rules and skills, an up-to-date one is left alone', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-update-'));
+  const taught = [];
+  const s = (stamp) => startServer({ engine: {
+    ...engine,
+    profileFile: () => path.join(dir, 'profile.json'),
+    readGateway: () => ({ port: 1, token: 'gw' }),
+    engineReady: async () => true,
+    packStamp: () => stamp,
+    installFalcon: async (options) => { taught.push(typeof options.runEngine); return { ok: true }; },
+  } });
+  const state = (srv) => fetch(`http://127.0.0.1:${srv.port}/api/state`, { headers: { 'X-Falcon-Token': srv.token } }).then((r) => r.json());
+  const settle = () => new Promise((r) => setTimeout(r, 100));
+
+  let srv = await s('aaaa');                 // installed before stamps existed
+  try { await state(srv); await state(srv); await settle(); } finally { await srv.close(); }
+  assert.deepEqual(taught, ['function'], 'taught once, with the settings step');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'pack.json'), 'utf8')).stamp, 'aaaa');
+
+  srv = await s('aaaa');                     // same version started again
+  try { await state(srv); await settle(); } finally { await srv.close(); }
+  assert.equal(taught.length, 1, 'nothing to do');
+
+  srv = await s('bbbb');                     // a newer copy installed over it
+  try { await state(srv); await settle(); } finally { await srv.close(); }
+  assert.equal(taught.length, 2);
+});
+
+test('web search is reported as on when it works without an extra key', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-search-'));
+  const s = await startServer({ engine: { ...engine, envFile: () => path.join(dir, '.env') } });
+  const via = async () => (await fetch(`http://127.0.0.1:${s.port}/api/search`, { headers: { 'X-Falcon-Token': s.token } }).then((r) => r.json())).via;
+  try {
+    assert.equal(await via(), null);
+    fs.writeFileSync(path.join(dir, 'openclaw.json'), JSON.stringify({ agents: { defaults: { model: { primary: 'openai/gpt-6.1-terra' } } } }));
+    assert.equal(await via(), 'builtin');
+    fs.writeFileSync(path.join(dir, 'openclaw.json'), JSON.stringify({ agents: { defaults: { model: 'anthropic/claude-haiku-5-5' } }, tools: { web: { search: { provider: 'parallel-free' } } } }));
+    assert.equal(await via(), 'free');
+  } finally { await s.close(); }
+});
+
+test('Stop lets go of the engine, and a request that runs far too long is ended with a plain reason', async () => {
+  let aborted = 0;
+  const hanging = (url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => { aborted++; reject(new Error('aborted')); });
+  });
+  const s = await startServer({ engine: { ...engine, readGateway: () => ({ port: 1, token: 'gw' }), fetch: hanging, chatLimitMs: 300 } });
+  const ask = (signal) => fetch(`http://127.0.0.1:${s.port}/api/chat`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ text: 'hi' }) });
+  try {
+    const stop = new AbortController();
+    const going = ask(stop.signal).then((r) => r.text()).catch(() => 'stopped');
+    await new Promise((r) => setTimeout(r, 100));
+    stop.abort();
+    assert.equal(await going, 'stopped');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(aborted, 1, 'the engine request was dropped when the window stopped');
+
+    const text = await (await ask()).text();
+    assert.match(text, /event: error/);
+    assert.match(text, /took too long/);
+  } finally { await s.close(); }
+});
+
+test('the window can say which version and build it is', async () => {
+  const about = await (await call('GET', '/api/about')).json();
+  assert.match(about.version, /^\d+\.\d+\.\d+$/);
+  assert.match(about.build, /^[0-9a-f]{7}$/);
+});

@@ -82,7 +82,7 @@ const PROVIDERS = {
     models: [
       { id: 'gpt-6.1-terra', model: 'openai/gpt-6.1-terra', label: 'GPT-6.1 Terra', note: 'Recommended. Passed every safety and quality check.', tested: true },
       { id: 'gpt-6.1-sol', model: 'openai/gpt-6.1-sol', label: 'GPT-6.1 Sol', note: 'More capable, about twice the price. Not yet put through the checks.' },
-      { id: 'gpt-6-luna', model: 'openai/gpt-6-luna', label: 'GPT-6 Luna', note: 'Cheapest. Less careful: in testing it typed a password it was told not to.' },
+      { id: 'gpt-6-luna', model: 'openai/gpt-6-luna', label: 'GPT-6 Luna', note: 'Cheapest. Less careful with the safety rules. Not recommended.' },
     ],
   },
   anthropic: {
@@ -162,9 +162,33 @@ export function progressLine(line) {
  * @param {Function} [options.onIdle]  called when Falcon's window has been gone for `idleMs`, or the user
  *                                     pressed Quit; the launcher stops Falcon then
  */
+/** A fingerprint of Falcon's rules and skills as shipped with this copy of the app. */
+export function packStamp(dir = PACK_DIR) {
+  const hash = crypto.createHash('sha256');
+  const walk = (folder, rel) => {
+    let entries = [];
+    try { entries = fs.readdirSync(folder, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const full = path.join(folder, entry.name);
+      if (entry.isDirectory()) walk(full, `${rel}${entry.name}/`);
+      // Line endings differ between a download and a copy of the project; the fingerprint must not.
+      else { hash.update(`${rel}${entry.name}\n`); hash.update(fs.readFileSync(full, 'utf8').replace(/\r\n/g, '\n')); }
+    }
+  };
+  walk(dir, '');
+  return hash.digest('hex').slice(0, 16);
+}
+
+/** The last few lines of an installer's output, fit to show the user when a step failed. */
+export function failureLines(out) {
+  return String(out ?? '').split(/\r?\n/).map(progressLine).filter(Boolean).slice(-4).join('\n');
+}
+
 const uninstallerPath = () => path.join(root, 'installer', process.platform === 'win32' ? 'uninstall.ps1' : 'uninstall.sh');
 
 export async function startServer({ port = 0, engine = {}, onIdle = () => {}, idleMs = 30000 } = {}) {
+  // How long one request may take before the window gives up on it.
+  const CHAT_LIMIT_MS = engine.chatLimitMs ?? 10 * 60000;
   // `engine` lets tests replace the real engine with stand-ins.
   const installFalcon = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
@@ -187,7 +211,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     child.unref();
   };
   const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
-  const api = { engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  const api = { packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   // The engine's first Telegram reply to a new user bypasses Falcon's add-on, so Falcon puts his own words
   // into it in the engine's files: at every start (engine updates bring the old text back) and after setup.
   const ownPairingText = async () => {
@@ -209,7 +233,35 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // `idleMs` (a reload reconnects in a moment) and nothing is running, he stops by himself.
   let windowSeen = false;
   let idleTimer = null;
-  const busy = () => setupRunning || chatsInFlight > 0;
+  let refreshing = false;
+  let refreshChecked = false;
+  const busy = () => setupRunning || refreshing || chatsInFlight > 0;
+  const callMeNow = () => { try { return JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { return 'sir'; } };
+
+  // ---- Updates: Falcon's rules and skills live in the engine's workspace, written at first setup.
+  // When a newer copy of the app is installed over an existing one, write them again (and pre-approve
+  // any new skills), once, quietly, the first time the engine is seen running. Without this an update
+  // changed the window but never Falcon's behaviour.
+  const stampFile = () => path.join(path.dirname(api.profileFile()), 'pack.json');
+  const writeStamp = (stamp) => {
+    try {
+      fs.mkdirSync(path.dirname(stampFile()), { recursive: true });
+      fs.writeFileSync(stampFile(), JSON.stringify({ stamp, at: new Date().toISOString() }));
+    } catch { /* tried again at the next start */ }
+  };
+  async function refreshPack() {
+    if (refreshChecked || refreshing || setupRunning) return;
+    refreshChecked = true;
+    const now = api.packStamp();
+    let had = '';
+    try { had = JSON.parse(fs.readFileSync(stampFile(), 'utf8')).stamp; } catch { /* installed before stamps existed */ }
+    if (had === now) return;
+    refreshing = true;
+    try {
+      const result = await api.installFalcon({ runEngine: api.runEngine, log: () => {} });
+      if (result?.ok !== false) writeStamp(now);   // otherwise: try again at the next start
+    } catch { /* try again at the next start */ } finally { refreshing = false; }
+  }
   function watchForGoodbye() {
     clearTimeout(idleTimer);
     if (!windowSeen || clients.size > 0) return;
@@ -305,7 +357,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     if (!api.findEngine()) {
       step('Installing the engine. This takes a few minutes…', 'engine');
       const install = await api.installEngine({ onLine: detail });
-      if (!api.findEngine()) return { ok: false, error: 'The engine could not be installed.', detail: install.out.slice(-600) };
+      if (!api.findEngine()) return { ok: false, error: 'The engine could not be installed.', detail: failureLines(install.out) };
     }
 
     if (!api.readGateway()) {
@@ -321,7 +373,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         '--auth-choice', provider.authChoice, provider.keyFlag, key, '--gateway-bind', 'loopback', '--gateway-auth', 'token',
         '--install-daemon', '--agent-name', 'Falcon'], { timeoutMs: 600000, onLine: detail });
       if (onboard.code !== 0 || !api.readGateway()) {
-        return { ok: false, error: 'The key could not be connected.', detail: onboard.out.slice(-600) };
+        return { ok: false, error: 'The key could not be connected.', detail: failureLines(onboard.out) };
       }
       {
         // Keep whatever the engine picked as the fallback, so Falcon still answers if our choice is refused.
@@ -342,12 +394,12 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     try {
       await api.installFalcon({ runEngine: api.runEngine, log: (line) => { notes.push(line); detail(line); } });
     } catch (err) {
-      return { ok: false, error: 'Falcon could not be installed.', detail: `${err.message}\n${notes.join('\n')}`.slice(-600) };
+      return { ok: false, error: 'Falcon could not be installed.', detail: failureLines(`${err.message}\n${notes.join('\n')}`) };
     }
 
     step('Waking Falcon…', 'wake');
     for (let i = 0; i < 30; i++) {
-      if (await api.engineReady()) return { ok: true };
+      if (await api.engineReady()) { writeStamp(api.packStamp()); return { ok: true }; }
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     return { ok: false, error: 'Falcon did not wake up. Please restart the computer and try again.' };
@@ -365,7 +417,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
 
   async function chat(text, res) {
     const gateway = api.readGateway();
-    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const send = (event, data) => { if (!res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
     chatsInFlight++;
     pollApprovals();
@@ -384,6 +436,11 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       } catch { /* no scout running */ }
     };
     const scoutTimer = setInterval(watchScout, 800);
+    // The user pressed Stop (the window dropped the request), or it ran far too long: let go of the engine.
+    const control = new AbortController();
+    let tooLong = false;
+    const limit = setTimeout(() => { tooLong = true; control.abort(); }, CHAT_LIMIT_MS);
+    res.on('close', () => { if (!res.writableEnded) control.abort(); });
     try {
       const upstream = await api.fetch(`http://127.0.0.1:${gateway.port}/v1/chat/completions`, {
         method: 'POST',
@@ -393,6 +450,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           'x-openclaw-session-key': windowSession(),
         },
         body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content: `${text}\n\n${ACTIONS_NOTE}` }] }),
+        signal: control.signal,
       });
       if (!upstream.ok) throw new Error(`engine answered ${upstream.status}`);
       const decoder = new TextDecoder();
@@ -438,8 +496,10 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       }
       send('done', {});
     } catch {
-      send('error', { text: 'I have lost my connection, sir. Please try again in a moment.' });
+      send('error', { text: tooLong ? `That took too long, ${callMeNow()}, so I stopped. Please ask again, perhaps in smaller steps.`
+        : `I have lost my connection, ${callMeNow()}. Please try again in a moment.` });
     } finally {
+      clearTimeout(limit);
       clearInterval(scoutTimer);
       chatsInFlight--;
       res.end();
@@ -464,7 +524,13 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           waking = false;
         }
       }
+      if (ready) refreshPack().catch(() => {});
       return { configured, ready };
+    },
+    'GET /api/about': async () => {
+      let version = '0.1.0';
+      try { version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version || version; } catch { /* default */ }
+      return { version, build: api.packStamp().slice(0, 7) };
     },
     'POST /api/setup': async (body) => {
       if (setupRunning) return { ok: false, error: 'Setup is already running.' };
@@ -586,7 +652,17 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     'GET /api/search': async () => {
       const google = Boolean(readEnvKey(api.envFile(), 'GEMINI_API_KEY'));
       const openrouter = Boolean(readEnvKey(api.envFile(), 'OPENROUTER_API_KEY'));
-      return { google, via: google ? 'google' : openrouter ? 'openrouter' : null };
+      // With neither key, search still works: through the free service setup switched on, or by itself
+      // when Falcon thinks with an OpenAI model.
+      let other = null;
+      try {
+        const config = JSON.parse(fs.readFileSync(path.join(path.dirname(api.envFile()), 'openclaw.json'), 'utf8'));
+        const model = config.agents?.defaults?.model;
+        const primary = String((typeof model === 'string' ? model : model?.primary) || '');
+        if (config.tools?.web?.search?.provider === 'parallel-free') other = 'free';
+        else if (/^openai\//.test(primary)) other = 'builtin';
+      } catch { /* no settings to read */ }
+      return { google, via: google ? 'google' : openrouter ? 'openrouter' : other };
     },
     'POST /api/search': async (body) => {
       const key = String(body.key || '').trim();
@@ -887,7 +963,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     }
   });
 
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   return {
     port: server.address().port,
     token,

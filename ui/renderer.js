@@ -35,6 +35,7 @@ async function refreshConnections() {
   showVoiceSetting();
   $('chrome-state').textContent = chromeKnown ? '✓ connected' : '';
   refreshUninstall();
+  window.falcon.about().then((a) => { $('about-version').textContent = `${a.version} (build ${a.build})`; }).catch(() => {});
   await refreshDots();
   try { showBriefing(await window.falcon.briefing()); } catch { /* leave as is */ }
 }
@@ -83,7 +84,9 @@ $('connections-back').addEventListener('click', () => showScreen('main'));
 
 // ---- Recognising a pasted key and choosing the model ----
 // A key tells whose it is (OpenAI, Anthropic, OpenRouter) but not which model, so the user picks one.
-function keyHelper(inputId, kindId, modelsId) {
+// On the first screen the tested model is simply used (`choose` false): a newcomer should not have to
+// pick an AI model. The choice is offered later, in Settings.
+function keyHelper(inputId, kindId, modelsId, choose = true) {
   let timer = null;
   let latest = 0;
   const clear = () => { $(modelsId).hidden = true; $(modelsId).replaceChildren(); };
@@ -99,7 +102,9 @@ function keyHelper(inputId, kindId, modelsId) {
   }
   function show(info) {
     if (!info.ok) { clear(); return note(kindId, info.error, 'bad'); }
-    note(kindId, `${info.provider} key recognised${info.checked ? ' and accepted' : ''}. ${info.voice ? 'It covers thinking and voice.' : 'It covers thinking; voice needs an OpenAI key.'} Choose the model:`, 'ok');
+    const covers = info.voice ? 'It covers thinking and voice.' : 'It covers thinking; the live voice needs an OpenAI key.';
+    if (!choose) return note(kindId, `${info.provider} key recognised${info.checked ? ' and accepted' : ''}. ${covers}`, 'ok');
+    note(kindId, `${info.provider} key recognised${info.checked ? ' and accepted' : ''}. ${covers} Choose the model:`, 'ok');
     $(modelsId).replaceChildren(...info.models.map((m, i) => {
       const option = document.createElement('label');
       option.className = 'model-option';
@@ -124,7 +129,7 @@ function keyHelper(inputId, kindId, modelsId) {
     show,
   };
 }
-const setupKey = keyHelper('setup-key', 'setup-key-kind', 'setup-models');
+const setupKey = keyHelper('setup-key', 'setup-key-kind', 'setup-models', false);
 const panelKey = keyHelper('key-value', 'key-kind', 'key-models');
 
 async function showCurrentModel() {
@@ -154,7 +159,9 @@ async function refreshSearch() {
     $('search-state').textContent = via === 'google' ? '✓ on' : '';
     $('web-search-now').textContent = via === 'google' ? 'on, through Google'
       : via === 'openrouter' ? 'on, through your OpenRouter key'
-        : 'off. Save an OpenRouter key above, or add a Google key below, to switch it on';
+        : via === 'builtin' ? 'on, through your OpenAI key'
+          : via === 'free' ? 'on, through a free search service. A Google key below makes it more thorough'
+            : 'off. Save an OpenRouter key above, or add a Google key below, to switch it on';
   } catch { /* leave as it was */ }
 }
 refreshSearch();
@@ -221,6 +228,7 @@ const setupLog = {
   start() {
     this.lines = []; this.started = Date.now(); this.until = 0;
     $('setup-log-lines').textContent = ''; $('setup-log').hidden = false;
+    $('setup-log').scrollIntoView({ block: 'end' });
     clearInterval(this.clock);
     const tick = () => {
       const s = Math.floor((Date.now() - this.started) / 1000);
@@ -239,6 +247,14 @@ const setupLog = {
     $('setup-log-lines').textContent = this.lines.join('\n');
   },
   stop() { clearInterval(this.clock); this.started = 0; $('setup-log').hidden = true; },
+  // A step failed: leave what the installer last said on screen, so there is something to go on.
+  fail(detail) {
+    clearInterval(this.clock); this.started = 0;
+    if (!detail) { $('setup-log').hidden = true; return; }
+    $('setup-log-lines').textContent = detail;
+    $('setup-log-time').textContent = 'Nothing was changed that needs undoing. You can press Start again.';
+    $('setup-log').hidden = false;
+  },
 };
 
 const setOrb = (state) => { $('orb').dataset.state = state; };
@@ -257,9 +273,11 @@ $('setup-start').addEventListener('click', async () => {
     try {
       const result = await window.falcon.setup(key, true, setupKey.model());
       if (result.ok) { $('setup-key').value = ''; return enterFalcon(); }
-      setMessage(result.error || 'Something went wrong.', 'bad');
+      setMessage(`${result.error || 'Something went wrong.'} Check the internet connection and the key, then press Start again.`, 'bad');
+      setupLog.fail(result.detail);
+      return;
     } catch {
-      setMessage('Setup was interrupted. Please try again.', 'bad');
+      setMessage('Setup was interrupted. Please press Start again.', 'bad');
     }
     setupLog.stop();
   });
@@ -438,7 +456,15 @@ async function sendToFalcon(text, shown = text) {
   busy = true;
   $('examples').hidden = true;
   $('ask-text').value = '';
-  $('ask-send').disabled = true;
+  // While he works, the send button is a Stop button.
+  const stopper = new AbortController();
+  let stopped = false;
+  stopChat = () => { stopped = true; stopper.abort(); };
+  $('ask-send').classList.add('stop');
+  $('ask-send').textContent = '■';
+  $('ask-send').setAttribute('aria-label', 'Stop');
+  $('ask-send').title = 'Stop';
+  window.falconLastRussian = /[а-яё]/i.test(text);
   archiveExchange();
   $('said').textContent = shown;
   $('reply').textContent = '';
@@ -451,14 +477,19 @@ async function sendToFalcon(text, shown = text) {
   const reveal = createReveal($('reply'));
   // If the answer takes a moment, say so instead of sitting silent.
   const russian = /[а-яё]/i.test(text);
-  const patience = setTimeout(() => {
-    if (!answer) {
-      $('reply').textContent = russian ? `Одну минуту, ${addressRu()}.` : `One moment, ${address()}.`;
-      $('reply').classList.add('waiting');
-    }
-  }, 2500);
+  // After a while, also say how long it has been, so a long job never looks frozen.
+  const asked = Date.now();
+  const patience = setInterval(() => {
+    const seconds = Math.round((Date.now() - asked) / 1000);
+    if (answer || seconds < 2 || !$('scout').hidden) return;
+    if ($('reply').textContent && !$('reply').classList.contains('waiting')) return;
+    $('reply').textContent = seconds < 10
+      ? (russian ? `Одну минуту, ${addressRu()}.` : `One moment, ${address()}.`)
+      : (russian ? `Работаю над этим, ${addressRu()}. Прошло ${seconds} с.` : `Still working on it, ${address()}. ${seconds} seconds so far.`);
+    $('reply').classList.add('waiting');
+  }, 1000);
   const clearWaiting = () => {
-    clearTimeout(patience);
+    clearInterval(patience);
     if ($('reply').classList.contains('waiting')) { $('reply').classList.remove('waiting'); $('reply').textContent = ''; }
   };
   const fail = (message) => { clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); };
@@ -469,22 +500,37 @@ async function sendToFalcon(text, shown = text) {
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
       onError: fail,
-    });
+    }, stopper.signal);
     await reveal.done();
     if (cards.length) showActions(cards);
     $('scout').hidden = true;
     if (dossier) { $('actions').append(dossierButton(dossier)); scrollTalk(); showDossier(dossier); }
   } catch {
-    fail(`I have lost my connection, ${address()}. Please try again in a moment.`);
+    if (stopped) {
+      clearWaiting();
+      $('scout').hidden = true;
+      answer = russian ? `Остановился, ${addressRu()}.` : `Stopped, ${address()}.`;
+      $('reply').textContent = answer;
+    } else {
+      fail(`I have lost my connection, ${address()}. Please try again in a moment.`);
+    }
   }
   clearWaiting();
   if (!answer) $('reply').textContent = dossier ? `The dossier is ready, ${address()}.` : `Done, ${address()}.`;
   setOrb('idle');
   busy = false;
-  $('ask-send').disabled = false;
+  stopChat = null;
+  $('ask-send').classList.remove('stop');
+  $('ask-send').textContent = '➤';
+  $('ask-send').setAttribute('aria-label', 'Send');
+  $('ask-send').title = '';
+  // After his own welcome (a request the window made), show what he can be asked.
+  if (!shown && !stopped) $('examples').hidden = false;
   $('ask-text').focus();
 }
 
+let stopChat = null;
+$('ask-send').addEventListener('click', (event) => { if (busy && stopChat) { event.preventDefault(); stopChat(); } });
 $('ask').addEventListener('submit', (event) => { event.preventDefault(); sendToFalcon($('ask-text').value.trim()); });
 for (const chip of document.querySelectorAll('[data-ask]')) {
   chip.addEventListener('click', () => sendToFalcon(chip.dataset.ask));
