@@ -3,7 +3,9 @@
 param(
   [string]$Path = "",
   [string]$Find = "",          # words from the file name; newest match wins
-  [int]$Slide = 0
+  [int]$Slide = 0,
+  [int]$Step = 0,              # 1 = next slide, -1 = previous slide, counted from the one showing now
+  [switch]$Last                # the last slide
 )
 $ErrorActionPreference = "Stop"
 function Esc([string]$s) { $s.Replace("'", "''").Replace("%", "").Replace("[", "").Replace("]", "") }
@@ -52,6 +54,15 @@ try {
 
   $total = $pres.Slides.Count
   $current = 1
+  if ($Last) { $Slide = $total }
+  if ($Step -ne 0) {
+    $now = 0
+    try { $now = $pres.SlideShowWindow.View.Slide.SlideIndex } catch { }
+    if (-not $now) { try { $now = $ppt.ActiveWindow.View.Slide.SlideIndex } catch { $now = 1 } }
+    $Slide = $now + $Step
+    if ($Slide -lt 1) { throw "This is already the first slide." }
+    if ($Slide -gt $total) { throw "This is already the last slide." }
+  }
   if ($Slide -gt 0) {
     if ($Slide -gt $total) { throw "The presentation has only $total slides." }
     $win = $null

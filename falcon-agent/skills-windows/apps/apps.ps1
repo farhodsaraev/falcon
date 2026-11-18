@@ -16,7 +16,8 @@ param(
   [ValidateSet("left", "right", "double")][string]$Button = "left",
   [string]$Keys = "",
   [ValidateSet("up", "down")][string]$Direction = "down",
-  [int]$Amount = 3
+  [int]$Amount = 3,
+  [int]$Times = 1               # for -Do keys: press the key this many times (volume steps)
 )
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -94,6 +95,7 @@ function To-Screen([int]$px, [int]$py) {
 }
 $named = @{ enter = 0x0D; return = 0x0D; esc = 0x1B; escape = 0x1B; tab = 0x09; space = 0x20; backspace = 0x08; delete = 0x2E; del = 0x2E
   up = 0x26; down = 0x28; left = 0x25; right = 0x27; home = 0x24; end = 0x23; pageup = 0x21; pagedown = 0x22
+  volumeup = 0xAF; volumedown = 0xAE; playpause = 0xB3; nexttrack = 0xB0; prevtrack = 0xB1
   f1 = 0x70; f2 = 0x71; f3 = 0x72; f4 = 0x73; f5 = 0x74; f6 = 0x75; f7 = 0x76; f8 = 0x77; f9 = 0x78; f10 = 0x79; f11 = 0x7A; f12 = 0x7B }
 $mods = @{ ctrl = 0x11; control = 0x11; shift = 0x10; alt = 0x12; win = 0x5B; windows = 0x5B }
 
@@ -131,7 +133,12 @@ switch ($Do) {
     }
     if ($null -eq $main -and $held.Count -eq 0) { Fail "Say which keys to press." }
     foreach ($m in $held) { [FalconWin]::keybd_event([byte]$m, 0, 0, [UIntPtr]::Zero) }
-    if ($null -ne $main) { [FalconWin]::keybd_event([byte]$main, 0, 0, [UIntPtr]::Zero); [FalconWin]::keybd_event([byte]$main, 0, 2, [UIntPtr]::Zero) }
+    if ($null -ne $main) {
+      for ($i = 0; $i -lt [Math]::Max(1, [Math]::Min(50, $Times)); $i++) {
+        [FalconWin]::keybd_event([byte]$main, 0, 0, [UIntPtr]::Zero); [FalconWin]::keybd_event([byte]$main, 0, 2, [UIntPtr]::Zero)
+        if ($Times -gt 1) { Start-Sleep -Milliseconds 30 }
+      }
+    }
     [array]::Reverse($held)
     foreach ($m in $held) { [FalconWin]::keybd_event([byte]$m, 0, 2, [UIntPtr]::Zero) }
     Start-Sleep -Milliseconds 300
@@ -177,10 +184,19 @@ switch ($Do) {
     if (-not $win) { Say @{ ok = $true; closed = $false; note = "$Name was not open." } }
     $p = Get-Process -Id $win.Id
     [void]$p.CloseMainWindow()
-    Start-Sleep -Seconds 3
+    # Wait up to three seconds, but no longer than it takes the window to go.
+    for ($i = 0; $i -lt 15; $i++) {
+      Start-Sleep -Milliseconds 200
+      $p.Refresh()
+      if ($p.HasExited -or @(Windows | Where-Object { $_.MainWindowHandle -eq $win.MainWindowHandle }).Count -eq 0) { break }
+    }
     $p.Refresh()
-    if ($p.HasExited) { Say @{ ok = $true; closed = $true; app = $win.app } }
-    Say @{ ok = $true; closed = $false; app = $win.app; note = "It is still open; it is probably asking whether to save." }
+    # Store apps (Calculator, Photos) live inside a shared host program that never exits: what counts
+    # is whether the app's own window is gone. Name such an app by what the user called it.
+    $shown = $(if ($win.app -eq "ApplicationFrameHost") { $win.title } else { $win.app })
+    $still = @(Windows | Where-Object { $_.MainWindowHandle -eq $win.MainWindowHandle })
+    if ($p.HasExited -or $still.Count -eq 0) { Say @{ ok = $true; closed = $true; app = $shown } }
+    Say @{ ok = $true; closed = $false; app = $shown; note = "It is still open; it is probably asking whether to save." }
   }
   "open" {
     if (-not $Name) { Fail "Say which app to open." }
@@ -195,8 +211,8 @@ switch ($Do) {
     # Wait for its window, then bring it to the front so the next step can work in it.
     $win = $null
     $words = @($app.Name -split '\s+' | Where-Object { $_.Length -gt 2 })
-    for ($i = 0; $i -lt 30 -and -not $win; $i++) {
-      Start-Sleep -Milliseconds 500
+    for ($i = 0; $i -lt 60 -and -not $win; $i++) {
+      Start-Sleep -Milliseconds 250
       foreach ($w in @($app.Name) + $words) { if (-not $win) { $win = Find-Window $w } }
     }
     if ($win) { Bring-Front $win; Say @{ ok = $true; app = $app.Name; title = $win.title; started = $true } }

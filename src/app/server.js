@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { createVoiceKeyStore } from './voicekey.js';
+import { fastLane } from './fastlane.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -211,7 +212,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     child.unref();
   };
   const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
-  const api = { packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  const api = { fastLane, packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   // The engine's first Telegram reply to a new user bypasses Falcon's add-on, so Falcon puts his own words
   // into it in the engine's files: at every start (engine updates bring the old text back) and after setup.
   const ownPairingText = async () => {
@@ -233,6 +234,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // `idleMs` (a reload reconnects in a moment) and nothing is running, he stops by himself.
   let windowSeen = false;
   let idleTimer = null;
+  const fastNotes = [];            // what the fast lane did since the AI last heard from the window
   let refreshing = false;
   let refreshChecked = false;
   const busy = () => setupRunning || refreshing || chatsInFlight > 0;
@@ -419,6 +421,25 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     const gateway = api.readGateway();
     const send = (event, data) => { if (!res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
+    // The fast lane: a few very common requests are done at once, without the AI.
+    try {
+      chatsInFlight++;
+      const quick = await api.fastLane(text, { packDir: PACK_DIR, callMe: callMeNow() });
+      if (quick) {
+        send('delta', { text: quick.reply });
+        if (quick.actions?.length) send('actions', { items: quick.actions });
+        send('done', {});
+        res.end();
+        fastNotes.push(quick.note);
+        if (fastNotes.length > 12) fastNotes.shift();
+        return;
+      }
+    } catch { /* the usual way, below */ } finally { chatsInFlight--; }
+    // Tell the AI what was done meanwhile without it, so "open it" or "what is on this slide" still make sense.
+    const meanwhile = fastNotes.length
+      ? `[Note from your own window, not from the user: since your last reply you already carried out these quick requests yourself; they are done, do not repeat them. ${fastNotes.map((n, i) => `(${i + 1}) ${n}`).join(' ')}]\n\n`
+      : '';
+    fastNotes.length = 0;
     chatsInFlight++;
     pollApprovals();
     // While Falcon scouts, pass the scan's progress on to the window, and the finished dossier.
@@ -449,7 +470,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           Authorization: `Bearer ${gateway.token}`,
           'x-openclaw-session-key': windowSession(),
         },
-        body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content: `${text}\n\n${ACTIONS_NOTE}` }] }),
+        body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content: `${meanwhile}${text}\n\n${ACTIONS_NOTE}` }] }),
         signal: control.signal,
       });
       if (!upstream.ok) throw new Error(`engine answered ${upstream.status}`);
