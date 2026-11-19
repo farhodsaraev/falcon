@@ -57,7 +57,7 @@ try {
     for (const folder of folders) walk(folder, 0, files);
   }
   const result = [...new Set(files)]
-    .map((f) => { const s = fs.statSync(f); return { path: f, modified: s.mtime, sizeKb: Math.round(s.size / 1024) }; })
+    .map((f) => { const s = fs.statSync(f); return { path: f, modified: s.mtime, sizeKb: Math.ceil(s.size / 1024) }; })
     .sort((a, b) => b.modified - a.modified)
     .slice(0, Number(max) || 8)
     .map((f) => ({ ...f, modified: f.modified.toISOString().slice(0, 16).replace('T', ' ') }));

@@ -42,7 +42,7 @@ try {
       $files += @{
         path     = [string]$rs.Fields.Item(0).Value
         modified = ([datetime]$rs.Fields.Item(1).Value).ToLocalTime().ToString("yyyy-MM-dd HH:mm")
-        sizeKb   = [int]([double]$rs.Fields.Item(2).Value / 1kb)
+        sizeKb   = [int][Math]::Ceiling([double]$rs.Fields.Item(2).Value / 1kb)   # a small file is 1 KB, never 0 ("empty")
       }
       $rs.MoveNext()
     }
@@ -66,7 +66,7 @@ try {
         }
     }
     $files = @($hits | Sort-Object LastWriteTime -Descending | Select-Object -First $Max | ForEach-Object {
-      @{ path = $_.FullName; modified = $_.LastWriteTime.ToString("yyyy-MM-dd HH:mm"); sizeKb = [int]($_.Length / 1kb) }
+      @{ path = $_.FullName; modified = $_.LastWriteTime.ToString("yyyy-MM-dd HH:mm"); sizeKb = [int][Math]::Ceiling($_.Length / 1kb) }
     })
   }
   @{ ok = $true; source = $source; files = @($files) } | ConvertTo-Json -Compress -Depth 4

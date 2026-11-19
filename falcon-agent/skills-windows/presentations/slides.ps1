@@ -76,5 +76,11 @@ try {
   }
   @{ ok = $true; name = $pres.Name; path = $pres.FullName; slide = $current; total = $total } | ConvertTo-Json -Compress
 } catch {
-  @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress
+  $message = $_.Exception.Message
+  # Without PowerPoint, Windows answers with a "class not registered" code. Seen live, Falcon passed that on
+  # as "a COM registration error; PowerPoint needs repairing". Say what it really means, in plain words.
+  if ($message -match '80040154|Class not registered|REGDB_E_CLASSNOTREG') {
+    $message = "PowerPoint is not installed on this computer, so presentations cannot be opened on a slide here." + $(if ($Path) { " The file is $Path." } else { "" })
+  }
+  @{ ok = $false; error = $message } | ConvertTo-Json -Compress
 }
