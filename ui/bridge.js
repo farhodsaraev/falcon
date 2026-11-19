@@ -31,6 +31,8 @@
     },
     currentModel: () => call('GET', '/api/model'),
     about: () => call('GET', '/api/about'),
+    updateStatus: () => call('GET', '/api/update'),
+    update: () => call('POST', '/api/update'),
     answerApproval: (id, decision) => call('POST', '/api/approval', { id, decision }),
     profile: () => call('GET', '/api/profile'),
     saveProfile: (profile) => call('POST', '/api/profile', profile),

@@ -186,6 +186,20 @@ export function failureLines(out) {
   return String(out ?? '').split(/\r?\n/).map(progressLine).filter(Boolean).slice(-4).join('\n');
 }
 
+// ---- Updates ----
+// Where the newest published Falcon says which version it is and which engine version it was tested with.
+const PUBLISHED = 'https://raw.githubusercontent.com/farhodsaraev/falcon/main';
+
+/** True when version a is newer than version b ("2026.11.5" against "2026.11.4", "0.3.0" against "0.2.0"). */
+export function newerVersion(a, b) {
+  const parts = (v) => String(v || '').split(/[.\-+]/).map((p) => Number.parseInt(p, 10)).map((n) => (Number.isFinite(n) ? n : 0));
+  const x = parts(a); const y = parts(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+}
+
 const uninstallerPath = () => path.join(root, 'installer', process.platform === 'win32' ? 'uninstall.ps1' : 'uninstall.sh');
 
 export async function startServer({ port = 0, engine = {}, onIdle = () => {}, idleMs = 30000 } = {}) {
@@ -215,6 +229,27 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   };
   const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
   const api = { fastLane, packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  // What an update needs to know and do; stand-ins replace these in checks.
+  if (!api.appInfo) {
+    api.appInfo = () => { try { return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')); } catch { return {}; } };
+  }
+  if (!api.engineVersion) {
+    api.engineVersion = () => { try { return String(JSON.parse(fs.readFileSync(path.join(engineDir(api.findEngine()), 'package.json'), 'utf8')).version || ''); } catch { return ''; } };
+  }
+  // An installed copy (put there by the installer) can replace itself; a copy run from its project folder follows that folder.
+  if (!api.isInstalledCopy) api.isInstalledCopy = () => !fs.existsSync(path.join(root, '.git')) && fs.existsSync(uninstallerPath());
+  // Runs the same installer the user first ran. It closes Falcon, replaces his files and opens him again.
+  if (!api.runInstaller) {
+    api.runInstaller = () => {
+      const child = process.platform === 'win32'
+        ? spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', `irm ${PUBLISHED}/installer/install.ps1 | iex`],
+          { detached: true, stdio: 'ignore', windowsHide: true })
+        : spawn('/bin/bash', ['-c', `curl -fsSL ${PUBLISHED}/installer/install.sh | bash`], { detached: true, stdio: 'ignore' });
+      child.on('error', () => {});
+      child.unref();
+    };
+  }
   // His direct line to the engine (see directline.js). A stand-in engine may pass its own, or null for none.
   if (!('directLine' in engine)) api.directLine = createDirectLine({ readGateway: () => api.readGateway() });
   // The engine's first Telegram reply to a new user bypasses Falcon's add-on, so Falcon puts his own words
@@ -243,7 +278,32 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   const offeredFiles = new Set();  // files Falcon found and showed buttons for
   let refreshing = false;
   let refreshChecked = false;
-  const busy = () => setupRunning || refreshing || chatsInFlight > 0;
+  let updateRunning = false;
+  const busy = () => setupRunning || refreshing || updateRunning || chatsInFlight > 0;
+
+  // ---- Is there something newer, for Falcon himself or for the engine he runs on? ----
+  // The engine is only ever moved to the version the newest Falcon was tested with, never simply to
+  // the latest: an untested engine version has broken installs before.
+  async function updateInfo() {
+    const mine = api.appInfo();
+    let published = null;
+    try {
+      const response = await api.fetch(`${PUBLISHED}/package.json`, { signal: AbortSignal.timeout(8000) });
+      if (response.ok) published = await response.json();
+    } catch { /* no internet just now: nothing to offer */ }
+    const engineNow = api.engineVersion();
+    const engineTarget = String(published?.falconEngine || mine.falconEngine || '');
+    const targetOk = /^[0-9][\w.-]{0,30}$/.test(engineTarget);
+    return {
+      version: String(mine.version || ''),
+      latest: published?.version ? String(published.version).slice(0, 20) : null,
+      falconNewer: Boolean(published?.version && newerVersion(published.version, mine.version)),
+      engineNewer: Boolean(targetOk && engineNow && newerVersion(engineTarget, engineNow)),
+      engineTarget: targetOk ? engineTarget : '',
+      canUpdateFalcon: api.isInstalledCopy(),
+      running: updateRunning,
+    };
+  }
   const callMeNow = () => { try { return JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { return 'sir'; } };
 
   // ---- Updates: Falcon's rules and skills live in the engine's workspace, written at first setup.
@@ -591,6 +651,50 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (ready) refreshPack().catch(() => {});
       if (ready && refreshing) return { configured, ready: false, updating: true };
       return { configured, ready };
+    },
+    // ---- Update: one button for Falcon and the engine he runs on, under Falcon's name ----
+    'GET /api/update': async () => {
+      const { engineTarget, ...info } = await updateInfo();
+      return info;
+    },
+    'POST /api/update': async () => {
+      if (updateRunning) return { ok: false, error: 'An update is already running.' };
+      if (setupRunning || chatsInFlight > 0) return { ok: false, error: 'I am in the middle of something. Please try again in a moment.' };
+      updateRunning = true;
+      const say = (text) => broadcast('update', { text });
+      try {
+        const info = await updateInfo();
+        let engineUpdated = false;
+        if (info.engineNewer) {
+          say('Updating the engine I run on. This takes a few minutes');
+          const result = await api.runEngine(['update', '--tag', info.engineTarget, '--yes'], {
+            timeoutMs: 20 * 60000,
+            onLine: (line) => { const detail = progressLine(line); if (detail) broadcast('update', { detail }); },
+          });
+          if (result.code !== 0) return { ok: false, error: 'The engine could not be updated. Nothing else was changed.', detail: failureLines(result.out) };
+          engineUpdated = true;
+          await ownPairingText();          // a new engine brings its own wording back
+          say('Starting again');
+          await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+          let awake = false;
+          for (let i = 0; i < 90 && !awake; i++) {
+            awake = await api.engineReady();
+            if (!awake) await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
+          if (!awake) return { ok: false, error: 'The engine was updated but has not woken up yet. Close Falcon and open him again in a few minutes.' };
+          // A new engine may forget settings Falcon depends on: apply them again.
+          say('Teaching Falcon his manners again');
+          try { await api.installFalcon({ runEngine: api.runEngine, log: () => {} }); writeStamp(api.packStamp()); } catch { /* done again at the next start */ }
+        }
+        if (info.falconNewer && info.canUpdateFalcon) {
+          say('Fetching the new Falcon. He will close and open again by himself');
+          setTimeout(() => api.runInstaller(), 800).unref?.();
+          return { ok: true, restarting: true, engineUpdated };
+        }
+        return { ok: true, restarting: false, engineUpdated };
+      } finally {
+        updateRunning = false;
+      }
     },
     'GET /api/about': async () => {
       let version = '0.1.0';

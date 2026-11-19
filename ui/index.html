@@ -127,6 +127,7 @@
       <input id="ask-text" type="text" placeholder="Ask Falcon…" aria-label="Message for Falcon">
       <button id="ask-send" class="primary" aria-label="Send">➤</button>
     </form>
+    <button id="update-hint" type="button" class="link update-hint" hidden>A newer Falcon is ready. Update…</button>
     <p id="shortcut-hint" class="hint shortcut" hidden>Press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> anywhere to call me.</p>
   </section>
 
@@ -264,6 +265,11 @@
           <button id="about-quit" class="ghost">Quit Falcon</button>
         </div>
         <p id="quit-message" class="message" role="status"></p>
+        <div class="update-box">
+          <p id="update-state" class="panel-text">Checking for a newer Falcon…</p>
+          <div class="row tight"><button id="update-go" class="primary" hidden>Update Falcon</button></div>
+          <p id="update-message" class="message" role="status"></p>
+        </div>
         <div id="uninstall-box" class="uninstall" hidden>
           <button id="uninstall-open" class="link danger">Uninstall Falcon…</button>
           <div id="uninstall-confirm" class="uninstall-confirm" hidden>

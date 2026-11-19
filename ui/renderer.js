@@ -9,7 +9,7 @@ function showScreen(name) {
   $('more').hidden = name !== 'main';
   document.body.classList.toggle('on-main', name === 'main');
   for (const side of document.querySelectorAll('.side')) side.hidden = name !== 'main';
-  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); refreshMind(); }
+  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); checkUpdateOnce(); refreshMind(); }
   if (name !== 'main' && voice && voice.active()) voice.stop();
   if (name === 'connections') refreshConnections();
 }
@@ -39,6 +39,7 @@ async function refreshConnections() {
   showVoiceSetting();
   $('chrome-state').textContent = chromeKnown ? '✓ connected' : '';
   refreshUninstall();
+  refreshUpdate();
   window.falcon.about().then((a) => { $('about-version').textContent = `${a.version} (build ${a.build})`; }).catch(() => {});
   await refreshDots();
   try { showBriefing(await window.falcon.briefing()); } catch { /* leave as is */ }
@@ -55,6 +56,37 @@ function showTab(name) {
 }
 for (const tab of document.querySelectorAll('.tab')) tab.addEventListener('click', () => showTab(tab.dataset.tab));
 $('about-intro').addEventListener('click', () => showScreen('intro'));
+
+// ---- Update: one button for Falcon and the engine he runs on ----
+async function refreshUpdate() {
+  let info;
+  try { info = await window.falcon.updateStatus(); } catch { $('update-state').textContent = ''; return null; }
+  const offer = (info.falconNewer && info.canUpdateFalcon) || info.engineNewer;
+  $('update-go').hidden = !offer;
+  $('update-state').textContent = info.falconNewer && info.canUpdateFalcon ? `A newer Falcon is ready: version ${info.latest}.`
+    : info.engineNewer ? 'An improvement to the engine I run on is ready.'
+      : info.falconNewer ? `Version ${info.latest} is published. This copy runs from its project folder and follows that folder.`
+        : info.latest ? 'Falcon is up to date.' : 'I could not check for a newer Falcon just now.';
+  return offer;
+}
+$('update-go').addEventListener('click', () => withButton($('update-go'), async () => {
+  note('update-message', 'Starting the update. Please keep this window open', 'working');
+  try {
+    const r = await window.falcon.update();
+    if (!r.ok) return note('update-message', [r.error, r.detail].filter(Boolean).join('\n'), 'bad');
+    $('update-hint').hidden = true;
+    if (r.restarting) return note('update-message', 'Falcon will close and open again by himself in a moment.', 'ok');
+    note('update-message', 'Done. Falcon is up to date.', 'ok');
+    refreshUpdate();
+  } catch { note('update-message', 'The update was interrupted. Open Falcon again and press Update once more.', 'bad'); }
+}));
+$('update-hint').addEventListener('click', () => { showScreen('connections'); showTab('about'); });
+let updateChecked = false;
+function checkUpdateOnce() {
+  if (updateChecked) return;
+  updateChecked = true;
+  refreshUpdate().then((offer) => { $('update-hint').hidden = !offer; }).catch(() => {});
+}
 
 // ---- Uninstall from Settings > About ----
 async function refreshUninstall() {
@@ -952,6 +984,7 @@ function summoned() {
 
 window.falcon.listen({
   summon: summoned,
+  update: (progress) => { const line = progress.text || progress.detail; if (line) note('update-message', line, 'working'); },
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
   setup: (progress) => {
     if (progress.detail) return setupLog.add(progress.detail);
