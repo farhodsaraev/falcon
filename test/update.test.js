@@ -15,17 +15,21 @@ test('versions are compared part by part', () => {
 });
 
 // One Falcon with stand-ins for everything an update touches.
-async function falcon({ mine, published, engineNow, installed = true, engineFails = false, offline = false }) {
+// engineAfter: 'ok' (installed, exit 0), 'stopped' (installed, but the updater reports failure and leaves the
+// engine stopped, as seen on a real Windows PC), 'failed' (not installed), 'dead' (installed, never starts again)
+async function falcon({ mine, published, engineNow, installed = true, engineAfter = 'ok', offline = false }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-update-button-'));
   const did = [];
   let engine = engineNow;
+  let running = true;
   const server = await startServer({ engine: {
     fastLane: async () => null,
     directLine: null,
     profileFile: () => path.join(dir, 'profile.json'),
     readGateway: () => ({ port: 1, token: 'gw' }),
     findEngine: () => ({ command: 'node', prefix: [] }),
-    engineReady: async () => true,
+    engineReady: async () => running,
+    updateWakeMs: 1,
     appInfo: () => mine,
     engineVersion: () => engine,
     isInstalledCopy: () => installed,
@@ -34,11 +38,14 @@ async function falcon({ mine, published, engineNow, installed = true, engineFail
     installFalcon: async () => { did.push('re-taught'); return { ok: true }; },
     runEngine: async (args, { onLine } = {}) => {
       did.push(args.join(' '));
-      if (args[0] === 'update') {
+      if (args[0] === 'update' && args[1] !== 'repair') {
         onLine?.('Installing OpenClaw 2026.11.5');
-        if (engineFails) return { code: 1, out: 'npm ERR! network\nOpenClaw update failed' };
+        running = false;
+        if (engineAfter === 'failed') return { code: 1, out: 'npm ERR! network\nOpenClaw update failed' };
         engine = args[2];
+        if (engineAfter === 'stopped') return { code: 1, out: 'OpenClaw update failed: state-migrated-no-rollback.\nupdate-owned native commands require Task Scheduler' };
       }
+      if (args[0] === 'gateway' && args[1] === 'start' && engineAfter !== 'dead') running = true;
       return { code: 0, out: '' };
     },
     fetch: async (url) => {
@@ -75,7 +82,8 @@ test('Update: the engine goes to the tested version only, Falcon is re-taught, t
     assert.deepEqual([status.falconNewer, status.engineNewer, status.canUpdateFalcon], [true, true, true]);
     const result = await f.update();
     assert.deepEqual(result, { ok: true, restarting: true, engineUpdated: true });
-    assert.equal(f.did[0], 'update --tag 2026.11.5 --yes', 'the tested version, by name, never simply the latest');
+    assert.equal(f.did[0], 'update --tag 2026.11.5 --yes --no-restart', 'the tested version, by name, never simply the latest');
+    assert.ok(!f.did.includes('update repair --yes'), 'a clean update needs no repair');
     assert.ok(f.did.includes('gateway start'));
     assert.ok(f.did.includes('re-taught'));
     await new Promise((r) => setTimeout(r, 1000));
@@ -91,7 +99,7 @@ test('Update: a copy run from its project folder updates only the engine, and a 
     assert.ok(!f.did.includes('installer'));
   } finally { await f.server.close(); }
 
-  f = await falcon({ mine: { version: '0.2.0' }, published: { version: '0.3.0', falconEngine: '2026.11.5' }, engineNow: '2026.11.4', engineFails: true });
+  f = await falcon({ mine: { version: '0.2.0' }, published: { version: '0.3.0', falconEngine: '2026.11.5' }, engineNow: '2026.11.4', engineAfter: 'failed' });
   try {
     const result = await f.update();
     assert.equal(result.ok, false);
@@ -108,5 +116,30 @@ test('Update: an odd engine version in the published description is ignored, not
     assert.equal((await f.status()).engineNewer, false);
     await f.update();
     assert.deepEqual(f.did, []);
+  } finally { await f.server.close(); }
+});
+
+test('Update: an engine update that installs but is reported failed and left stopped (as seen on Windows) is finished by Falcon', async () => {
+  const f = await falcon({ mine: { version: '0.3.0' }, published: { version: '0.3.0', falconEngine: '2026.11.5' }, engineNow: '2026.11.4', engineAfter: 'stopped' });
+  try {
+    assert.deepEqual(await f.update(), { ok: true, restarting: false, engineUpdated: true });
+    assert.deepEqual(f.did.slice(0, 3), ['update --tag 2026.11.5 --yes --no-restart', 'update repair --yes', 'gateway start'], 'repair, then start: what the user had to do by hand');
+    assert.ok(f.did.includes('re-taught'));
+  } finally { await f.server.close(); }
+});
+
+test('Update: a failed engine update starts the old engine again; one that never wakes says what to do', async () => {
+  let f = await falcon({ mine: { version: '0.3.0' }, published: { version: '0.3.0', falconEngine: '2026.11.5' }, engineNow: '2026.11.4', engineAfter: 'failed' });
+  try {
+    assert.equal((await f.update()).ok, false);
+    assert.equal(f.did.at(-1), 'gateway start', 'the old engine is started again');
+  } finally { await f.server.close(); }
+
+  f = await falcon({ mine: { version: '0.3.0' }, published: { version: '0.3.0', falconEngine: '2026.11.5' }, engineNow: '2026.11.4', engineAfter: 'dead' });
+  try {
+    const r = await f.update();
+    assert.equal(r.ok, false);
+    assert.match(r.error, /did not start again\. Restart the computer/);
+    assert.ok(!f.did.includes('re-taught'));
   } finally { await f.server.close(); }
 });

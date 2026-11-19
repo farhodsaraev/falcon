@@ -206,6 +206,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // How long one request may take before the window gives up on it.
   const CHAT_LIMIT_MS = engine.chatLimitMs ?? 10 * 60000;
   const APPROVAL_POLL_MS = engine.approvalPollMs ?? 8000;
+  const UPDATE_WAKE_MS = engine.updateWakeMs ?? 2000;
   // `engine` lets tests replace the real engine with stand-ins.
   const installFalcon = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
@@ -667,21 +668,34 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         let engineUpdated = false;
         if (info.engineNewer) {
           say('Updating the engine I run on. This takes a few minutes');
-          const result = await api.runEngine(['update', '--tag', info.engineTarget, '--yes'], {
-            timeoutMs: 20 * 60000,
-            onLine: (line) => { const detail = progressLine(line); if (detail) broadcast('update', { detail }); },
-          });
-          if (result.code !== 0) return { ok: false, error: 'The engine could not be updated. Nothing else was changed.', detail: failureLines(result.out) };
+          const progress = { timeoutMs: 20 * 60000, onLine: (line) => { const detail = progressLine(line); if (detail) broadcast('update', { detail }); } };
+          // The engine's own updater cannot restart the engine on Windows ("update-owned native commands
+          // require Task Scheduler"): seen on a real PC, it installed the new version, moved the data
+          // forward, then reported failure and left the engine stopped. So Falcon asks it not to restart,
+          // judges the result by the version actually installed, and finishes the job himself.
+          const result = await api.runEngine(['update', '--tag', info.engineTarget, '--yes', '--no-restart'], progress);
+          if (api.engineVersion() !== info.engineTarget) {
+            // Not installed: the old engine is still in place. Start it again in case the updater stopped it.
+            await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+            return { ok: false, error: 'The engine could not be updated. Nothing else was changed.', detail: failureLines(result.out) };
+          }
           engineUpdated = true;
+          // Installed. Finish what the updater may have left: its own repair step (settings and add-ons
+          // moved to the new version), then start the engine and wait until it answers.
+          say('Finishing the update');
+          const repaired = result.code === 0 ? null : await api.runEngine(['update', 'repair', '--yes'], progress);
           await ownPairingText();          // a new engine brings its own wording back
           say('Starting again');
           await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
           let awake = false;
           for (let i = 0; i < 90 && !awake; i++) {
             awake = await api.engineReady();
-            if (!awake) await new Promise((resolve) => setTimeout(resolve, 2000));
+            if (!awake) await new Promise((resolve) => setTimeout(resolve, UPDATE_WAKE_MS));
           }
-          if (!awake) return { ok: false, error: 'The engine was updated but has not woken up yet. Close Falcon and open him again in a few minutes.' };
+          if (!awake) {
+            return { ok: false, error: 'The engine was updated but did not start again. Restart the computer; if Falcon still cannot reach it, contact the people who set him up.',
+              detail: failureLines(`${result.out}\n${repaired?.out || ''}`) };
+          }
           // A new engine may forget settings Falcon depends on: apply them again.
           say('Teaching Falcon his manners again');
           try { await api.installFalcon({ runEngine: api.runEngine, log: () => {} }); writeStamp(api.packStamp()); } catch { /* done again at the next start */ }
