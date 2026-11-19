@@ -986,6 +986,15 @@ window.falcon.listen({
   summon: summoned,
   update: (progress) => { const line = progress.text || progress.detail; if (line) note('update-message', line, 'working'); },
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
+  // Something he noticed by himself, such as the AI credit being back after a top-up.
+  notice: ({ text }) => {
+    if (busy || !text) return;
+    archiveExchange();
+    $('said').textContent = '';
+    $('reply').classList.remove('bad', 'waiting');
+    $('reply').textContent = text;
+    scrollTalk();
+  },
   setup: (progress) => {
     if (progress.detail) return setupLog.add(progress.detail);
     setMessage(progress.text.replace(/…$/, ''), 'working');

@@ -282,6 +282,65 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   let updateRunning = false;
   const busy = () => setupRunning || refreshing || updateRunning || chatsInFlight > 0;
 
+  // ---- Out of credit, and back again ----
+  // Seen on a real PC: once the OpenRouter account ran dry, the engine marked the key "disabled: billing"
+  // and kept refusing it after the user had topped it up. Falcon asks OpenRouter himself whether there is
+  // credit; when there is, he lifts the engine's block (saving the key again clears it), and until then he
+  // checks once a minute, so he is back by himself, in the window and on Telegram alike.
+  const CREDIT_WATCH_MS = engine.creditWatchMs ?? 60000;
+  let creditWatch = null;
+  let creditFix = null;
+  async function creditState() {
+    const key = readEnvKey(api.envFile(), 'OPENROUTER_API_KEY');
+    if (!key) return 'no-openrouter';
+    const ask = async (what) => {
+      const response = await api.fetch(`https://openrouter.ai/api/v1/${what}`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
+      return response.ok ? (await response.json()).data || {} : null;
+    };
+    try {
+      const own = await ask('key');
+      if (!own) return 'unknown';
+      // A key can have its own spending limit; a top-up of the account does not raise it.
+      if (typeof own.limit_remaining === 'number' && own.limit_remaining <= 0) return 'key-limit';
+      const account = await ask('credits').catch(() => null);
+      if (account && typeof account.total_credits === 'number' && account.total_credits - (account.total_usage || 0) <= 0) return 'empty';
+      return 'ok';
+    } catch { return 'unknown'; }
+  }
+  // Clears the engine's billing block on the OpenRouter key. The engine changes saved keys only while it is stopped.
+  function liftCreditBlock() {
+    creditFix ??= (async () => {
+      const key = readEnvKey(api.envFile(), 'OPENROUTER_API_KEY');
+      if (!key) return false;
+      const status = await api.runEngine(['models', 'status'], { timeoutMs: 60000 });
+      const blocked = [...new Set([...String(status.out).matchAll(/(openrouter:[\w.-]+)=\S+\s*\[(?:disabled:billing|cooldown)/g)].map((m) => m[1]))];
+      if (!blocked.length) return true;   // nothing held against the key: just ask again
+      await api.runEngine(['gateway', 'stop'], { timeoutMs: 60000 });
+      for (const profile of blocked) {
+        await api.runEngine(['models', 'auth', 'paste-api-key', '--provider', 'openrouter', '--profile-id', profile], { input: `${key}\n`, timeoutMs: 90000 });
+      }
+      await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+      for (let i = 0; i < 90; i++) {
+        if (await api.engineReady()) return true;
+        await new Promise((r) => setTimeout(r, UPDATE_WAKE_MS));
+      }
+      return false;
+    })().finally(() => { creditFix = null; });
+    return creditFix;
+  }
+  function watchCredit() {
+    if (creditWatch) return;
+    creditWatch = setInterval(async () => {
+      if (creditFix || updateRunning || setupRunning) return;
+      if (await creditState() !== 'ok') return;
+      clearInterval(creditWatch);
+      creditWatch = null;
+      if (await liftCreditBlock()) broadcast('notice', { text: `The AI credit is back, ${callMeNow()}. I am ready again.` });
+    }, CREDIT_WATCH_MS);
+    creditWatch.unref?.();
+  }
+  const OUT_OF_CREDIT = /billing|credit|insufficient|payment required|\b402\b/i;
+
   // ---- Is there something newer, for Falcon himself or for the engine he runs on? ----
   // The engine is only ever moved to the version the newest Falcon was tested with, never simply to
   // the latest: an untested engine version has broken installs before.
@@ -575,7 +634,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         send('step', { text: ownWords(stepText(step, russian)), skill: stepSkill(step) });
       }) || (() => {});
       control.signal.addEventListener('abort', () => { api.directLine?.stop(sessionKey); }, { once: true });
-      {
+      const askEngine = async () => {
         pollApprovals();
         const upstream = await api.fetch(`http://127.0.0.1:${gateway.port}/v1/chat/completions`, {
           method: 'POST',
@@ -587,23 +646,53 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           body: JSON.stringify({ model: 'openclaw/default', stream: true, messages: [{ role: 'user', content }] }),
           signal: control.signal,
         });
-        if (!upstream.ok) throw new Error(`engine answered ${upstream.status}`);
-        const decoder = new TextDecoder();
-        let buffer = '';
-        for await (const chunk of upstream.body) {
-          buffer += decoder.decode(chunk, { stream: true });
-          let newline;
-          while ((newline = buffer.indexOf('\n')) >= 0) {
-            const line = buffer.slice(0, newline).trim();
-            buffer = buffer.slice(newline + 1);
-            if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-            try {
-              const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta?.content;
-              if (delta) { full += delta; flush(false); }
-            } catch { /* keep-alive or partial line */ }
+        // The engine's own refusal (for example "a billing issue on the account") comes as an error line,
+        // or as an error status before the stream starts.
+        let refusal = '';
+        if (!upstream.ok) {
+          refusal = await upstream.text().catch(() => '');
+          if (!OUT_OF_CREDIT.test(refusal)) throw new Error(`engine answered ${upstream.status}`);
+        } else {
+          const decoder = new TextDecoder();
+          let buffer = '';
+          for await (const chunk of upstream.body) {
+            buffer += decoder.decode(chunk, { stream: true });
+            let newline;
+            while ((newline = buffer.indexOf('\n')) >= 0) {
+              const line = buffer.slice(0, newline).trim();
+              buffer = buffer.slice(newline + 1);
+              if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.error) refusal = String(data.error.message || data.error);
+                const delta = data.choices?.[0]?.delta?.content;
+                if (delta) { full += delta; flush(false); }
+              } catch { /* keep-alive or partial line */ }
+            }
           }
         }
+        return full.trim() ? '' : refusal;
+      };
+      let refusal = await askEngine();
+      if (refusal && OUT_OF_CREDIT.test(refusal)) {
+        // Out of credit, or so the engine still believes after a top-up: ask OpenRouter itself.
+        const credit = await creditState();
+        if (credit === 'ok' || credit === 'unknown') {
+          send('step', { text: russian ? 'Снова подключаюсь к ИИ' : 'Reconnecting to the AI' });
+          if (await liftCreditBlock()) refusal = await askEngine();
+        }
+        if (refusal && OUT_OF_CREDIT.test(refusal)) {
+          const name = callMeNow();
+          if (credit !== 'no-openrouter') watchCredit();
+          const why = credit === 'key-limit'
+            ? `The key I think with has used up its own spending limit on OpenRouter, ${name}. Raise it at openrouter.ai/settings/keys, or pick "No limit" there.`
+            : credit === 'no-openrouter'
+              ? `My AI account has run out of credit, ${name}. Top it up with the company the key comes from, then ask me again.`
+              : `My AI account at OpenRouter has run out of credit, ${name}. Top it up at openrouter.ai/settings/credits.`;
+          throw Object.assign(new Error('out of credit'), { say: credit === 'no-openrouter' ? why : `${why} I will notice by myself when it is back, so there is nothing else to do.` });
+        }
       }
+      if (refusal) throw new Error(refusal);
       flush(true);
       clearInterval(scoutTimer);
       watchScout();
@@ -616,9 +705,9 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       // The line under the answer: how many steps and how long. (The engine does not say what it cost.)
       send('summary', { fast: false, steps: stepsTaken, ms: Date.now() - asked });
       send('done', {});
-    } catch {
-      send('error', { text: tooLong ? `That took too long, ${callMeNow()}, so I stopped. Please ask again, perhaps in smaller steps.`
-        : `I have lost my connection, ${callMeNow()}. Please try again in a moment.` });
+    } catch (problem) {
+      send('error', { text: problem?.say || (tooLong ? `That took too long, ${callMeNow()}, so I stopped. Please ask again, perhaps in smaller steps.`
+        : `I have lost my connection, ${callMeNow()}. Please try again in a moment.`) });
     } finally {
       unwatch();
       clearTimeout(limit);
@@ -1178,6 +1267,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     port: server.address().port,
     token,
     close: () => new Promise((resolve) => {
+      clearInterval(creditWatch);
       try { api.directLine?.close(); } catch { /* already closed */ }
       clearTimeout(idleTimer);
       for (const res of clients) res.end();
