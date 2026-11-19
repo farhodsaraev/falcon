@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
-import { createDirectLine, stepText } from './directline.js';
+import { createDirectLine, stepText, stepSkill } from './directline.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -428,6 +428,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     const gateway = api.readGateway();
     const send = (event, data) => { if (!res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
+    const asked = Date.now();
     // The fast lane: a few very common requests are done at once, without the AI.
     try {
       chatsInFlight++;
@@ -441,6 +442,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           send('file', { path: quick.file, name: path.win32.basename(quick.file) });
         }
         if (quick.actions?.length) send('actions', { items: quick.actions });
+        // The line under the answer: done at once, no AI needed.
+        send('summary', { fast: true, steps: 0, ms: Date.now() - asked });
         send('done', {});
         res.end();
         fastNotes.push(quick.note);
@@ -504,8 +507,12 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       // not started by the owner".) The direct line watches the same conversation, so each step he starts
       // shows in the window, and it carries Stop to the engine.
       const russian = /[а-яё]/i.test(text);
+      let stepsTaken = 0;
       const sessionKey = windowSession();
-      unwatch = api.directLine?.watch(sessionKey, (step) => send('step', { text: ownWords(stepText(step, russian)) })) || (() => {});
+      unwatch = api.directLine?.watch(sessionKey, (step) => {
+        stepsTaken++;
+        send('step', { text: ownWords(stepText(step, russian)), skill: stepSkill(step) });
+      }) || (() => {});
       control.signal.addEventListener('abort', () => { api.directLine?.stop(sessionKey); }, { once: true });
       {
         pollApprovals();
@@ -545,6 +552,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           .map((item) => ownWords(item).replace(/[*_`[\]]/g, '').trim()).filter((item) => item.length > 2 && item.length <= 60).slice(0, 3);
         if (items.length) send('actions', { items });
       }
+      // The line under the answer: how many steps and how long. (The engine does not say what it cost.)
+      send('summary', { fast: false, steps: stepsTaken, ms: Date.now() - asked });
       send('done', {});
     } catch {
       send('error', { text: tooLong ? `That took too long, ${callMeNow()}, so I stopped. Please ask again, perhaps in smaller steps.`
@@ -664,7 +673,14 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       };
     },
     'GET /api/model': async () => {
-      const current = (await api.runEngine(['models', 'status', '--plain'], { timeoutMs: 60000 })).out.trim().split(/\r?\n/).pop() || '';
+      // The engine's settings file says it at once; asking the engine itself takes up to a minute.
+      let current = '';
+      try {
+        const config = JSON.parse(fs.readFileSync(path.join(path.dirname(api.envFile()), 'openclaw.json'), 'utf8'));
+        const model = config.agents?.defaults?.model;
+        current = String((typeof model === 'string' ? model : model?.primary) || '');
+      } catch { /* no settings to read: ask the engine */ }
+      if (!current) current = (await api.runEngine(['models', 'status', '--plain'], { timeoutMs: 60000 })).out.trim().split(/\r?\n/).pop() || '';
       const known = Object.values(PROVIDERS).flatMap((p) => p.models).find((m) => m.model === current);
       return { model: current, label: known ? known.label : current.split('/').pop() };
     },

@@ -12,11 +12,13 @@
   <header class="bar">
     <span class="brand"><img src="falcon.png" alt="" width="18" height="18">F A L C O N</span>
     <span class="bar-right">
+      <button id="mind" type="button" class="mind" title="The AI Falcon thinks with. Change it in Settings." hidden><i></i><span id="mind-name">…</span></button>
       <span id="status-dots" class="dots" hidden>
         <span id="dot-voice" class="dot" title="Voice: not set up"><i></i>Voice</span>
         <span id="dot-telegram" class="dot" title="Telegram: not connected"><i></i>Telegram</span>
         <span id="dot-chrome" class="dot" title="Your Chrome: not connected"><i></i>Chrome</span>
       </span>
+      <button id="more" type="button" class="icon" title="Show more: what Falcon can do and how he is working" aria-label="Show more" aria-pressed="false" hidden>⤢</button>
       <button id="open-connections" class="icon" title="Settings" aria-label="Settings" hidden>⚙</button>
     </span>
   </header>
@@ -93,6 +95,10 @@
       <div id="history" class="history"></div>
       <p id="said" class="said"></p>
       <p id="reply" class="reply">At your service.</p>
+      <div id="steps-home" class="steps-home">
+        <div id="steps" class="steps" aria-label="What Falcon is doing" hidden></div>
+      </div>
+      <button id="receipt" type="button" class="receipt" title="Show how this was done" hidden></button>
       <div id="scout" class="scout" hidden aria-label="Scout in progress">
         <div class="scout-radar"><div class="scout-sweep"></div><div id="scout-dots"></div><div class="scout-core"></div></div>
         <div class="scout-body">
@@ -123,6 +129,25 @@
     </form>
     <p id="shortcut-hint" class="hint shortcut" hidden>Press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Space</kbd> anywhere to call me.</p>
   </section>
+
+  <!-- Show more: what Falcon can do (left) and how he is working (right) -->
+  <aside id="side-skills" class="side side-left" aria-label="What Falcon can do" hidden>
+    <p class="side-title">What I can do</p>
+    <div id="skill-tiles" class="tiles"></div>
+    <p id="skill-try" class="side-note">Press a skill to see what to ask.</p>
+  </aside>
+  <aside id="side-work" class="side side-right" aria-label="How Falcon is working" hidden>
+    <p class="side-title">What I am doing</p>
+    <p id="steps-empty" class="side-note">Nothing at the moment. Each step appears here as it happens.</p>
+    <div id="steps-wide"></div>
+    <p class="side-title gap">Thinking with</p>
+    <p class="side-row"><span>Main AI</span><b id="side-mind">…</b></p>
+    <p class="side-row"><span>Simple requests</span><b>no AI needed</b></p>
+    <p class="side-title gap">Today</p>
+    <p class="side-row"><span>Requests</span><b id="today-asks">0</b></p>
+    <p class="side-row"><span>Steps taken</span><b id="today-steps">0</b></p>
+    <p class="side-row"><span>Done without AI</span><b id="today-fast">0</b></p>
+  </aside>
 
   <!-- Settings -->
   <section id="screen-connections" class="screen left" hidden>

@@ -5,7 +5,11 @@ function showScreen(name) {
   for (const s of screens) $(`screen-${s}`).hidden = s !== name;
   $('open-connections').hidden = name !== 'main';
   $('status-dots').hidden = name !== 'main';
-  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); }
+  $('mind').hidden = name !== 'main';
+  $('more').hidden = name !== 'main';
+  document.body.classList.toggle('on-main', name === 'main');
+  for (const side of document.querySelectorAll('.side')) side.hidden = name !== 'main';
+  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); refreshMind(); }
   if (name !== 'main' && voice && voice.active()) voice.stop();
   if (name === 'connections') refreshConnections();
 }
@@ -133,9 +137,33 @@ const setupKey = keyHelper('setup-key', 'setup-key-kind', 'setup-models', false)
 const panelKey = keyHelper('key-value', 'key-kind', 'key-models');
 
 async function showCurrentModel() {
-  try { $('model-now').textContent = (await window.falcon.currentModel()).label || 'the default model'; }
-  catch { $('model-now').textContent = 'the default model'; }
+  mindAsked = 0;
+  await refreshMind();
+  $('model-now').textContent = mindName || 'the default model';
 }
+
+// ---- The AI Falcon thinks with, shown in the title bar and under each answer ----
+// Asking the engine takes a few seconds, so the last name seen is shown at once and then checked.
+let mindName = '';
+try { mindName = localStorage.getItem('falcon-mind') || ''; } catch { /* storage unavailable */ }
+function showMind() {
+  $('mind-name').textContent = mindName || 'AI';
+  $('side-mind').textContent = mindName || '…';
+}
+showMind();
+let mindAsked = 0;
+async function refreshMind() {
+  if (Date.now() - mindAsked < 5000) return;
+  mindAsked = Date.now();
+  try {
+    const label = (await window.falcon.currentModel()).label;
+    if (!label) return;
+    mindName = label;
+    try { localStorage.setItem('falcon-mind', label); } catch { /* storage unavailable */ }
+    showMind();
+  } catch { /* keep the last name seen */ }
+}
+$('mind').addEventListener('click', () => { showScreen('connections'); showTab('key'); });
 
 $('key-save').addEventListener('click', () => withButton($('key-save'), async () => {
   if (!$('key-value').value.trim()) return note('key-message', 'Paste the key first.', 'bad');
@@ -402,6 +430,148 @@ document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && 
 
 function showActions(items) { $('actions').replaceChildren(...actionCards(items)); scrollTalk(); }
 
+// ---- What Falcon can do, and what he is doing ----
+// The skills shown in the wide view. Each lights up while a step uses it; pressing one puts an
+// example in the box, so the user learns what to ask without anything being done.
+const SKILLS = [
+  ['files', 'Files', 'Find last month\'s invoice.'],
+  ['apps', 'Apps', 'Open Excel.'],
+  ['screen', 'Screen', 'What is on my screen right now?'],
+  ['browser', 'Browser', 'Open bbc.com/news and tell me the top headline.'],
+  ['slides', 'Slides', 'Open my quarterly review presentation and go to slide 5.'],
+  ['pictures', 'Pictures', 'Draw a falcon over a city at sunset.'],
+  ['scout', 'Scout', 'Scout Uzum and tell me what you find.'],
+  ['memory', 'Memory', 'Remember that my accountant is called Ann.'],
+];
+for (const [id, name, example] of SKILLS) {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'tile';
+  tile.dataset.skill = id;
+  const title = document.createElement('span');
+  title.textContent = name;
+  const state = document.createElement('small');
+  state.textContent = 'Ready';
+  tile.append(title, state);
+  tile.addEventListener('click', () => {
+    const tryIt = document.createElement('button');
+    tryIt.type = 'button';
+    tryIt.textContent = `“${example}”`;
+    tryIt.title = 'Put this in the box';
+    tryIt.addEventListener('click', () => { $('ask-text').value = example; $('ask-text').focus(); });
+    $('skill-try').replaceChildren('Try: ', tryIt);
+  });
+  $('skill-tiles').append(tile);
+}
+function lightSkill(skill) {
+  for (const tile of document.querySelectorAll('.tile')) {
+    const on = Boolean(skill) && tile.dataset.skill === skill;
+    tile.classList.toggle('use', on);
+    tile.lastChild.textContent = on ? 'In use' : 'Ready';
+  }
+}
+
+// Today's counts, kept on this computer only.
+function todayCounts() {
+  const day = new Date().toDateString();
+  let counts = { day, asks: 0, steps: 0, fast: 0 };
+  try { const saved = JSON.parse(localStorage.getItem('falcon-today') || '{}'); if (saved.day === day) counts = { ...counts, ...saved }; } catch { /* start afresh */ }
+  return counts;
+}
+function countToday(change) {
+  const counts = todayCounts();
+  for (const [k, v] of Object.entries(change)) counts[k] += v;
+  try { localStorage.setItem('falcon-today', JSON.stringify(counts)); } catch { /* storage unavailable */ }
+  showToday(counts);
+}
+function showToday(counts = todayCounts()) {
+  $('today-asks').textContent = String(counts.asks);
+  $('today-steps').textContent = String(counts.steps);
+  $('today-fast').textContent = String(counts.fast);
+}
+showToday();
+
+// The live list of steps: the one under way glows; finished ones get a tick and their time.
+// Narrow window: shown while he works, then folded into one line under the answer.
+// Wide window: always shown on the right.
+let stepRows = [];
+function stepsReset() {
+  stepRows = [];
+  $('steps').replaceChildren();
+  $('steps').hidden = true;
+  $('receipt').hidden = true;
+  $('steps-empty').hidden = false;
+  lightSkill('');
+}
+function stepFinish(cut = false) {
+  const last = stepRows[stepRows.length - 1];
+  if (!last || last.done) return;
+  last.done = true;
+  const seconds = Math.round((Date.now() - last.started) / 1000);
+  last.row.classList.remove('now');
+  last.row.classList.toggle('cut', cut);
+  last.row.querySelector('.ic').textContent = cut ? '–' : '✓';
+  last.row.querySelector('.tm').textContent = cut ? '' : `${Math.max(1, seconds)} s`;
+}
+function stepAdd(text, skill, thinking = false) {
+  const last = stepRows[stepRows.length - 1];
+  if (last && !last.done && last.text === text) return;   // the same step, announced again
+  stepFinish();
+  const row = document.createElement('div');
+  row.className = 'step now';
+  for (const cls of ['ic', 'tx', 'tm']) row.append(Object.assign(document.createElement('span'), { className: cls }));
+  row.querySelector('.tx').textContent = text;
+  $('steps').append(row);
+  stepRows.push({ row, text, started: Date.now(), done: false, thinking });
+  while ($('steps').childElementCount > 12) $('steps').firstElementChild.remove();
+  $('steps').hidden = false;
+  $('steps-empty').hidden = true;
+  lightSkill(skill);
+  scrollTalk();
+}
+// When he has finished: the line under the answer says how it was done.
+function stepsDone({ summary, stopped, failed, russian }) {
+  stepFinish(stopped || failed);
+  lightSkill('');
+  const n = stepRows.filter((r) => !r.thinking).length;   // "Thinking" is not a step he took
+  const seconds = Math.max(1, Math.round((summary?.ms || 0) / 1000));
+  let line = '';
+  if (summary?.fast) line = russian ? 'Сделано сразу · без ИИ' : 'Done at once · no AI needed';
+  else if (stopped) line = n ? (russian ? `Остановлено после ${n} шаг.` : `Stopped after ${n} ${n === 1 ? 'step' : 'steps'}`) : '';
+  else if (summary && !failed) {
+    const steps = n ? (russian ? `${n} шаг. · ` : `${n} ${n === 1 ? 'step' : 'steps'} · `) : '';
+    line = `${steps}${seconds} ${russian ? 'с' : 's'}${mindName ? ` · ${mindName}` : ''}`;
+  }
+  $('receipt').textContent = line;
+  $('receipt').hidden = !line;
+  $('receipt').disabled = !n;
+  $('receipt').title = n ? 'Show how this was done' : '';
+  if (!document.body.classList.contains('wide')) $('steps').hidden = true;
+  if (summary) countToday({ asks: 1, steps: n, fast: summary.fast ? 1 : 0 });
+}
+$('receipt').addEventListener('click', () => { if (stepRows.length) { $('steps').hidden = !$('steps').hidden; scrollTalk(); } });
+
+// Show more: the window widens to show his skills on the left and his work on the right.
+function setWide(on, resize = true) {
+  document.body.classList.toggle('wide', on);
+  $('more').setAttribute('aria-pressed', String(on));
+  $('more').title = on ? 'Show less' : 'Show more: what Falcon can do and how he is working';
+  $(on ? 'steps-wide' : 'steps-home').append($('steps'));
+  $('steps').hidden = !on && (!busy || !stepRows.length);
+  if (on && stepRows.length) $('steps').hidden = false;
+  try { localStorage.setItem('falcon-wide', on ? 'yes' : 'no'); } catch { /* storage unavailable */ }
+  if (!resize) return;
+  // Falcon's window is his own, so it may change its size; centred on where it was.
+  try {
+    const width = on ? Math.min(1120, screen.availWidth) : 520;
+    const left = Math.max(0, window.screenX + Math.round((window.outerWidth - width) / 2));
+    window.resizeTo(width, window.outerHeight);
+    window.moveTo(Math.min(left, Math.max(0, screen.availWidth - width)), window.screenY);
+  } catch { /* the browser decides */ }
+}
+$('more').addEventListener('click', () => setWide(!document.body.classList.contains('wide')));
+try { if (localStorage.getItem('falcon-wide') === 'yes') setWide(true); } catch { /* storage unavailable */ }
+
 // Moves the finished question, answer and cards up into the dimmer history above.
 function archiveExchange() {
   if (!$('said').textContent) return;
@@ -418,6 +588,7 @@ function archiveExchange() {
     $('history').appendChild(cards);
   }
   $('actions').replaceChildren();
+  stepsReset();
   while ($('history').childElementCount > 60) $('history').firstElementChild.remove();
   scrollTalk();
 }
@@ -486,7 +657,12 @@ async function sendToFalcon(text, shown = text) {
   let cards = [];
   let dossier = '';
   let found = null;
+  let summary = null;
+  let failed = false;
   $('scout').hidden = true;
+  $('mind').classList.add('working');
+  // The AI can think for a while before its first step; say so at once, instead of an empty list.
+  stepAdd(/[а-яё]/i.test(text) ? 'Думаю' : 'Thinking', '', true);
   const reveal = createReveal($('reply'));
   // If the answer takes a moment, say so instead of sitting silent.
   const russian = /[а-яё]/i.test(text);
@@ -509,12 +685,13 @@ async function sendToFalcon(text, shown = text) {
     clearInterval(patience);
     if ($('reply').classList.contains('waiting')) { $('reply').classList.remove('waiting'); $('reply').textContent = ''; }
   };
-  const fail = (message) => { clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); };
+  const fail = (message) => { failed = true; clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); };
   try {
     await window.falcon.chat(text, {
       onDelta: (piece) => { clearWaiting(); answer += piece; reveal.set(plainSpeech(answer)); setOrb('speaking'); },
       onActions: (items) => { cards = items; },
-      onStep: (line) => { step = line; if (!answer) setOrb('thinking'); },
+      onStep: (line, skill) => { step = line; stepAdd(line, skill); if (!answer) setOrb('thinking'); },
+      onSummary: (s) => { summary = s; },
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
       onFile: (file) => { found = file; },
@@ -537,6 +714,8 @@ async function sendToFalcon(text, shown = text) {
   }
   clearWaiting();
   if (!answer) $('reply').textContent = dossier ? `The dossier is ready, ${address()}.` : `Done, ${address()}.`;
+  stepsDone({ summary, stopped, failed, russian });
+  $('mind').classList.remove('working');
   setOrb('idle');
   busy = false;
   stopChat = null;
@@ -885,6 +1064,25 @@ if (query.get('preview') === 'busy') {
   note('tg-message', 'Connecting to Telegram, this can take half a minute', 'working');
   $('chrome-test').classList.add('busy');
   note('chrome-message', 'Asking Chrome. Click Allow if it asks', 'working');
+}
+// Design check only: Falcon part-way through a job, then finished, with made-up steps.
+if (query.get('preview') === 'work' || query.get('preview') === 'worked') {
+  $('examples').hidden = true;
+  mindName = 'Claude Haiku 5.5'; showMind();
+  $('said').textContent = 'Find last month\'s invoice and make a short summary of it.';
+  stepAdd('Looking for the file', 'files');
+  stepFinish();
+  stepAdd('Reading Invoice October.pdf', 'files');
+  stepFinish();
+  stepAdd('Making the document', 'files');
+  if (query.get('preview') === 'work') {
+    $('mind').classList.add('working'); setOrb('thinking');
+    $('reply').textContent = 'Making the document…';
+    $('reply').classList.add('waiting');
+  } else {
+    $('reply').textContent = 'The summary is on your desktop, sir: Invoice October summary.docx.';
+    stepsDone({ summary: { fast: false, steps: 3, ms: 14000 }, stopped: false, failed: false, russian: false });
+  }
 }
 if (query.get('preview') === 'talk') {
   $('said').textContent = 'Good morning, Falcon.';

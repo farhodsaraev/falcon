@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createDirectLine, DirectLineUnavailable, stepText } from '../src/app/directline.js';
+import { createDirectLine, DirectLineUnavailable, stepText, stepSkill } from '../src/app/directline.js';
 import { startServer } from '../src/app/server.js';
 
 // A stand-in for the engine's end of the line. `script(method, params, engine)` answers each request;
@@ -104,6 +104,22 @@ test('direct line: each step is described in the user\'s terms, never by the nam
     assert.doesNotMatch(stepText(step), /openclaw|exec|web_|tool|skill/i);
   }
   assert.equal(stepText({ name: 'web_search', args: { query: 'курс доллара' } }, true), 'Ищу в интернете: курс доллара');
+  // Seen on the real engine: the short title carries quotes and how many results were asked for.
+  assert.equal(stepText({ name: 'web_search', args: {}, meta: '"Tashkent weather today" (top 5)' }), 'Searching the web: Tashkent weather today');
+});
+
+test('direct line: each step names the skill it uses, so the window can light it up', () => {
+  const cases = [
+    [{ name: 'web_search', args: { query: 'x' } }, 'browser'],
+    [{ name: 'exec', args: { command: 'powershell -File "C:\\x\\skills\\presentations\\slides.ps1" -Go 5' } }, 'slides'],
+    [{ name: 'exec', args: { command: 'powershell -File "C:\\x\\skills\\files\\find-files.ps1" -Query invoice' } }, 'files'],
+    [{ name: 'exec', args: { command: 'whoami' } }, ''],
+    [{ name: 'read', args: { path: 'C:\\Users\\a\\.openclaw\\workspace\\SKILL.md' } }, ''],
+    [{ name: 'read', args: { path: 'C:\\Users\\a\\Desktop\\Plan.docx' } }, 'files'],
+    [{ name: 'image_generate', args: {} }, 'pictures'],
+    [{ name: 'some_new_tool', args: {} }, ''],
+  ];
+  for (const [step, want] of cases) assert.equal(stepSkill(step), want, JSON.stringify(step));
 });
 
 test('direct line: watching a conversation reports each step once, whoever sent the request; stop names the conversation', async () => {
@@ -153,7 +169,7 @@ test('the window sends requests the owner\'s way and uses the direct line to sho
   const ask = (text, signal) => fetch(`http://127.0.0.1:${s.port}/api/chat`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ text }) }).then((r) => r.text());
   try {
     const text = await ask('What is the weather?');
-    assert.match(text, /event: step\ndata: {"text":"Searching the web: weather tashkent"}/);
+    assert.match(text, /event: step\ndata: {"text":"Searching the web: weather tashkent","skill":"browser"}/);
     assert.match(text, /Sunny, sir\./);
     assert.match(text, /event: actions\ndata: {"items":\["Checked the weather"\]}/);
     assert.match(sent[0][0], /^falcon-window-/, 'sent to the engine\'s web address, where it counts as the owner\'s');

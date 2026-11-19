@@ -187,7 +187,7 @@ export function createDirectLine({ readGateway, WebSocketImpl = globalThis.WebSo
 export function stepText({ name, args = {}, meta = '' }, russian = false) {
   // Watching a conversation, the engine gives a short title for the step instead of its details.
   if (meta && !Object.keys(args).length) {
-    if (name === 'web_search') args = { query: meta.replace(/^for\s+/i, '').replace(/^["“]|["”]$/g, '') };
+    if (name === 'web_search') args = { query: meta.replace(/^for\s+/i, '').replace(/\s*\((?:top|first)\s+\d+\)\s*$/i, '').replace(/^["“]|["”]$/g, '') };
     else if (name === 'web_fetch' || name === 'browser') args = { url: /^https?:/.test(meta) ? meta : (meta.match(/https?:\/\/\S+/) || [''])[0] };
     else if (name === 'read' || name === 'write' || name === 'edit') args = { path: meta };
     else if (name === 'exec') args = { command: meta, title: meta };
@@ -229,5 +229,29 @@ export function stepText({ name, args = {}, meta = '' }, russian = false) {
     case 'image': return say('Looking at the picture', 'Смотрю на изображение');
     case 'computer': return say('Working on the screen', 'Работаю на экране');
     default: return say('Working on it', 'Работаю над этим');
+  }
+}
+
+/**
+ * Which of Falcon's skills a step uses, so the window can light that skill up while he works:
+ * files, apps, screen, browser, slides, pictures, scout, memory, or '' when it is none of them.
+ */
+export function stepSkill({ name, args = {}, meta = '' }) {
+  const command = String(args.command || (name === 'exec' ? meta : '') || '');
+  switch (name) {
+    case 'exec':
+      if (/slides\.(ps1|mjs)/.test(command)) return 'slides';
+      if (/(find-files|read-file|share-file|make-document)\.(ps1|mjs)/.test(command)) return 'files';
+      if (/screenshot\.(ps1|mjs)/.test(command)) return 'screen';
+      if (/scout[\w.-]*\.(ps1|mjs)/.test(command)) return 'scout';
+      if (/apps\.(ps1|mjs)/.test(command)) return 'apps';
+      return '';
+    case 'web_search': case 'web_fetch': case 'browser': return 'browser';
+    case 'read': case 'write': case 'edit': case 'apply_patch':
+      return /[\\/]\.openclaw[\\/]/.test(String(args.path || args.file_path || (name === 'read' ? meta : '') || '')) ? '' : 'files';
+    case 'memory_search': case 'memory_get': return 'memory';
+    case 'image': case 'view_image': case 'computer': return 'screen';
+    case 'image_generate': case 'video_generate': case 'music_generate': return 'pictures';
+    default: return '';
   }
 }
