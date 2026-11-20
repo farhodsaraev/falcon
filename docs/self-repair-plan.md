@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stages 0 and 1 are complete. Stage 2 is built; its test on a clean Windows PC is in progress.
+Status: Stages 0, 1 and 2 are complete. Stage 2B is next.
 
 ## 1. Purpose
 
@@ -198,12 +198,13 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - **Tested on 2026-11-20 on the owner's PC:** the owner allowed the C-drive program. Then Falcon used it and gave the correct free space (76.1 GB of 475.8 GB, the same as Windows shows).
 - **Small gap:** while the program operates, the step shows the engine's own title, not "Using something I learned". The window gets only the title of that step.
 
-### Stage 2: Git and the workshop (built on 2026-11-20, clean-Windows test not done)
+### Stage 2: Git and the workshop (complete on 2026-11-20)
 
 - **Built:** finding Git or installing the portable Git with its checksum, the local history, the workshop copy, the tests and the start check in the workshop, the switch, and the watchdog that puts the last working version back.
 - **Tested on a temporary copy on a developer PC:** a good change was switched in and kept in 5 seconds. A change that breaks the start was put back after the 60-second wait, and the last working version started again (66 seconds in total).
 - **The watchdog waits 60 seconds** for the new version to answer. Then it puts the last working version back and starts it. The total time is a little more than 60 seconds.
-- **Not done yet:** the test on a clean Windows PC without Git, and a message in the window when Falcon puts the last version back. The owner cannot use the workshop yet; Stage 3 connects it.
+- **Tested on a clean Windows PC without Git (2026-11-20):** Falcon installed the portable Git (MinGit 2.56.1) and checked its checksum. A good change was switched in and kept in 2 seconds. A change that breaks the start was put back after 63 seconds, and the last working version started again.
+- **Not done yet:** a message in the window when Falcon puts the last version back. The owner cannot use the workshop yet; Stage 3 connects it.
 - **Task:** Install the portable Git if the PC does not have Git. Make the local history from the installed files.
 - **Task:** Make the workshop copy, the test step, the start step, and the automatic return to the last version.
 - **Task:** Add the removal of Falcon's Git to the uninstaller.
