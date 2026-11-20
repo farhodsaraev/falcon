@@ -28,6 +28,7 @@ The owner tells Falcon about a fault or asks for a new function. Falcon reads hi
 | Local history | The Git record of Falcon's files on one PC. It has no connection to GitHub. |
 | Branch | A separate line of changes in the local history. |
 | Workshop | A full, separate copy of Falcon on the same PC, on its own branch. |
+| Workshop window | A second Falcon window that shows the work in the workshop while it occurs. |
 | Coding tool | A program that writes code: OpenCode, Codex, or the engine. |
 | Writer | The coding tool that makes a change. |
 | Reviewer | A different coding tool that examines the change. |
@@ -53,13 +54,13 @@ The owner tells Falcon about a fault or asks for a new function. Falcon reads hi
 
 1. The owner describes the fault in Falcon's window.
 2. Falcon tells the owner the estimated cost. The owner approves.
-3. Falcon makes the workshop copy on a new branch.
+3. Falcon makes the workshop copy on a new branch and opens the workshop window.
 4. The writer finds the cause and changes the files in the workshop.
 5. Falcon adds a test that shows the fault. This test must pass after the repair.
 6. Falcon does all automatic tests in the workshop.
 7. The reviewer examines the change. If the reviewer finds a problem, the writer corrects it.
 8. Falcon starts the workshop copy and makes sure that it answers.
-9. Falcon shows the summary to the owner. The owner approves or refuses.
+9. Falcon shows the summary in the workshop window. The owner approves or refuses.
 10. Falcon saves the last version, installs the change, and starts again.
 11. If the start is not successful, Falcon goes back to the last version and tells the owner.
 12. Falcon records the change in the local history as a personal change.
@@ -99,12 +100,34 @@ A private copy of the full engine is not part of this plan. The maker can decide
 - When a release arrives, Falcon updates the release branch. Then Git applies the personal changes on top of the new release.
 - Git reports each personal change that does not fit. Falcon then obeys Stage 4.
 
-## 8. Work stages
+## 8. The workshop window
+
+The workshop window is Falcon's own window. It is not the screen of the coding tool. Thus the owner sees the same window for each coding tool, in Falcon's style and with Falcon's name.
+
+The window shows these items while the work occurs:
+
+- The task, in the owner's words.
+- The AI model that does the work.
+- Each step, in plain words. Example: "Running the tests".
+- Each file that changed, with the lines before and after the change. Removed lines are red. Added lines are green.
+- The test results: the number of tests that pass, and the names of the tests that fail.
+- The cost and the time up to this moment.
+
+The window has these controls:
+
+- **Stop:** stops the work. The Falcon that is in operation does not change.
+- **Approve** and **Refuse:** shown when the work is complete.
+- **Show details:** shows the full output of the coding tool. This control is for the maker.
+
+How it operates: the coding tool sends its work to Falcon as a sequence of events. Falcon reads the events and shows them in the window. Stage 0 must make sure that each coding tool can send these events on Windows.
+
+## 9. Work stages
 
 ### Stage 0: Trial of the coding tools
 
 - **Task:** Give the same 3 real Falcon faults to OpenCode, to Codex, and to the engine. Do the trial on Windows.
 - **Measure:** the number of correct repairs, the time, and the cost for each tool.
+- **Examine:** if each tool can send its work as events for the workshop window.
 - **Result:** the best writer and the best reviewer.
 - **Time:** half a day. **Cost:** 2 to 5 US dollars of AI credit.
 
@@ -126,9 +149,11 @@ A private copy of the full engine is not part of this plan. The maker can decide
 
 ### Stage 3: Fault repair with a writer and a reviewer
 
-- **Task:** Connect the 2 selected coding tools to the workshop. Add the cost estimate and the approval screen.
+- **Task:** Connect the 2 selected coding tools to the workshop. Add the cost estimate.
+- **Task:** Make the workshop window as section 8 tells.
 - **Done when:** Falcon repairs 3 known faults from a plain request, and all tests pass.
-- **Time:** 2 to 3 days.
+- **Done when:** the owner sees each step and each changed file in the workshop window, and the Stop control operates.
+- **Time:** 4 to 6 days.
 
 ### Stage 4: Personal changes that stay after a release
 
@@ -161,7 +186,7 @@ A private copy of the full engine is not part of this plan. The maker can decide
 - **Task:** 2 or 3 coding tools repair the same fault in separate workshops. Falcon keeps the repair that passes all tests with the smallest change.
 - **Time:** 1 day.
 
-## 9. Cost for the user
+## 10. Cost for the user
 
 | Method | Cost for each repair |
 |---|---|
@@ -171,11 +196,11 @@ A private copy of the full engine is not part of this plan. The maker can decide
 
 Repairs use a stronger AI model than daily work. Daily work continues to use the low-cost model.
 
-## 10. Sequence and total time
+## 11. Sequence and total time
 
-Do the stages in this sequence: 0, 1, 2, 3, 4, 5, 6. Stage 7 is optional. The total time is approximately 15 to 21 work days.
+Do the stages in this sequence: 0, 1, 2, 3, 4, 5, 6. Stage 7 is optional. The total time is approximately 17 to 24 work days.
 
-## 11. Decisions that the maker must make
+## 12. Decisions that the maker must make
 
 1. Approve the trial in Stage 0 and its cost of 2 to 5 US dollars.
 2. Decide if customers can install repairs on their PCs, or only send them to the maker.
