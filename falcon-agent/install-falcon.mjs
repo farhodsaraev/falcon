@@ -99,6 +99,7 @@ export async function installFalcon({
   configFile = path.join(os.homedir(), '.openclaw', 'openclaw.json'),
   runEngine = defaultRunEngine,
   retryDelayMs = 3000,
+  addonsFrom = path.join(here, 'addons'),
   log = console.log,
 } = {}) {
   if (!fs.existsSync(workspace)) throw new Error(`Workspace not found at ${workspace}. Set up the engine first.`);
@@ -188,6 +189,27 @@ export async function installFalcon({
   for (const file of ['index.js', 'words.js', 'package.json', 'openclaw.plugin.json']) {
     fs.copyFileSync(path.join(here, 'engine-addon', file), path.join(addonDir, file));
   }
+  // Add-ons Falcon made for himself (self-repair plan, stage 6): each folder in falcon-agent/addons is copied
+  // beside the engine's settings, where engine updates never reach, and loaded like the one above. One no
+  // longer in the pack is removed.
+  const ownAddonsDir = path.join(path.dirname(workspace), 'addons');
+  const ownAddons = [];
+  fs.mkdirSync(ownAddonsDir, { recursive: true });
+  let packAddons = [];
+  try { packAddons = fs.readdirSync(addonsFrom, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { /* none yet */ }
+  for (const name of fs.readdirSync(ownAddonsDir)) {
+    if (!packAddons.includes(name)) fs.rmSync(path.join(ownAddonsDir, name), { recursive: true, force: true });
+  }
+  for (const name of packAddons) {
+    const source = path.join(addonsFrom, name);
+    let id = '';
+    try { id = String(JSON.parse(read(path.join(source, 'openclaw.plugin.json'))).id || ''); } catch { continue; }
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(id)) continue;
+    const target = path.join(ownAddonsDir, name);
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.cpSync(source, target, { recursive: true });
+    ownAddons.push({ id, dir: target });
+  }
   log(`Falcon is installed in ${workspace}`);
   if (skipSettings) return { ok: true, settings: [] };
 
@@ -265,11 +287,14 @@ export async function installFalcon({
     let loadPaths = [];
     try { loadPaths = JSON.parse(fs.readFileSync(configFile, 'utf8')).plugins?.load?.paths || []; } catch { /* no settings yet */ }
     const addonFile = path.join(temp, 'addon.json');
+    // His own add-ons join it; paths to ones he no longer has are dropped.
+    const keptPaths = loadPaths.filter((p) => typeof p === 'string' && path.dirname(path.resolve(p)) !== path.resolve(ownAddonsDir));
     fs.writeFileSync(addonFile, JSON.stringify([
-      { path: 'plugins.load.paths', value: [...new Set([...loadPaths.filter((p) => typeof p === 'string'), addonDir])] },
+      { path: 'plugins.load.paths', value: [...new Set([...keptPaths, addonDir, ...ownAddons.map((a) => a.dir)])] },
       { path: 'plugins.entries.falcon-words.enabled', value: true },
+      ...ownAddons.map((a) => ({ path: `plugins.entries.${a.id}.enabled`, value: true })),
     ]));
-    await step('his own words in every message', ['config', 'set', '--batch-file', addonFile], undefined, { optional: true });
+    await step(ownAddons.length ? `his own words in every message, and ${ownAddons.length} add-ons of his own` : 'his own words in every message', ['config', 'set', '--batch-file', addonFile], undefined, { optional: true });
 
     // Ask-first approvals, with Falcon's own small programs pre-approved in the same document.
     const approvals = JSON.parse(APPROVALS);

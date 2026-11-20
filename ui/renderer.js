@@ -693,6 +693,7 @@ const SKILL_HELP = {
   mail: ['Uses your own Chrome, where you are signed in.', 'connections'],
   search: ['A free Google key makes searches more thorough.', 'key'],
   repair: ['Tell Falcon what to fix or add. He works on a separate copy of himself and asks before anything changes.', null],
+  addons: ['New tools Falcon makes for himself when a repair needs one. Ask for one in the Workshop.', null],
 };
 function openWorkshop() {
   window.open(window.falcon.workshopUrl(), 'falcon-workshop', 'width=900,height=820');
@@ -727,7 +728,7 @@ for (const [id, name, example] of SKILLS) {
       go.addEventListener('click', () => { showScreen('connections'); showTab(settingsTab); });
       $('skill-try').append(' ', go);
     }
-    if (id === 'repair') {
+    if (id === 'repair' || id === 'addons') {
       const open = document.createElement('button');
       open.type = 'button';
       open.textContent = 'Open the workshop';
@@ -781,6 +782,10 @@ async function refreshAbilities() {
   window.falcon.connections().then((c) => setTileIdle('telegram', c.telegram ? 'Connected' : 'Not set up', !c.telegram)).catch(() => {});
   window.falcon.searchStatus().then(({ via }) => setTileIdle('search', via ? 'Ready' : 'Off', !via)).catch(() => {});
   window.falcon.briefing().then((b) => setTileIdle('briefing', b.enabled ? `Daily at ${b.time}` : 'Off')).catch(() => {});
+  window.falcon.addons().then(({ addons }) => {
+    const off = addons.filter((a) => a.loaded === false).length;
+    setTileIdle('addons', off ? 'Off' : addons.length ? `${addons.length} made` : 'None yet', off > 0);
+  }).catch(() => {});
   Promise.all([window.falcon.repair(), window.falcon.personal().catch(() => ({ changes: [] }))])
     .then(([repair, mine]) => showRepairState({ ...repair, changes: mine.changes.filter((c) => c.on).length })).catch(() => {});
 }

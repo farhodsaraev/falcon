@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stages 0, 1 and 2 are complete. Stages 2B, 3 and 4 are built and tried. Stage 5 is next.
+Status: Stages 0, 1 and 2 are complete. Stages 2B, 3 and 4 are built and tried. Stage 5 is postponed. Stage 6 add-ons are built; engine patches are not started.
 
 ## 1. Purpose
 
@@ -123,7 +123,7 @@ How it operates: the coding tool sends its work to Falcon as a sequence of event
 
 ## 8B. The panel "What I can do"
 
-The panel "What I can do" shows each function of Falcon as a tile: Files, Documents, Apps, Screen, Browser, Web search, Mail and calendar, Slides, Pictures and video, Scout, Memory, Music and volume, Telegram, Morning briefing, Voice, and Learned. A function that needs a setting shows its state, for example "Not set up" or "Daily at 08:00". Each stage that adds a function to the owner also adds or changes a tile. A tile shows the state of its function in 1 to 3 words. It lights while Falcon uses it. When the owner presses it, it shows an example request.
+The panel "What I can do" shows each function of Falcon as a tile: Files, Documents, Apps, Screen, Browser, Web search, Mail and calendar, Slides, Pictures and video, Scout, Memory, Music and volume, Telegram, Morning briefing, Voice, Learned, Repair, and Add-ons. A function that needs a setting shows its state, for example "Not set up" or "Daily at 08:00". Each stage that adds a function to the owner also adds or changes a tile. A tile shows the state of its function in 1 to 3 words. It lights while Falcon uses it. When the owner presses it, it shows an example request.
 
 | Stage | Tile | Text on the tile |
 |---|---|---|
@@ -255,13 +255,23 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - **Done when:** a PC with 2 personal changes gets a release, and Falcon operates correctly afterwards.
 - **Time:** 3 to 5 days.
 
-### Stage 5: Send a repair to the maker
+### Stage 5: Send a repair to the maker (postponed by the maker on 2026-11-20)
+
+- The maker decided that customers do not send repairs for now. Do this stage later, when the maker asks.
 
 - **Task:** The owner can send a repair to the maker as a proposal. The maker approves it, and the next release gives it to all users.
 - **Done when:** a repair from a test PC arrives on GitHub as a proposal, with no personal data.
 - **Time:** 1 to 2 days.
 
-### Stage 6: Add-ons and engine patches
+### Stage 6: Add-ons and engine patches (add-ons built on 2026-11-20; engine patches not started)
+
+- **Built:** a repair can make an add-on in falcon-agent/addons/<name>. The writer gets the instructions for the folder, the manifest and the tool. After the tests and the start check, Falcon loads each add-on that the repair changed in a private copy of the engine settings (not the engine in use), and makes sure that it loads and gives its tools. If it does not load, the writer gets the reason for one correction. If it still does not load, the repair cannot be approved.
+- At each setup, Falcon copies his add-ons beside the engine settings, where an engine update does not go, and tells the engine to load them. He removes an add-on that is no longer in his folder. Other load paths stay.
+- An add-on is part of a repair, so it is a personal change and stays after a Falcon update (Stage 4).
+- The tile "Add-ons" shows "None yet", the number that Falcon made, or "Off" if the engine did not load one.
+- **Tested:** the load check with the real engine: a good add-on loaded with its tool, and a broken add-on was found ("failed during load"). The check takes 30 to 60 seconds. Automatic tests: the list of add-ons, the copy and the load paths at setup, and a repair whose add-on does not load the first time.
+- **Not done:** engine patches (section 6). The "second copy of the engine" is only the private load check, not a second running engine.
+- **Not tested yet:** an add-on made by a real AI, and an add-on after a real engine update.
 
 - **Task:** Falcon writes an add-on in the workshop, tests it, and installs it.
 - **Task:** Start a second copy of the engine in the workshop for tests of add-ons and patches.

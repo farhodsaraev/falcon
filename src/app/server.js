@@ -14,6 +14,7 @@ import { ensureGit } from './git.js';
 import { historyDir, openHistory, switchToWorkshop } from './workshop.js';
 import { adoptRelease, changePatch, leaveNotice, readChanges, rebuild, setChanges, takeNotice } from './personal.js';
 import { createRepairs } from './repair.js';
+import { lastJson as engineJson, listAddons } from './addons.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
 import { createDirectLine, stepText, stepSkill } from './directline.js';
@@ -1345,6 +1346,22 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     },
     // "Show details": the coding tool's own output, for the maker. Keys are already blanked out.
     'GET /api/repair/log': async () => ({ lines: api.repairs.status()?.log || [] }),
+
+    // ---- Add-ons Falcon made for himself (stage 6): how many, and whether the engine loaded each ----
+    'GET /api/addons': async () => {
+      const own = listAddons(root);
+      if (!own.length) return { addons: [] };
+      const { code, out } = await api.runEngine(['plugins', 'list', '--json'], { timeoutMs: 120000 });
+      let listed = [];
+      const doc = engineJson(out);
+      if (Array.isArray(doc?.plugins)) listed = doc.plugins;
+      return {
+        addons: own.map((a) => {
+          const seen = listed.find((p) => p.id === a.id);
+          return { id: a.id, name: String(a.manifest.name || a.id), loaded: code === 0 && seen ? seen.status === 'loaded' && seen.enabled !== false : null };
+        }),
+      };
+    },
 
     // ---- The owner's own changes (Workshop window) ----
     'GET /api/personal': async () => ({ changes: readChanges().map(({ id, title, at, on, state }) => ({ id, title, at, on, state })), busy: Boolean(rebuilding || adopting) }),

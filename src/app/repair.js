@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { checkWorkshopStarts, createWorkshop, removeWorkshop, runGit, saveWorkshop, switchToWorkshop, testWorkshop } from './workshop.js';
 import { dropChange, recordChange } from './personal.js';
+import { ADDONS_DIR, checkAddons } from './addons.js';
 
 const WINDOWS = process.platform === 'win32';
 export const CODEX_VERSION = '0.171.0';     // the version tried in the trial of 2026-11-20
@@ -106,7 +107,8 @@ The owner asked: "${request}"
 Make the smallest change that does what he asked, in the style of the code around it.
 Add or update a test in the test folder that shows it works, and run the tests with: node --test test/
 Work only inside this folder. Do not install anything and do not use the network.
-Never put a password, key, token or code into any file.${extra}
+Never put a password, key, token or code into any file.
+If what he asked needs a new tool for the AI, make it an add-on for the engine in its own folder under falcon-agent/addons/<short-name> (lowercase words joined by hyphens): an openclaw.plugin.json manifest that lists the tool in contracts.tools, a package.json whose openclaw.extensions names ./index.js, and an index.js that exports { id, name, description, register(api) } and calls api.registerTool({ name, description, parameters (a JSON schema), async execute(id, params) { return { content: [{ type: 'text', text }] }; } }). falcon-agent/engine-addon is a small working example of the folder and manifest. Add a test for the add-on's own logic in the test folder.${extra}
 When you are done, reply with one or two plain sentences saying what you changed.`;
 
 const REVIEW_PROMPT = (request, diff) => `You review a change to Falcon, a personal assistant program, before his owner decides on it.
@@ -128,7 +130,9 @@ A problem is something that makes the change wrong, unsafe, harmful to the owner
  * @param {Function} [o.review]      stand-in for the reviewer: ({ request, diff, choice }) => Promise<{ ok, problems }>
  * @param {Function} [o.switchTo]    stand-in for switchToWorkshop
  */
-export function createRepairs({ home = os.homedir(), node = process.execPath, history, keys, engineCli, onChange = () => {}, write, review, switchTo = switchToWorkshop, check = { test: testWorkshop, starts: checkWorkshopStarts } }) {
+export function createRepairs({ home = os.homedir(), node = process.execPath, history, keys, engineCli, onChange = () => {}, write, review, switchTo = switchToWorkshop, check: checks = {} }) {
+  // The checks a change must pass; add-ons are loaded in a private copy of the engine (addons.js).
+  const check = { test: testWorkshop, starts: checkWorkshopStarts, addons: ({ dir, only }) => checkAddons({ dir, cli: engineCli(), node, home, only }), ...checks };
   const recordDir = path.join(falconDir(home), 'repairs');
   let status = null;
   let child = null;
@@ -266,8 +270,19 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
     step('Checking that this copy of Falcon starts');
     const starts = await check.starts({ dir, node });
     status.starts = starts.ok;
-    if (!starts.ok) step('This copy does not start');
-    return starts.ok;
+    if (!starts.ok) { step('This copy does not start'); return false; }
+    // An add-on made or changed here must load in the engine, with the tools it promises.
+    const touched = (await runGit(historyNow.git, ['diff', '--name-only', status.base, 'HEAD'], { cwd: dir })).out.split('\n')
+      .map((f) => f.trim().replace(/\\/g, '/')).filter((f) => f.startsWith(`${ADDONS_DIR.replace(/\\/g, '/')}/`)).map((f) => f.split('/')[2]).filter(Boolean);
+    if (touched.length) {
+      step('Loading the new add-on in a private copy of the engine');
+      const loaded = await check.addons({ dir, only: [...new Set(touched)] });
+      status.addons = loaded;
+      const bad = loaded.filter((a) => !a.ok);
+      step(bad.length ? `The add-on ${bad[0].id} does not load` : `The add-on loads, with ${loaded.flatMap((a) => a.tools || []).length || 'no'} new tools`);
+      if (bad.length) return false;
+    }
+    return true;
   }
 
   async function diffOf(dir) {
@@ -312,6 +327,7 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
         const reasons = [
           ...(!status.tests?.ok ? [`These tests fail: ${(status.tests?.failing || []).slice(0, 5).join('; ') || 'see the test output'}.`] : []),
           ...(status.tests?.ok && status.starts === false ? ['Falcon does not start with this change.'] : []),
+          ...((status.addons || []).filter((a) => !a.ok).map((a) => `The add-on ${a.id} does not load in the engine: ${a.error}`)),
           ...(opinion.ok ? [] : opinion.problems.map((p) => `A reviewer found: ${p}`)),
         ];
         phase('fixing', 'Correcting what was found');
@@ -331,7 +347,12 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
         }
       }
       if (stopped) return finish('stopped');
-      if (!good) return finish('failed', { error: status.tests?.ok ? 'This copy of Falcon does not start, so it cannot be used.' : 'Falcon\'s tests still fail with this change, so it cannot be used.' });
+      if (!good) {
+        const addonBad = (status.addons || []).find((a) => !a.ok);
+        return finish('failed', { error: !status.tests?.ok ? 'Falcon\'s tests still fail with this change, so it cannot be used.'
+          : status.starts === false ? 'This copy of Falcon does not start, so it cannot be used.'
+            : `The add-on ${addonBad?.id || ''} does not load in the engine, so it cannot be used: ${addonBad?.error || ''}`.trim() });
+      }
       finish('ready', { error: opinion.ok ? '' : 'The reviewer still has doubts: read them before you decide.' });
     } catch (err) {
       finish(stopped ? 'stopped' : 'failed', { error: String(err.message || err).slice(0, 600) });

@@ -135,3 +135,35 @@ test('the engine\'s answer is found after its log lines, with what the provider 
   assert.equal(doc.usage.cost.total, 0.1192);
   assert.equal(lastJson('no json here'), null);
 });
+
+test('an add-on the writer makes is load-checked; one that does not load gets the reason in its correction', { skip, timeout: 120000 }, async () => {
+  const { home, history } = pretendFalcon();
+  const attempts = [];
+  const checked = [];
+  const repairs = createRepairs({
+    home, history, keys: async () => ({ openrouter: 'k' }), engineCli: () => null,
+    write: async ({ dir, extra }) => {
+      attempts.push(extra);
+      const addon = path.join(dir, 'falcon-agent', 'addons', 'coin');
+      fs.mkdirSync(addon, { recursive: true });
+      fs.writeFileSync(path.join(addon, 'openclaw.plugin.json'), JSON.stringify({ id: 'falcon-coin' }));
+      fs.writeFileSync(path.join(addon, 'index.js'), attempts.length === 1 ? 'export default {\n' : 'export default {};\n');
+      return { ok: true, said: 'Added a coin to flip.' };
+    },
+    review: async () => ({ ok: true, problems: [] }),
+    check: {
+      addons: async ({ dir, only }) => {
+        checked.push(only);
+        const good = fs.readFileSync(path.join(dir, 'falcon-agent', 'addons', 'coin', 'index.js'), 'utf8').includes('{};');
+        return [{ id: 'falcon-coin', ok: good, tools: good ? ['flip_coin'] : [], error: good ? undefined : 'SyntaxError' }];
+      },
+    },
+  });
+  repairs.start('Let me flip a coin', CHOICE, { agreed: true });
+  const done = await until(repairs, ['ready', 'failed']);
+  assert.equal(done.phase, 'ready', done.error);
+  assert.equal(attempts.length, 2, 'one correction');
+  assert.match(attempts[1], /The add-on falcon-coin does not load in the engine: SyntaxError/);
+  assert.deepEqual(checked[0], ['coin'], 'only the add-on the repair touched is checked');
+  assert.deepEqual(done.addons.map((a) => a.tools), [['flip_coin']]);
+});

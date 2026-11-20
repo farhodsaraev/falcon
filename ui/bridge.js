@@ -54,6 +54,7 @@
     repairRefuse: () => call('POST', '/api/repair/refuse'),
     repairLog: () => call('GET', '/api/repair/log'),
     personal: () => call('GET', '/api/personal'),
+    addons: () => call('GET', '/api/addons'),
     setPersonal: (id, on) => call('POST', '/api/personal/set', { id, on }),
     adaptPersonal: (id, agreed) => call('POST', '/api/personal/adapt', { id, agreed }),
     // The Workshop window: a second window, opened with this one's access.

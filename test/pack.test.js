@@ -222,3 +222,37 @@ test('the name is set by the agent id when the engine knows the workspace by ano
   assert.ok(said.includes('agents set-identity --agent falcon --name Falcon'));
   assert.equal(result.ok, true, 'a setup whose name went in by id is not re-run at every start');
 });
+
+test('add-ons Falcon made are copied beside the engine settings and loaded; one no longer in the pack is removed', { skip: !variant }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-addons-'));
+  const ws = path.join(root, 'workspace');
+  fs.mkdirSync(ws);
+  const from = path.join(root, 'pack-addons');
+  const put = (name, manifest) => {
+    fs.mkdirSync(path.join(from, name), { recursive: true });
+    fs.writeFileSync(path.join(from, name, 'openclaw.plugin.json'), manifest);
+    fs.writeFileSync(path.join(from, name, 'index.js'), 'export default {};\n');
+  };
+  put('coin', JSON.stringify({ id: 'falcon-coin' }));
+  put('broken', '{ not json');
+  fs.mkdirSync(path.join(root, 'addons', 'old-one'), { recursive: true });
+  const configFile = path.join(root, 'openclaw.json');
+  fs.writeFileSync(configFile, JSON.stringify({ plugins: { load: { paths: ['C:/elsewhere/kept', path.join(root, 'addons', 'old-one')] } } }));
+  const calls = [];
+  const runEngine = async (args) => {
+    const fileArg = args.includes('--batch-file') ? args[args.indexOf('--batch-file') + 1] : args.includes('--file') ? args[args.indexOf('--file') + 1] : null;
+    calls.push({ args, file: fileArg ? JSON.parse(fs.readFileSync(fileArg, 'utf8')) : undefined });
+    if (args[0] === 'approvals' && args[1] === 'get') return { code: 0, out: '{"file":{}}' };
+    return { code: 0, out: '' };
+  };
+  await installFalcon({ workspace: ws, runEngine, addonsFrom: from, profileFile: path.join(root, 'none.json'), envFile: path.join(root, 'none.env'), configFile, log: () => {} });
+  const copied = path.join(root, 'addons', 'coin');
+  assert.ok(fs.existsSync(path.join(copied, 'index.js')), 'the add-on is copied');
+  assert.ok(!fs.existsSync(path.join(root, 'addons', 'broken')), 'one without a readable id is left out');
+  assert.ok(!fs.existsSync(path.join(root, 'addons', 'old-one')), 'one no longer in the pack is removed');
+  const batch = calls.find((c) => c.file?.some?.((s) => s.path === 'plugins.load.paths')).file;
+  const paths = batch.find((s) => s.path === 'plugins.load.paths').value;
+  assert.deepEqual(paths, ['C:/elsewhere/kept', path.join(root, 'falcon-words'), copied]);
+  assert.equal(batch.find((s) => s.path === 'plugins.entries.falcon-coin.enabled').value, true);
+  fs.rmSync(root, { recursive: true, force: true });
+});
