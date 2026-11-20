@@ -96,7 +96,9 @@ export async function createWorkshop({ history, id, home = os.homedir(), from = 
 /** Records everything changed in the workshop as one step, with a plain description. */
 export async function saveWorkshop({ git, dir, message }) {
   const w = (args) => runGit(git, args, { cwd: dir });
-  await w(['add', '--all']);
+  // Only Falcon's own folders: a coding tool's commands can leave other files behind (seen: a PowerShell
+  // cache under Microsoft/Windows), and those are not part of the change.
+  await w(['add', '--all', '--', ...TRACKED.filter((name) => fs.existsSync(path.join(dir, name)))]);
   const status = await w(['status', '--porcelain']);
   if (!status.out.trim()) return null;
   const done = await w([...IDENTITY, 'commit', '--quiet', '-m', String(message || 'A change made in the workshop').slice(0, 300)]);

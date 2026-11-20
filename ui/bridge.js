@@ -17,6 +17,9 @@
 
   window.falcon = {
     state: () => call('GET', '/api/state'),
+    loadChats: () => call('GET', '/api/chats'),
+    saveChats: (chats) => call('POST', '/api/chats', { chats }),
+    forgetChat: (id) => call('POST', '/api/chats/forget', { id }),
     setup: (key, accepted, model) => call('POST', '/api/setup', { key, accepted, model }),
     inspectKey: (key) => call('POST', '/api/key/inspect', { key }),
     voiceStatus: () => call('GET', '/api/voice'),
@@ -82,7 +85,7 @@
     // Where the window loads a picture or video Falcon made (only one he offered here).
     mediaUrl: (id) => `/api/media?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`,
     async chat(text, { onDelta, onError, onActions, onScout, onDossier, onStep, onFile, onPending, onSummary }, signal) {
-      const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text }), signal });
+      const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text, conversation: window.falconChatId?.() }), signal });
       if (!response.ok || !response.body) return onError(`I have lost my connection, ${window.falconAddress ? window.falconAddress() : 'sir'}.`);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();

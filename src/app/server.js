@@ -13,13 +13,13 @@ import { engineHome, moveEngineHome, prepareEngineHome } from './enginehome.js';
 import { ensureGit, findGit } from './git.js';
 import { historyDir, openHistory, switchToWorkshop } from './workshop.js';
 import { adoptRelease, changePatch, leaveNotice, readChanges, rebuild, setChanges, takeNotice } from './personal.js';
-import { createRepairs } from './repair.js';
+import { codexState, createRepairs, ensureCodex } from './repair.js';
 import { lastJson as engineJson, listAddons } from './addons.js';
 import { listPatches, patchState, syncPatches } from './enginepatch.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
 import { createDirectLine, stepText, stepSkill } from './directline.js';
-import { admitMedia, keepCopy, keepFolder, newestSince, splitMedia } from './media.js';
+import { admitMedia, keepCopy, keepFolder, mediaType, newestSince, splitMedia } from './media.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -28,6 +28,7 @@ const UI_FILES = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/renderer.js': ['renderer.js', 'text/javascript; charset=utf-8'],
+  '/chats.js': ['chats.js', 'text/javascript; charset=utf-8'],
   '/bridge.js': ['bridge.js', 'text/javascript; charset=utf-8'],
   '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'],
   '/workshop': ['workshop.html', 'text/html; charset=utf-8'],
@@ -490,9 +491,9 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     const item = { id: crypto.randomBytes(9).toString('hex'), kind: admitted.kind, name: path.basename(file), path: file };
     shownMedia.set(item.id, { file, type: admitted.type });
     keptCopies.set(key, item);
-    for (const map of [shownMedia, keptCopies]) if (map.size > 80) map.delete(map.keys().next().value);
+    if (keptCopies.size > 80) keptCopies.delete(keptCopies.keys().next().value);
     offeredFiles.add(file);          // so Open and Show in folder work under it
-    if (offeredFiles.size > 30) offeredFiles.delete(offeredFiles.values().next().value);
+
     return item;
   }
 
@@ -683,13 +684,13 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // The window's conversation. When the user changes how he wants to be addressed, a fresh conversation
   // starts, because an old one full of "sir" keeps pulling a smaller model back to "sir". What Falcon
   // knows about the user lives in his notes, not in the conversation, so nothing is forgotten.
-  function windowSession() {
+  function windowSession(conversation) {
     let callMe = 'sir';
     try { callMe = JSON.parse(fs.readFileSync(api.profileFile(), 'utf8')).callMe || 'sir'; } catch { /* default */ }
-    return `${SESSION_KEY}-${crypto.createHash('sha256').update(callMe).digest('hex').slice(0, 8)}`;
+    return `${SESSION_KEY}-${crypto.createHash('sha256').update(callMe).digest('hex').slice(0, 8)}${conversation ? `-${conversation}` : ''}`;
   }
 
-  async function chat(text, res) {
+  async function chat(text, res, conversation) {
     const gateway = api.readGateway();
     const send = (event, data) => { if (!res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
@@ -703,7 +704,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         // A found file gets Open and Show buttons in the window; only files offered this way can be opened by it.
         if (quick.file) {
           offeredFiles.add(quick.file);
-          if (offeredFiles.size > 30) offeredFiles.delete(offeredFiles.values().next().value);
+      
           send('file', { path: quick.file, name: path.win32.basename(quick.file) });
         }
         if (quick.actions?.length) send('actions', { items: quick.actions });
@@ -773,7 +774,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       // shows in the window, and it carries Stop to the engine.
       const russian = /[а-яё]/i.test(text);
       let stepsTaken = 0;
-      const sessionKey = windowSession();
+      const sessionKey = windowSession(conversation);
       followConversation(sessionKey);
       const holding = new Set();   // one place held per kind of thing in a request, though each start is announced twice
       unwatch = api.directLine?.watch(sessionKey, (step) => {
@@ -895,6 +896,15 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     if (readEnvKey(api.envFile(), 'OPENROUTER_API_KEY')) keys.push('openrouter');
     return keys;
   }
+  // Codex (about 500 MB) is not in Falcon's download: it is installed in the background as soon as an
+  // OpenAI key is there, so the first repair does not wait for it. Never during a test run.
+  async function prepareCodex() {
+    if (Object.keys(engine).length || codexState() !== 'missing') return;
+    if (!(await codingKeys()).includes('openai')) return;
+    ensureCodex().catch(() => { /* a repair tries again and says why */ });
+  }
+  setTimeout(() => { prepareCodex().catch(() => {}); }, 60000).unref?.();
+
   function savedCoding() {
     try { const doc = JSON.parse(fs.readFileSync(aiJobsFile(), 'utf8')); return doc?.coding || null; } catch { return null; }
   }
@@ -1041,7 +1051,60 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     if (changed) writeApproved(approved);
   }
 
+  const chatsFile = () => api.chatsFile ? api.chatsFile() : path.join(path.dirname(api.profileFile()), 'chats.json');
+  const restoreChatFiles = (chats) => {
+    for (const chat of chats) for (const exchange of chat.exchanges || []) {
+      if (exchange.file?.path) offeredFiles.add(exchange.file.path);
+      for (const item of exchange.media || []) {
+        const type = mediaType(item.path);
+        if (type && type.kind === item.kind && item.id) {
+          shownMedia.set(item.id, { file: item.path, type: type.type });
+          offeredFiles.add(item.path);
+        }
+      }
+    }
+  };
   const routes = {
+    'GET /api/chats': async () => {
+      let chats;
+      try { chats = JSON.parse(fs.readFileSync(chatsFile(), 'utf8')); }
+      catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+      if (!Array.isArray(chats)) throw new Error('Invalid history');
+      restoreChatFiles(chats);
+      return chats;
+    },
+    'POST /api/chats': async ({ chats }) => {
+      if (!Array.isArray(chats)) throw new Error('Invalid history');
+      // Only files actually offered by Falcon can be retained for opening later.
+      for (const chat of chats) for (const exchange of chat.exchanges || []) {
+        if (exchange.file?.path && !offeredFiles.has(exchange.file.path)) throw new Error('Unknown file');
+        for (const item of exchange.media || []) if (!shownMedia.has(item.id) || shownMedia.get(item.id).file !== item.path) throw new Error('Unknown media');
+      }
+      const file = chatsFile();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const temp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+      try { fs.writeFileSync(temp, JSON.stringify(chats), { mode: 0o600 }); fs.renameSync(temp, file); }
+      finally { try { fs.unlinkSync(temp); } catch {} }
+      return { ok: true };
+    },
+    // A deleted chat: the engine's own record of that conversation goes too (agent:<agent>:falcon-window-<code>-<id>).
+    'POST /api/chats/forget': async ({ id }) => {
+      if (!/^[a-f0-9-]{36}$/.test(String(id || ''))) return { ok: false, error: 'That is not a chat.' };
+      const listed = await api.runEngine(['sessions', '--all-agents', '--json', '--limit', 'all'], { timeoutMs: 60000 });
+      const doc = engineJson(listed.out);
+      if (listed.code !== 0 || !Array.isArray(doc?.sessions)) return { ok: false, error: 'The engine could not list its conversations.' };
+      const mine = new RegExp(`^agent:([a-z0-9_-]+):${SESSION_KEY}-[0-9a-f]{8}-${id}$`);
+      let removed = 0;
+      for (const session of doc.sessions) {
+        const match = mine.exec(String(session.key || ''));
+        if (!match) continue;
+        const gone = await api.runEngine(['sessions', 'delete', session.key, '--agent', match[1], '--yes', '--json'], { timeoutMs: 60000 });
+        if (gone.code === 0) removed += 1;
+        followed.get(session.key.split(':').slice(2).join(':'))?.();
+        followed.delete(session.key.split(':').slice(2).join(':'));
+      }
+      return { ok: true, removed };
+    },
     'GET /api/state': async () => {
       if (moving || adopting) return { configured: true, ready: false, updating: true };
       const configured = Boolean(api.readGateway());
@@ -1236,6 +1299,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       }
       if (result.code !== 0) return { ok: false, error: 'The key could not be saved.' };
       if (PROVIDERS[provider].voice) await api.voiceKey.set(key).catch(() => {});
+      if (provider === 'openai') prepareCodex().catch(() => {});
       if (provider === 'openrouter') {
         // The same key gives Falcon web search, through Perplexity.
         writeEnvKey(api.envFile(), 'OPENROUTER_API_KEY', key);
@@ -1336,6 +1400,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           options: keys.flatMap((provider) => CODING_MODELS[provider].map((m) => ({ provider, providerName: PROVIDERS[provider].name, tool: CODING_TOOL[provider], ...m }))),
           // What a repair usually costs on the user's own key (self-repair plan, section 11).
           price: 'A repair usually costs 20 cents to 2 US dollars on your own key.',
+          // Codex, the coding tool for an OpenAI key: 'ready', 'installing' or 'missing'.
+          codex: keys.includes('openai') ? codexState() : null,
         },
       };
     },
@@ -1598,10 +1664,10 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     });
   }
 
-  function readJson(req) {
+  function readJson(req, limit = 200000) {
     return new Promise((resolve, reject) => {
       let raw = '';
-      req.on('data', (chunk) => { raw += chunk; if (raw.length > 200000) req.destroy(); });
+      req.on('data', (chunk) => { raw += chunk; if (raw.length > limit) req.destroy(); });
       req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(e); } });
       req.on('error', reject);
     });
@@ -1741,11 +1807,12 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         const body = await readJson(req);
         const text = String(body.text || '').trim().slice(0, 8000);
         if (!text) return send(400, { error: 'Empty message' });
-        return chat(text, res);
+        const conversation = /^[a-f0-9-]{36}$/.test(body.conversation || '') ? body.conversation : '';
+        return chat(text, res, conversation);
       }
       const handler = routes[`${req.method} ${url.pathname}`];
       if (!handler) return send(404, { error: 'Not found' });
-      return send(200, await handler(req.method === 'POST' ? await readJson(req) : {}));
+      return send(200, await handler(req.method === 'POST' ? await readJson(req, url.pathname === '/api/chats' ? 100000000 : 200000) : {}));
     } catch {
       if (!res.headersSent) send(500, { error: 'Something went wrong.' }); else res.end();
     }

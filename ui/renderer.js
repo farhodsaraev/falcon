@@ -42,7 +42,8 @@ async function refreshAiJobs() {
   try { live = localStorage.getItem('falcon-live-voice') !== 'off'; } catch { /* default */ }
   $('job-voice').textContent = jobs.voice.live && live ? 'OpenAI live voice' : jobs.voice.live ? 'Built-in voice (free); live voice is switched off below' : 'Built-in voice (free). An OpenAI key gives the live voice';
   const now = jobs.coding.current;
-  $('job-coding').textContent = now ? `${now.label}, through ${now.tool}` : 'Needs an OpenAI or OpenRouter key';
+  const codexNote = now?.provider === 'openai' && jobs.coding.codex === 'installing' ? ' (getting Codex ready, once)' : '';
+  $('job-coding').textContent = now ? `${now.label}, through ${now.tool}${codexNote}` : 'Needs an OpenAI or OpenRouter key';
   const box = $('job-coding-choice');
   box.hidden = !jobs.coding.options.length;
   box.replaceChildren(...jobs.coding.options.map((m) => {
@@ -621,6 +622,10 @@ function mediaFigure(item) {
 }
 // Falcon's server says a picture or video is ready (or that it never came).
 function showMedia({ pending, text = '', items = [], failed = false }) {
+  const target = pendingChats.get(pending) || (!pending && chats.current() ? { chatId: chats.id(), index: chats.current().exchanges.length - 1 } : null);
+  if (target && (items.length || text)) chats.media(target.chatId, target.index, items, text);
+  if (pending) pendingChats.delete(pending);
+  if (target && target.chatId !== chats.id()) return;
   const frame = pending ? document.querySelector(`.shot.waiting[data-pending="${CSS.escape(pending)}"]`) : null;
   const here = !frame || frame.parentElement === $('media');     // under the current answer, not up in the history
   const russian = frame ? /[а-яё]/i.test(frame.dataset.label) : Boolean(window.falconLastRussian);
@@ -684,6 +689,8 @@ const SKILLS = [
   ['learned', 'Learned', 'Learn how to tell me the official dollar rate.'],
   // Fixing or extending himself in his workshop (stage 3): opens the Workshop window.
   ['repair', 'Repair', null],
+  // New tools Falcon made for his engine (stage 6): how many, or Off if one did not load.
+  ['addons', 'Add-ons', null],
 ];
 // What pressing a tile shows besides an example: where to switch the ability on, or how to use it.
 const SKILL_HELP = {
@@ -902,6 +909,103 @@ function setWide(on, resize = true) {
 $('more').addEventListener('click', () => setWide(!document.body.classList.contains('wide')));
 try { if (localStorage.getItem('falcon-wide') === 'yes') setWide(true); } catch { /* storage unavailable */ }
 
+// Chat navigation is disabled while a request or voice conversation is active.
+let chatsReady = false;
+const chats = createChats({ load: window.falcon.loadChats, save: window.falcon.saveChats }, undefined,
+  (message) => { $('chat-error').textContent = message; });
+chats.load().then(() => { chatsReady = true; renderChats(); }).catch(() => {
+  $('chat-error').textContent = 'Chats could not be loaded. Please restart Falcon and check your disk.';
+});
+const pendingChats = new Map();
+window.falconChatId = () => chats.id();
+function chatLocked() { return !chatsReady || busy || (voice && voice.active()); }
+// Days between a chat's date and today, by the calendar (0 = today).
+function daysAgo(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return Infinity;
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  return Math.round((day(new Date()) - day(d)) / 86400000);
+}
+// When a chat was: the time today, "Yesterday", or "18 Nov" (with the year when it is not this year).
+function chatWhen(iso) {
+  const d = new Date(iso);
+  const ago = daysAgo(iso);
+  if (ago === Infinity) return '';
+  if (ago === 0) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (ago === 1) return 'Yesterday';
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+}
+const chatGroup = (iso) => { const ago = daysAgo(iso); return ago === 0 ? 'Today' : ago <= 7 ? 'Previous 7 days' : 'Earlier'; };
+let deleteAsked = null;          // the chat whose × was pressed once: a second press deletes it
+function renderChats() {
+  const list = $('chat-list');
+  list.replaceChildren();
+  document.querySelector('.chat-panel')?.classList.toggle('locked', chatLocked());
+  const all = chats.list();
+  $('chat-empty').hidden = !chatsReady || all.length > 0;
+  let group = '';
+  for (const chat of all) {
+    const label = chatGroup(chat.date);
+    if (label !== group) {
+      group = label;
+      list.append(Object.assign(document.createElement('p'), { className: 'chat-group', textContent: label }));
+    }
+    const row = document.createElement('div'); row.className = 'chat-entry';
+    const open = document.createElement('button'); open.type = 'button'; open.className = 'chat-open';
+    const current = chat.id === chats.id();
+    open.classList.toggle('active', current);
+    if (current) open.setAttribute('aria-current', 'true');
+    open.title = chat.title;
+    const title = document.createElement('span'); title.className = 'chat-title'; title.textContent = chat.title;
+    const date = document.createElement('small'); date.textContent = chatWhen(chat.date);
+    open.append(title, date);
+    open.addEventListener('click', () => { if (chatLocked()) return; deleteAsked = null; chats.select(chat.id); showChat(); });
+    // Deleting cannot be undone, so the first press asks and the second one deletes.
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'chat-delete';
+    const asking = deleteAsked === chat.id;
+    remove.classList.toggle('asking', asking);
+    remove.textContent = asking ? 'Delete?' : '×';
+    remove.title = asking ? 'Press again to delete this chat' : 'Delete this chat';
+    remove.setAttribute('aria-label', asking ? `Press again to delete ${chat.title}` : `Delete ${chat.title}`);
+    remove.addEventListener('click', () => {
+      if (chatLocked()) return;
+      if (deleteAsked !== chat.id) {
+        deleteAsked = chat.id;
+        renderChats();
+        setTimeout(() => { if (deleteAsked === chat.id) { deleteAsked = null; renderChats(); } }, 4000);
+        return;
+      }
+      deleteAsked = null;
+      const wasCurrent = chats.id() === chat.id;
+      chats.remove(chat.id);
+      // The engine's own memory of that conversation goes too.
+      window.falcon.forgetChat(chat.id).catch(() => {});
+      if (wasCurrent) showChat(); else renderChats();
+    });
+    row.append(open, remove); list.append(row);
+  }
+}
+function showChat() {
+  $('history').replaceChildren(); $('said').textContent = ''; $('reply').textContent = greeting();
+  $('reply').classList.remove('bad', 'waiting'); $('actions').replaceChildren(); $('media').replaceChildren(); stepsReset();
+  const exchanges = chats.current()?.exchanges || [];
+  for (const exchange of exchanges) {
+    for (const [cls, text] of [['said', exchange.question], ['reply', exchange.answer]]) {
+      const line = document.createElement('p'); line.className = cls; line.textContent = text; $('history').append(line);
+    }
+    if (exchange.media?.length) { const media = document.createElement('div'); media.className = 'media'; media.append(...exchange.media.map(mediaFigure)); if (exchange.mediaText) { const caption = document.createElement('p'); caption.textContent = exchange.mediaText; media.append(caption); } $('history').append(media); }
+    const cards = document.createElement('div'); cards.className = 'actions';
+    if (exchange.cards?.length) cards.append(...actionCards(exchange.cards));
+    if (exchange.dossier) cards.append(dossierButton(exchange.dossier));
+    if (exchange.file) cards.append(...fileButtons(exchange.file));
+    if (cards.childElementCount) $('history').append(cards);
+  }
+  if (exchanges.length) $('reply').textContent = '';
+  $('examples').hidden = exchanges.length > 0; renderChats(); scrollTalk();
+}
+$('chat-new').addEventListener('click', () => { if (chatLocked()) return; chats.newChat(); showChat(); });
+renderChats();
+
 // Moves the finished question, answer and cards up into the dimmer history above.
 function archiveExchange() {
   // A picture shown before anything was asked (one that arrived late, say) still moves up.
@@ -967,7 +1071,7 @@ function createReveal(element) {
 
 // `shown` is what appears as the user's line; pass '' for a request the window makes on its own.
 async function sendToFalcon(text, shown = text) {
-  if (!text || busy) return;
+  if (!text || busy || !chatsReady) return;
   busy = true;
   $('examples').hidden = true;
   $('ask-text').value = '';
@@ -982,10 +1086,13 @@ async function sendToFalcon(text, shown = text) {
   window.falconLastRussian = /[а-яё]/i.test(text);
   archiveExchange();
   $('said').textContent = shown;
+  if (shown) chats.question(shown);
+  renderChats();             // shows the new chat, and dims the list while he works
   $('reply').textContent = '';
   $('reply').classList.remove('bad', 'waiting');
   setOrb('thinking');
   let answer = '';
+  let lastKept = 0;
   let cards = [];
   let dossier = '';
   let found = null;
@@ -1020,14 +1127,18 @@ async function sendToFalcon(text, shown = text) {
   const fail = (message) => { failed = true; clearWaiting(); answer = message; $('reply').textContent = message; $('reply').classList.add('bad'); };
   try {
     await window.falcon.chat(text, {
-      onDelta: (piece) => { clearWaiting(); answer += piece; reveal.set(plainSpeech(answer)); setOrb('speaking'); },
+      onDelta: (piece) => {
+        clearWaiting(); answer += piece; reveal.set(plainSpeech(answer)); setOrb('speaking');
+        // Kept as it arrives, so closing Falcon in the middle of an answer does not lose it.
+        if (shown && Date.now() - lastKept > 2000) { lastKept = Date.now(); chats.answer(plainSpeech(answer)); }
+      },
       onActions: (items) => { cards = items; },
       onStep: (line, skill) => { step = line; stepAdd(line, skill); if (!answer) setOrb('thinking'); },
       onSummary: (s) => { summary = s; },
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
       onFile: (file) => { found = file; },
-      onPending: (waiting) => { $('media').append(mediaWaiting(waiting, russian)); scrollTalk(); },
+      onPending: (waiting) => { pendingChats.set(waiting.id, { chatId: chats.id(), index: (chats.current()?.exchanges.length || 1) - 1 }); $('media').append(mediaWaiting(waiting, russian)); scrollTalk(); },
       onError: fail,
     }, stopper.signal);
     await reveal.done();
@@ -1047,10 +1158,12 @@ async function sendToFalcon(text, shown = text) {
   }
   clearWaiting();
   if (!answer) $('reply').textContent = dossier ? `The dossier is ready, ${address()}.` : `Done, ${address()}.`;
+  if (shown) chats.answer($('reply').textContent, { cards, dossier, file: found });
   stepsDone({ summary, stopped, failed, russian });
   $('mind').classList.remove('working');
   setOrb('idle');
   busy = false;
+  renderChats();             // the list can be used again
   stopChat = null;
   $('ask-send').classList.remove('stop');
   $('ask-send').textContent = '➤';
@@ -1093,6 +1206,7 @@ function voiceNote(text, kind = '') { $('voice-note').textContent = text; $('voi
 
 function onVoiceState(state) {
   const on = state !== 'off';
+  setTimeout(renderChats, 0);   // the list is locked while the voice conversation is on
   $('mic').classList.toggle('on', on);
   $('mic').classList.toggle('busy', state === 'connecting');
   $('mic').setAttribute('aria-pressed', String(on));
@@ -1103,9 +1217,9 @@ function onVoiceState(state) {
 }
 for (const engine of [window.falconVoice, window.falconSpeech]) {
   engine.on('state', onVoiceState);
-  engine.on('heard', (text) => { archiveExchange(); $('examples').hidden = true; $('said').textContent = text; $('reply').textContent = ''; });
-  engine.on('said', (text) => { $('reply').classList.remove('bad', 'waiting'); $('reply').textContent = plainSpeech(text); scrollTalk(); });
-  engine.on('actions', (items) => showActions(items));
+  engine.on('heard', (text) => { archiveExchange(); chats.question(text); renderChats(); $('examples').hidden = true; $('said').textContent = text; $('reply').textContent = ''; });
+  engine.on('said', (text) => { $('reply').classList.remove('bad', 'waiting'); $('reply').textContent = plainSpeech(text); chats.answer($('reply').textContent); scrollTalk(); });
+  engine.on('actions', (items) => { showActions(items); chats.answer($('reply').textContent, { cards: items }); });
   // The orb follows the loudness: the user's voice while listening, Falcon's while he speaks.
   engine.on('level', (level) => { $('orb').style.setProperty('--level', level.toFixed(3)); });
 }
@@ -1123,6 +1237,7 @@ window.falconVoice.on('error', (message) => {
 });
 
 $('mic').addEventListener('click', () => {
+  if (!chatsReady) return;
   if (voice && voice.active()) {
     // While he is speaking, the first press cuts him off and listens; otherwise it ends the conversation.
     if (voice.interrupt && voice.interrupt()) return;

@@ -86,6 +86,13 @@
 
   <!-- Main -->
   <section id="screen-main" class="screen main" hidden>
+    <aside class="chat-panel" aria-label="Past chats">
+      <button id="chat-new" type="button" class="ghost chat-new"><span aria-hidden="true">+</span> New chat</button>
+      <p class="side-title">Past chats</p>
+      <p id="chat-error" role="alert"></p>
+      <p id="chat-empty" class="chat-empty" hidden>Your conversations will appear here.</p>
+      <div id="chat-list"></div>
+    </aside>
     <div id="orb" class="orb" data-state="idle">
       <div class="ripple p1"></div><div class="ripple p2"></div><div class="ripple p3"></div>
       <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
@@ -331,6 +338,7 @@
 
   <script src="bridge.js"></script>
   <script src="voice.js"></script>
+  <script src="chats.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -40,9 +40,30 @@ export function estimate(choice) {
     : { low: 0.2, high: 2, text: 'about 20 cents to 2 US dollars on your own key' };
 }
 
-/** Codex, installed into Falcon's own tools folder the first time it is needed (OpenAI key only). */
-export async function ensureCodex({ home = os.homedir(), node = process.execPath, onLine = () => {}, run = runProgram } = {}) {
-  if (fs.existsSync(codexJs(home))) return { ok: true, codex: codexJs(home) };
+// One install at a time per Falcon: a repair started during the background install waits for it.
+const installing = new Map();
+
+/** Whether Codex is ready, being installed, or not there: 'ready' | 'installing' | 'missing'. */
+export function codexState(home = os.homedir()) {
+  if (fs.existsSync(codexJs(home))) return 'ready';
+  return installing.has(path.resolve(home)) ? 'installing' : 'missing';
+}
+
+/**
+ * Codex, installed into Falcon's own tools folder (OpenAI key only). It is about 500 MB, so it is not part
+ * of Falcon's download: Falcon installs it in the background as soon as an OpenAI key is there, and a
+ * repair that comes first installs it, or waits for the install already running.
+ */
+export function ensureCodex({ home = os.homedir(), node = process.execPath, onLine = () => {}, run = runProgram } = {}) {
+  if (fs.existsSync(codexJs(home))) return Promise.resolve({ ok: true, codex: codexJs(home) });
+  const key = path.resolve(home);
+  if (installing.has(key)) { onLine('Waiting for the coding tool (Codex) to finish installing'); return installing.get(key); }
+  const job = installCodex({ home, node, onLine, run }).finally(() => installing.delete(key));
+  installing.set(key, job);
+  return job;
+}
+
+async function installCodex({ home, node, onLine, run }) {
   const npm = path.join(path.dirname(node), WINDOWS ? 'npm.cmd' : 'npm');
   if (!fs.existsSync(npm)) return { ok: false, error: 'Node.js has no npm here, so Codex cannot be installed.' };
   fs.mkdirSync(toolsDir(home), { recursive: true });
@@ -261,6 +282,11 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
     const said = String(doc?.final || (doc?.payloads || []).map((p) => p.text).join(' ') || '').trim();
     // The engine reports what the provider billed for this turn.
     const cost = Number(doc?.usage?.cost?.total) || 0;
+    // OpenRouter checks the most a request could cost against the key's own spending limit, even when the
+    // owner's OpenAI key pays (BYOK). Coding sends large requests, so a nearly used-up limit refuses them.
+    if (provider === 'openrouter' && /status=402|billing error|can only afford|key's total limit/i.test(result.out)) {
+      return { ok: false, cost, error: 'OpenRouter refused the work: your OpenRouter account or this key\'s spending limit is too low for coding. On openrouter.ai, add credit or raise the key\'s limit (with your own OpenAI key connected there, OpenAI still pays for the work), then try again.' };
+    }
     return doc?.ok !== false && result.code === 0 ? { ok: true, said, cost } : { ok: false, cost, error: `The engine stopped with an error. ${String(doc?.error?.message || result.out.split(key).join('***').trim().split('\n').pop())}`.slice(0, 600) };
   }
 

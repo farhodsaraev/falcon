@@ -218,3 +218,33 @@ test('a change to the engine copy becomes a patch in Falcon, is checked, and get
   assert.equal(refused.phase, 'failed');
   assert.match(refused.error, /changes 300 lines of the engine; at most 200 are permitted/);
 });
+
+test('Codex is installed once: a repair started during the background install waits for it', async () => {
+  const { codexState, ensureCodex } = await import('../src/app/repair.js');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-codex-'));
+  let installs = 0;
+  let finish;
+  const run = async (command, args) => {
+    installs += 1;
+    await new Promise((resolve) => { finish = resolve; });
+    const prefix = args[args.indexOf('--prefix') + 1];
+    const bin = path.join(prefix, 'node_modules', '@openai', 'codex', 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'codex.js'), '');
+    return { code: 0, out: '' };
+  };
+  assert.equal(codexState(home), 'missing');
+  const background = ensureCodex({ home, run });
+  const lines = [];
+  const repair = ensureCodex({ home, run, onLine: (l) => lines.push(l) });
+  assert.equal(codexState(home), 'installing');
+  assert.match(lines.join(), /Waiting for the coding tool \(Codex\)/);
+  await sleep(50);
+  finish();
+  assert.deepEqual([(await background).ok, (await repair).ok], [true, true]);
+  assert.equal(installs, 1, 'installed once');
+  assert.equal(codexState(home), 'ready');
+  assert.equal((await ensureCodex({ home, run })).ok, true);
+  assert.equal(installs, 1, 'not again once it is there');
+  fs.rmSync(home, { recursive: true, force: true });
+});
