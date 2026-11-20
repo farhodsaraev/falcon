@@ -9,6 +9,8 @@ export class DirectLineUnavailable extends Error {}
 const CONNECT_TIMEOUT_MS = 8000;
 // The engine's own files (its notes, settings): in Falcon's folder, or where older installs kept them.
 const ENGINE_FILES = /[\\/](?:\.openclaw|\.falcon[\\/]engine)[\\/]/;
+// A program from something Falcon learned: by its folder, or by the engine's short title for the step.
+const LEARNED_STEP = /[\\/]workshop-skills[\\/]|\blearned[- ]skills?\b/i;
 
 /**
  * @param {object} options
@@ -227,6 +229,8 @@ export function stepText({ name, args = {}, meta = '' }, russian = false) {
   const command = String(args.command || '');
   switch (name) {
     case 'exec':
+      // A program from something he learned (by its folder, or, when only the engine's title is known, by its words).
+      if (LEARNED_STEP.test(command)) return say('Using something I learned', 'Применяю то, чему научился');
       if (/slides\.(ps1|mjs)/.test(command)) return say('Working on the presentation', 'Работаю с презентацией');
       if (/find-files\.(ps1|mjs)/.test(command)) return say('Looking for the file', 'Ищу файл');
       if (/read-file\.(ps1|mjs)/.test(command)) return say('Reading the file', 'Читаю файл');
@@ -277,6 +281,7 @@ export function stepSkill({ name, args = {}, meta = '' }) {
   const command = String(args.command || (name === 'exec' ? meta : '') || '');
   switch (name) {
     case 'exec':
+      if (LEARNED_STEP.test(command)) return 'learned';
       if (/slides\.(ps1|mjs)/.test(command)) return 'slides';
       if (/(find-files|read-file|share-file|make-document)\.(ps1|mjs)/.test(command)) return 'files';
       if (/screenshot\.(ps1|mjs)/.test(command)) return 'screen';
@@ -284,9 +289,13 @@ export function stepSkill({ name, args = {}, meta = '' }) {
       if (/apps\.(ps1|mjs)/.test(command)) return 'apps';
       return '';
     case 'web_search': case 'web_fetch': case 'browser': return 'browser';
-    case 'read': case 'write': case 'edit': case 'apply_patch':
-      return ENGINE_FILES.test(String(args.path || args.file_path || (name === 'read' ? meta : '') || '')) ? '' : 'files';
-    case 'memory_search': case 'memory_get': case 'skill_workshop': return 'memory';
+    case 'read': case 'write': case 'edit': case 'apply_patch': {
+      const p = String(args.path || args.file_path || (name === 'read' ? meta : '') || '');
+      if (/[\\/]workshop-skills[\\/]/i.test(p)) return 'learned';
+      return ENGINE_FILES.test(p) ? '' : 'files';
+    }
+    case 'skill_workshop': return 'learned';
+    case 'memory_search': case 'memory_get': return 'memory';
     case 'image': case 'view_image': case 'computer': return 'screen';
     case 'image_generate': case 'video_generate': case 'music_generate': return 'pictures';
     default: return '';

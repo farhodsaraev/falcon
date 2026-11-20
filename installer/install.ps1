@@ -31,6 +31,9 @@ function Copy-Falcon([string]$from) {
   Copy-Item (Join-Path $from "src\app") (Join-Path $app "src\app") -Recurse -Force
   Copy-Item (Join-Path $from "ui") $app -Recurse -Force
   Copy-Item (Join-Path $from "falcon-agent") $app -Recurse -Force
+  # His automatic tests: the workshop runs them before any change of his is switched in.
+  $tests = Join-Path $from "test"
+  if (Test-Path $tests) { Copy-Item $tests $app -Recurse -Force }
   $icon = @("falcon.ico", "installer\falcon.ico") | ForEach-Object { Join-Path $from $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
   if ($icon) { Copy-Item $icon (Join-Path $app "falcon.ico") -Force }
   # The licence of OpenClaw, the engine Falcon runs on, travels with every copy.

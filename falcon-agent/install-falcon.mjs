@@ -137,8 +137,12 @@ export async function installFalcon({
     .replaceAll('{{ADDRESS_RULE}}', addressRule)
     .replaceAll('{{USER_FACTS}}', userFacts)
     .replaceAll('{{TELEGRAM_RULE}}', telegramRule);
+  // Where the engine keeps what Falcon learns (its "workshop-skills", beside his agent's own files).
+  const learnedDir = path.join(path.dirname(workspace), 'agents', 'falcon', 'agent', 'workshop-skills');
   const fill = (text, skillDir = '') => text
     .replaceAll('{{SKILLS}}', skillsDir)
+    .replaceAll('{{LEARNED}}', learnedDir)
+    .replaceAll('{{SEP}}', path.sep)
     .replaceAll('{{NODE}}', node)
     .replaceAll('{{SKILL_DIR}}', skillDir)
     .replaceAll('<folder of this SKILL.md>', skillDir);

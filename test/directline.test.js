@@ -192,5 +192,11 @@ test('the step of saving something learned is named in the user\'s words', () =>
   assert.equal(stepText({ name: 'skill_workshop', args: { action: 'create' } }, true), 'Запоминаю, как это делать');
   assert.equal(stepText({ name: 'skill_workshop', args: { action: 'archive' } }), 'Updating what I learned');
   assert.equal(stepText({ name: 'skill_workshop', args: { action: 'list' } }), 'Checking what I have learned');
-  assert.equal(stepSkill({ name: 'skill_workshop', args: { action: 'create' } }), 'memory');
+  assert.equal(stepSkill({ name: 'skill_workshop', args: { action: 'create' } }), 'learned');
+  // Using something learned: its program, or reading its method.
+  const program = 'powershell -NoProfile -File "C:\\Users\\a\\.falcon\\engine\\agents\\falcon\\agent\\workshop-skills\\c-drive-free-space\\scripts\\cdrive-free.ps1"';
+  assert.equal(stepText({ name: 'exec', args: { command: program } }), 'Using something I learned');
+  assert.equal(stepSkill({ name: 'exec', args: { command: program } }), 'learned');
+  assert.equal(stepText({ name: 'exec', meta: 'Run C drive free-space script from learned-skills folder' }), 'Using something I learned');
+  assert.equal(stepSkill({ name: 'read', args: { path: 'C:\\Users\\a\\.falcon\\engine\\agents\\falcon\\agent\\workshop-skills\\x\\SKILL.md' } }), 'learned');
 });

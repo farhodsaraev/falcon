@@ -52,14 +52,16 @@ try {
 // Windows: Falcon's icon among the hidden icons, by the clock. It stays when the window is closed, so he
 // can be opened again from there. The icon allows only one copy of itself, so starting it again is harmless.
 const tray = path.join(path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url)))), 'installer', 'tray.ps1');
-if (process.platform === 'win32' && fs.existsSync(tray)) {
+// FALCON_NO_WINDOW=1: the server alone, for automatic checks (the switch to a new version is tested this way).
+const noWindow = process.env.FALCON_NO_WINDOW === '1';
+if (!noWindow && process.platform === 'win32' && fs.existsSync(tray)) {
   try {
     spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', tray, '-Node', process.execPath, '-Launch', fileURLToPath(import.meta.url)],
       { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   } catch { /* Falcon works without the icon */ }
 }
-const browser = findAppBrowser();
+const browser = noWindow ? null : findAppBrowser();
 
 if (browser) {
   const started = Date.now();
@@ -78,6 +80,8 @@ if (browser) {
     await server.close();
     process.exit(0);
   });
+} else if (noWindow) {
+  console.log('Falcon is serving without a window: ' + url);
 } else if (process.platform === 'darwin') {
   // No app-mode browser on this Mac: open Falcon as a page in the default browser (Safari).
   spawn('open', [url], { stdio: 'ignore' });

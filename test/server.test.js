@@ -472,3 +472,49 @@ test('Settings > Learned: lists what Falcon learned, removes it and brings it ba
     assert.equal(asked.filter((a) => a.startsWith('skills workshop archive')).length, 1, 'nothing odd reached the engine');
   } finally { await s.close(); }
 });
+
+test('Settings > Learned: a program in a learned method runs only after the user allows it, and loses that if it changes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-learned-'));
+  const scripts = path.join(dir, 'disk-space', 'scripts');
+  fs.mkdirSync(scripts, { recursive: true });
+  const program = path.join(scripts, 'free.ps1');
+  fs.writeFileSync(program, 'Get-PSDrive C\n');
+  fs.writeFileSync(path.join(scripts, 'notes.txt'), 'not a program');
+  const asked = [];
+  const listed = { skills: [{ name: 'disk-space', description: 'Free space on a drive.', files: ['SKILL.md', 'scripts/free.ps1'] }], archived: [] };
+  const s = await startServer({ engine: { ...engine, learnedDir: () => dir, profileFile: () => path.join(dir, 'profile.json'),
+    runEngine: async (args) => { asked.push(args.join(' ')); return args[2] === 'list' ? { code: 0, out: JSON.stringify(listed) } : { code: 0, out: '{}' }; } } });
+  const get = () => fetch(`http://127.0.0.1:${s.port}/api/learned`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+  const allow = (body) => fetch(`http://127.0.0.1:${s.port}/api/learned/allow`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify(body) }).then((x) => x.json());
+  try {
+    let r = await get();
+    assert.deepEqual(r.learned[0].programs.map((p) => [p.file, p.allowed]), [['free.ps1', false]], 'only programs are listed, and none is allowed yet');
+    assert.match(r.learned[0].programs[0].text, /Get-PSDrive/, 'the user sees what he would allow');
+    for (const bad of [{ name: 'disk-space', file: '../../evil.ps1' }, { name: 'disk-space', file: 'notes.txt' }, { name: 'disk-space', file: 'missing.ps1' }, { name: 'Disk', file: 'free.ps1' }]) {
+      assert.equal((await allow(bad)).ok, false, `refused: ${JSON.stringify(bad)}`);
+    }
+    assert.ok(!asked.some((a) => a.includes('allowlist add')), 'nothing odd reached the engine');
+    assert.equal((await allow({ name: 'disk-space', file: 'free.ps1' })).ok, true);
+    assert.ok(asked.includes(`approvals allowlist add ${program} --gateway`));
+    r = await get();
+    assert.equal(r.learned[0].programs[0].allowed, true);
+    // Changed after it was allowed: the permission is taken back until the user allows it again.
+    fs.writeFileSync(program, 'Remove-Item C:\\ -Recurse\n');
+    r = await get();
+    assert.equal(r.learned[0].programs[0].allowed, false);
+    assert.ok(asked.includes(`approvals allowlist remove ${program} --gateway`));
+  } finally { await s.close(); }
+});
+
+test('the Learned tile counts what he learned and the programs waiting for a yes, instantly', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-learned-'));
+  for (const name of ['dollar-rate', 'disk-space']) { fs.mkdirSync(path.join(dir, name), { recursive: true }); fs.writeFileSync(path.join(dir, name, 'SKILL.md'), '---\nname: x\n---\n'); }
+  fs.mkdirSync(path.join(dir, 'disk-space', 'scripts'));
+  fs.writeFileSync(path.join(dir, 'disk-space', 'scripts', 'free.ps1'), 'Get-PSDrive C\n');
+  fs.mkdirSync(path.join(dir, '.archive'));
+  const s = await startServer({ engine: { ...engine, learnedDir: () => dir, profileFile: () => path.join(dir, 'profile.json'), runEngine: async () => { throw new Error('must not ask the engine'); } } });
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.port}/api/learned/count`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+    assert.deepEqual(r, { count: 2, waiting: 1 });
+  } finally { await s.close(); }
+});

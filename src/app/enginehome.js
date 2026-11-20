@@ -21,8 +21,11 @@ const ENGINE_KEYS = ['OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH', 'OPENCLAW_PRO
 export const falconEngineDir = (home = os.homedir()) => path.join(home, '.falcon', 'engine');
 const standardDir = (home = os.homedir()) => path.join(home, '.openclaw');
 
-/** Where Falcon reads the engine's files: its standard path (a link to Falcon's folder once moved). */
-export const engineHome = (home = os.homedir()) => standardDir(home);
+/**
+ * Where Falcon finds the engine's files: Falcon's folder once moved, else the standard path. Paths that
+ * Falcon writes into the engine's settings must name the real folder, never the link (see moveEngineHome).
+ */
+export const engineHome = (home = os.homedir(), windows = WINDOWS) => (isMoved(home, windows) ? falconEngineDir(home) : standardDir(home));
 
 function isLink(dir) {
   try { return fs.lstatSync(dir).isSymbolicLink(); } catch { return false; }
@@ -73,6 +76,11 @@ function rememberForUser() {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** True when the engine's settings file names a path inside this folder. */
+function namesFolder(file, dir) {
+  try { return fs.readFileSync(file, 'utf8').includes(JSON.stringify(dir + path.sep).slice(1, -1)); } catch { return false; }
+}
+
 /** Paths inside the engine's settings file that name one folder are made to name another. */
 function repointSettings(file, from, to) {
   let text;
@@ -102,20 +110,29 @@ export async function moveEngineHome({ runEngine, engineReady = async () => true
 
   if (isLink(from)) {
     remember();
+    const settingsFile = path.join(to, 'openclaw.json');
     let script = '';
     try { script = fs.readFileSync(path.join(to, 'gateway.cmd'), 'utf8'); } catch { /* none */ }
-    if (!/OPENCLAW_STATE_DIR=/i.test(script)) return 'none';
-    log('Updating the engine\'s start-up item');
+    // Two things to put right, either of which can be found on a moved computer:
+    // - a start-up item told to use Falcon's folder directly, which engines from 2026.11.6 refuse;
+    // - settings that name the engine's folders through the link. The engine records where its work
+    //   folder really is; reached through the link after a move, it refuses every new conversation
+    //   ("WORKSPACE_ALIAS_REPOINTED", seen on a real PC). The settings must name the real folder.
+    const oldItem = /OPENCLAW_STATE_DIR=/i.test(script);
+    const viaLink = namesFolder(settingsFile, from);
+    if (!oldItem && !viaLink) return 'none';
+    log('Putting the engine\'s settings right');
     // The engine refuses to remake its start-up item while it runs ("state database is busy", seen on a
     // real PC), so stop it first, as the move itself does, and always start it again afterwards.
     await runEngine(['gateway', 'stop', '--force'], { env: env(), timeoutMs: 120000 });
-    // That first version also wrote Falcon's folder into the engine's settings; give them back the
-    // standard path, which the rest of Falcon's setup names the workspace by.
-    repointSettings(path.join(to, 'openclaw.json'), to, from);
-    let made = { code: -1 };
-    for (let i = 0; i < 3 && made.code !== 0; i++) {
-      if (i) await wait(settleMs * 3);
-      made = await runEngine(['gateway', 'install', '--force'], { env: env(), timeoutMs: 300000 });
+    repointSettings(settingsFile, from, to);
+    let made = { code: 0 };
+    if (oldItem) {
+      made = { code: -1 };
+      for (let i = 0; i < 3 && made.code !== 0; i++) {
+        if (i) await wait(settleMs * 3);
+        made = await runEngine(['gateway', 'install', '--force'], { env: env(), timeoutMs: 300000 });
+      }
     }
     await runEngine(['gateway', 'start'], { env: env(), timeoutMs: 120000 });
     await waitAwake();
@@ -138,6 +155,7 @@ export async function moveEngineHome({ runEngine, engineReady = async () => true
   }
   const putBack = async () => {
     log('Putting the engine back where it was');
+    repointSettings(path.join(to, 'openclaw.json'), to, from);
     // Remove only the link, never what it points to (Windows removes it as a folder, others as a file).
     if (isLink(from)) { try { fs.rmdirSync(from); } catch { try { fs.unlinkSync(from); } catch { /* left */ } } }
     try { if (isRealFolder(to) && !fs.existsSync(from)) fs.renameSync(to, from); } catch { /* left where it is */ }
@@ -153,6 +171,8 @@ export async function moveEngineHome({ runEngine, engineReady = async () => true
     return putBack();    // without the link the engine would not find its files
   }
   hide(from);
+  // The engine's settings name the real folder, not the link (see the tidy-up above for why).
+  repointSettings(path.join(to, 'openclaw.json'), from, to);
   const made = await runEngine(['gateway', 'install', '--force'], { env: env(), timeoutMs: 300000 });
   if (made.code !== 0) return putBack();
   await runEngine(['gateway', 'start'], { env: env(), timeoutMs: 120000 });

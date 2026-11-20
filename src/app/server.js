@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
-import { moveEngineHome, prepareEngineHome } from './enginehome.js';
+import { engineHome, moveEngineHome, prepareEngineHome } from './enginehome.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
 import { createDirectLine, stepText, stepSkill } from './directline.js';
@@ -30,6 +30,8 @@ const PROFILE_FILE = path.join(os.homedir(), '.falcon', 'profile.json');
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,300}$/;
 // The engine's rule for a learned skill's name: 1-63 lowercase letters, digits or hyphens.
 const LEARNED_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+// A program inside a learned method: a plain file name of a kind Windows or a Mac runs.
+const PROGRAM_FILE = /^[\w][\w.-]{0,80}\.(ps1|mjs|js|cmd|bat|py|sh)$/i;
 const SESSION_KEY = 'falcon-window';
 const BRIEFING_NAME = 'falcon-morning-briefing';
 
@@ -218,14 +220,18 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   const APPROVAL_POLL_MS = engine.approvalPollMs ?? 8000;
   const UPDATE_WAKE_MS = engine.updateWakeMs ?? 2000;
   // `engine` lets tests replace the real engine with stand-ins.
+  // The engine's real folder (Falcon's own once moved): paths written into its settings must never name
+  // the link, or the engine refuses new conversations (see enginehome.js).
+  const enginePaths = () => ({ workspace: path.join(engineHome(), 'workspace'), envFile: path.join(engineHome(), '.env'), configFile: path.join(engineHome(), 'openclaw.json') });
   const installFalcon = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
-    return pack.installFalcon(options);
+    return pack.installFalcon({ ...enginePaths(), ...options });
   };
-  const workspaceDir = () => path.join(os.homedir(), '.openclaw', 'workspace');
+  const workspaceDir = () => path.join(engineHome(), 'workspace');
   const setupSearch = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
-    return pack.setupSearch(options);
+    const { envFile, configFile } = enginePaths();
+    return pack.setupSearch({ envFile, configFile, ...options });
   };
   const scoutProgressFile = () => path.join(os.homedir(), '.falcon', 'scout-progress.json');
   const scoutFolder = () => {
@@ -238,7 +244,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     child.on('error', () => {});
     child.unref();
   };
-  const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
+  const envFile = () => path.join(engineHome(), '.env');
   const api = { fastLane, packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   // What an update needs to know and do; stand-ins replace these in checks.
   if (!api.appInfo) {
@@ -273,7 +279,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       patchPairingText(dir);
     } catch { /* the engine keeps its own wording; nothing else depends on this */ }
   };
-  ownPairingText();
+  // A start check of a workshop copy (see workshop.js) only proves it starts: it changes nothing.
+  if (!engine.startCheck) ownPairingText();
   // An engine set up before Falcon had his own folder is moved into it, once (see enginehome.js). The
   // window waits on its opening screen meanwhile. Only with the real engine: stand-ins have nothing to move.
   const moveHome = engine.moveEngineHome ?? (Object.keys(engine).length ? null : moveEngineHome);
@@ -432,7 +439,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // He answers "I have started it" at once; the engine makes the picture in the background and, when it
   // is ready, starts a run of its own in the same conversation that ends with the file's name. The
   // window holds a place for it meanwhile, and is sent the picture on its events channel.
-  if (!api.mediaRoot) api.mediaRoot = () => path.join(os.homedir(), '.openclaw', 'media');
+  if (!api.mediaRoot) api.mediaRoot = () => path.join(engineHome(), 'media');
   if (!api.keepFolder) api.keepFolder = (kind) => keepFolder(kind);
   const shownMedia = new Map();    // what the window may load: id -> { file, type }
   const keptCopies = new Map();    // the engine's file -> what was offered for it, so one picture is copied once
@@ -821,6 +828,9 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       // The line under the answer: how many steps and how long. (The engine does not say what it cost.)
       send('summary', { fast: false, steps: stepsTaken, ms: Date.now() - asked });
       send('done', {});
+      // A new program in something he just learned waits for the user's yes: the window points to it.
+      try { await recheckPrograms(); } catch { /* checked again when Settings is opened */ }
+      broadcast('learned', { count: learnedNames().length, waiting: waitingPrograms().length });
     } catch (problem) {
       send('error', { text: problem?.say || (tooLong ? `That took too long, ${callMeNow()}, so I stopped. Please ask again, perhaps in smaller steps.`
         : `I have lost my connection, ${callMeNow()}. Please try again in a moment.`) });
@@ -831,6 +841,48 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       chatsInFlight--;
       res.end();
     }
+  }
+
+  // ---- Programs inside learned methods: each runs only after the user allows it ----
+  // Where the engine keeps what Falcon learns, and Falcon's record of the programs the user allowed, with
+  // a fingerprint of each: a program changed after it was allowed loses its permission until allowed again.
+  if (!api.learnedDir) api.learnedDir = () => path.join(engineHome(), 'agents', 'falcon', 'agent', 'workshop-skills');
+  const approvedFile = () => path.join(path.dirname(api.profileFile()), 'approved-programs.json');
+  function readApproved() {
+    try { const doc = JSON.parse(fs.readFileSync(approvedFile(), 'utf8')); return doc && typeof doc === 'object' ? doc : {}; } catch { return {}; }
+  }
+  function writeApproved(doc) {
+    try { fs.mkdirSync(path.dirname(approvedFile()), { recursive: true }); fs.writeFileSync(approvedFile(), JSON.stringify(doc, null, 2)); } catch { /* asked again next time */ }
+  }
+  function fileHash(file) {
+    try { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); } catch { return ''; }
+  }
+  function readStart(file, max) {
+    try { return fs.readFileSync(file, 'utf8').slice(0, max); } catch { return ''; }
+  }
+  function learnedPrograms(name) {
+    const dir = path.join(api.learnedDir(), name, 'scripts');
+    try { return fs.readdirSync(dir).filter((f) => PROGRAM_FILE.test(f)).map((f) => path.join(dir, f)); } catch { return []; }
+  }
+  // Live learned methods: folders with a method in them (archived ones are kept elsewhere by the engine).
+  function learnedNames() {
+    try { return fs.readdirSync(api.learnedDir()).filter((n) => LEARNED_NAME.test(n) && fs.existsSync(path.join(api.learnedDir(), n, 'SKILL.md'))); } catch { return []; }
+  }
+  // Programs of live learned methods that the user has not allowed (or that changed since he did).
+  function waitingPrograms() {
+    const approved = readApproved();
+    return learnedNames().flatMap((n) => learnedPrograms(n)).filter((file) => approved[file] !== fileHash(file));
+  }
+  async function recheckPrograms() {
+    const approved = readApproved();
+    let changed = false;
+    for (const [file, hash] of Object.entries(approved)) {
+      if (fileHash(file) === hash) continue;
+      await api.runEngine(['approvals', 'allowlist', 'remove', file, '--gateway'], { timeoutMs: 60000 });
+      delete approved[file];
+      changed = true;
+    }
+    if (changed) writeApproved(approved);
   }
 
   const routes = {
@@ -1088,9 +1140,15 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (code !== 0) return { ok: false, error: 'I could not read what I have learned just now.' };
       let doc;
       try { doc = JSON.parse(out.slice(out.indexOf('{'))); } catch { return { ok: false, error: 'I could not read what I have learned just now.' }; }
+      await recheckPrograms();
+      const approved = readApproved();
       const when = (item) => Number(item?.updatedAtMs || item?.archivedAtMs || item?.createdAtMs || 0) || null;
-      const learned = (Array.isArray(doc.skills) ? doc.skills : []).filter((s) => typeof s?.name === 'string')
-        .map((s) => ({ name: s.name, about: ownWords(String(s.description || '')).slice(0, 300), when: when(s), files: Array.isArray(s.files) ? s.files.length : 0 }));
+      const learned = (Array.isArray(doc.skills) ? doc.skills : []).filter((s) => typeof s?.name === 'string' && LEARNED_NAME.test(s.name))
+        .map((s) => ({
+          name: s.name, about: ownWords(String(s.description || '')).slice(0, 300), when: when(s), files: Array.isArray(s.files) ? s.files.length : 0,
+          // Its programs, each with its text, so the user sees what he is allowing.
+          programs: learnedPrograms(s.name).map((file) => ({ file: path.basename(file), allowed: Boolean(approved[file]) && approved[file] === fileHash(file), text: readStart(file, 4000) })),
+        }));
       const live = new Set(learned.map((s) => s.name));
       // An archived skill may have several saved versions: show it once, and not at all if it is live again.
       const removed = [...new Map((Array.isArray(doc.archived) ? doc.archived : []).filter((a) => typeof a?.name === 'string' && !live.has(a.name))
@@ -1108,6 +1166,25 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (!LEARNED_NAME.test(name)) return { ok: false, error: 'That is not something I have learned.' };
       const { code } = await api.runEngine(['skills', 'workshop', 'restore', name, '--json'], { timeoutMs: 120000 });
       return code === 0 ? { ok: true } : { ok: false, error: 'I could not bring it back just now. Please try again.' };
+    },
+    // For the "What I can do" panel: how many methods he has learned and how many programs wait for a yes.
+    // Read from the folder itself, so it is instant.
+    'GET /api/learned/count': async () => ({ count: learnedNames().length, waiting: waitingPrograms().length }),
+    // The user allows one program of a learned method to run. The engine refuses any program it has not
+    // been told to trust when Falcon works from his window ("Headless runs cannot wait for interactive
+    // exec approval", seen on a real PC), so this is where the user's yes is given.
+    'POST /api/learned/allow': async (body) => {
+      const name = String(body.name || '');
+      const file = String(body.file || '');
+      if (!LEARNED_NAME.test(name) || !PROGRAM_FILE.test(file)) return { ok: false, error: 'That is not a program I made.' };
+      const full = learnedPrograms(name).find((p) => path.basename(p) === file);
+      if (!full) return { ok: false, error: 'That is not a program I made.' };
+      const hash = fileHash(full);
+      const { code } = await api.runEngine(['approvals', 'allowlist', 'add', full, '--gateway'], { timeoutMs: 60000 });
+      if (code !== 0) return { ok: false, error: 'I could not allow it just now. Please try again.' };
+      writeApproved({ ...readApproved(), [full]: hash });
+      broadcast('learned', { count: learnedNames().length, waiting: waitingPrograms().length });
+      return { ok: true };
     },
 
     // ---- Scout: open a finished dossier. Only a file inside the "Falcon Scout" folder can be opened. ----

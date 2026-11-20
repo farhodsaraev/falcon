@@ -83,6 +83,8 @@ copy_falcon() {
   cp -R "$from/src/app" "$APP_DIR/src/app"
   cp -R "$from/ui" "$APP_DIR/ui"
   cp -R "$from/falcon-agent" "$APP_DIR/falcon-agent"
+  # His automatic tests: the workshop runs them before any change of his is switched in.
+  if [ -d "$from/test" ]; then cp -R "$from/test" "$APP_DIR/test"; fi
   mkdir -p "$APP_DIR/installer"
   cp "$from/installer/uninstall.sh" "$APP_DIR/installer/uninstall.sh" 2>/dev/null && chmod +x "$APP_DIR/installer/uninstall.sh" || true
   cp "$from/installer/falcon.png" "$APP_DIR/falcon.png" 2>/dev/null || cp "$from/falcon.png" "$APP_DIR/falcon.png" 2>/dev/null || true

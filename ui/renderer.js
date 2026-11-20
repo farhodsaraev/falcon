@@ -9,7 +9,7 @@ function showScreen(name) {
   $('more').hidden = name !== 'main';
   document.body.classList.toggle('on-main', name === 'main');
   for (const side of document.querySelectorAll('.side')) side.hidden = name !== 'main';
-  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); checkUpdateOnce(); refreshMind(); }
+  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); checkUpdateOnce(); refreshMind(); refreshLearnedCount(); }
   if (name !== 'main' && voice && voice.active()) voice.stop();
   if (name === 'connections') refreshConnections();
 }
@@ -82,6 +82,32 @@ function learnedRow(item, removed) {
       refreshLearned(false);
     } catch { note('learned-message', 'Falcon could not be reached. Please try again.', 'bad'); }
   }));
+  // Its programs: each runs only after the user allows it, so he can read it first.
+  for (const program of removed ? [] : item.programs || []) {
+    const box = document.createElement('details');
+    box.className = 'program';
+    const head = document.createElement('summary');
+    head.textContent = program.allowed ? `Program ${program.file}: allowed` : `Program ${program.file}: waiting for your yes`;
+    const code = document.createElement('pre');
+    code.textContent = program.text || '';
+    box.append(head, code);
+    if (!program.allowed) {
+      box.open = true;
+      const allow = document.createElement('button');
+      allow.className = 'primary small-btn';
+      allow.textContent = 'Allow this program';
+      allow.addEventListener('click', () => withButton(allow, async () => {
+        try {
+          const r = await window.falcon.allowProgram(item.name, program.file);
+          if (!r.ok) return note('learned-message', r.error, 'bad');
+          note('learned-message', `Allowed. Falcon can now run ${program.file}.`, 'ok');
+          refreshLearned(false);
+        } catch { note('learned-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+      }));
+      box.append(allow);
+    }
+    text.append(box);
+  }
   row.append(text, button);
   return row;
 }
@@ -98,7 +124,9 @@ async function refreshLearned(clearMessage = true) {
   $('removed-list').replaceChildren(...r.removed.map((item) => learnedRow(item, true)));
   $('learned-empty').hidden = r.learned.length > 0;
   $('removed-title').hidden = r.removed.length === 0;
+  $('learned-hint').hidden = !r.learned.some((item) => (item.programs || []).some((p) => !p.allowed));
 }
+$('learned-hint').addEventListener('click', () => { showScreen('connections'); showTab('learned'); });
 $('about-intro').addEventListener('click', () => showScreen('intro'));
 
 // ---- Update: one button for Falcon and the engine he runs on ----
@@ -604,12 +632,15 @@ const SKILLS = [
   ['pictures', 'Pictures', 'Draw a falcon over a city at sunset.'],
   ['scout', 'Scout', 'Scout Uzum and tell me what you find.'],
   ['memory', 'Memory', 'Remember that my accountant is called Ann.'],
+  // What he learned when asked (self-repair plan, stage 1). Its line shows how many, or one waiting for a yes.
+  ['learned', 'Learned', 'Learn how to tell me the official dollar rate.'],
 ];
 for (const [id, name, example] of SKILLS) {
   const tile = document.createElement('button');
   tile.type = 'button';
   tile.className = 'tile';
   tile.dataset.skill = id;
+  tile.dataset.idle = 'Ready';
   const title = document.createElement('span');
   title.textContent = name;
   const state = document.createElement('small');
@@ -622,6 +653,14 @@ for (const [id, name, example] of SKILLS) {
     tryIt.title = 'Put this in the box';
     tryIt.addEventListener('click', () => { $('ask-text').value = example; $('ask-text').focus(); });
     $('skill-try').replaceChildren('Try: ', tryIt);
+    if (id === 'learned') {
+      // What he has learned so far, with Remove and the programs waiting for a yes.
+      const see = document.createElement('button');
+      see.type = 'button';
+      see.textContent = 'See what I learned';
+      see.addEventListener('click', () => { showScreen('connections'); showTab('learned'); });
+      $('skill-try').append(' ', see);
+    }
   });
   $('skill-tiles').append(tile);
 }
@@ -629,8 +668,20 @@ function lightSkill(skill) {
   for (const tile of document.querySelectorAll('.tile')) {
     const on = Boolean(skill) && tile.dataset.skill === skill;
     tile.classList.toggle('use', on);
-    tile.lastChild.textContent = on ? 'In use' : 'Ready';
+    tile.lastChild.textContent = on ? 'In use' : tile.dataset.idle || 'Ready';
   }
+}
+// The Learned tile's line: how many methods he has learned, or that a program waits for the user's yes.
+function showLearnedCount({ count = 0, waiting = 0 } = {}) {
+  const tile = document.querySelector('.tile[data-skill="learned"]');
+  if (!tile) return;
+  tile.dataset.idle = waiting ? `${waiting} to allow` : count ? `${count} learned` : 'Ready';
+  tile.classList.toggle('wait', waiting > 0);
+  if (!tile.classList.contains('use')) tile.lastChild.textContent = tile.dataset.idle;
+  $('learned-hint').hidden = !waiting;
+}
+function refreshLearnedCount() {
+  window.falcon.learnedCount().then(showLearnedCount).catch(() => {});
 }
 
 // Today's counts, kept on this computer only.
@@ -1120,6 +1171,8 @@ window.falcon.listen({
   update: (progress) => { const line = progress.text || progress.detail; if (line) note('update-message', line, 'working'); },
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
   media: showMedia,
+  // A program in something he learned waits for the user's yes (Settings > Learned).
+  learned: showLearnedCount,
   // Something he noticed by himself, such as the AI credit being back after a top-up.
   notice: ({ text }) => {
     if (busy || !text) return;

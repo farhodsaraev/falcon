@@ -60,7 +60,7 @@ if (-not $DeleteData -and -not $KeepData) {
 # ---- 1. Close Falcon: his window, his icon among the hidden icons, his window server ----
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
   $_.ProcessId -ne $PID -and $_.CommandLine -and (
-    $_.CommandLine -like "*$app*" -or $_.CommandLine -like "*\.falcon\window*" -or $_.CommandLine -like "*falcon*tray.ps1*")
+    $_.CommandLine -like "*$app*" -or $_.CommandLine -like "*\.falcon\window*" -or $_.CommandLine -like "*falcon*tray.ps1*" -or $_.CommandLine -like "*\.falcon\watchdog.mjs*")
 } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 # ---- 2. The engine: its start-at-sign-in entry, then the engine itself ----
@@ -111,6 +111,10 @@ if (Test-Path $nodeMarker) {
     [Environment]::SetEnvironmentVariable("Path", $kept, "User")
   }
 }
+
+# ---- 3b. The portable Git Falcon installed for his workshop, only if he installed it ----
+$falconGit = Join-Path $env:USERPROFILE ".falcon\git"
+if (Test-Path (Join-Path $falconGit "installed-by-falcon.txt")) { Remove-Item $falconGit -Recurse -Force -ErrorAction SilentlyContinue }
 
 # ---- 4. Falcon's icons, his entry in Settings > Apps, and his files ----
 foreach ($link in @(

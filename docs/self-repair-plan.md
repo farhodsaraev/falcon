@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stage 0 is complete. No other stage is started.
+Status: Stage 0 is complete. Stage 1 is built and tested, except the control "Allow this program" on the owner's PC. Stage 2 is built; its test on a clean Windows PC is not done.
 
 ## 1. Purpose
 
@@ -121,6 +121,17 @@ The window has these controls:
 
 How it operates: the coding tool sends its work to Falcon as a sequence of events. Falcon reads the events and shows them in the window. Codex sends these events on Windows (Stage 0 showed this). For the engine, Falcon uses his direct line to the engine, which shows each step in the main window today.
 
+## 8B. The panel "What I can do"
+
+The panel "What I can do" shows each function of Falcon as a tile. Each stage that adds a function to the owner also adds or changes a tile. A tile shows the state of its function in 1 to 3 words. It lights while Falcon uses it. When the owner presses it, it shows an example request.
+
+| Stage | Tile | Text on the tile |
+|---|---|---|
+| 1 | Learned | "Ready", the number of learned methods, or the number of programs that wait for the owner's approval |
+| 3 | Repair | "Ready", "Needs a coding key", or "Working" while a repair is in progress |
+| 4 | Repair | Also the number of personal changes |
+| 6 | Add-ons | The number of add-ons that Falcon made, or "Off" if one has a fault |
+
 ## 9. Coding tools and AI keys
 
 ### 9.1 The coding tools
@@ -180,10 +191,18 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - Settings has a tab "Learned". It shows each learned skill. The owner can remove a skill and bring it back.
 - A program in a learned skill runs only after the owner approves it in the window.
 - **Real test:** the owner asked Falcon to learn the official dollar rate. Falcon asked first, did the task, and gave the correct rate. At the first attempt he said that the tool was not available. He did not try it. At the second attempt he saved the method correctly. The rules now tell him that the tool is always available in his window.
-- **Not tested yet:** a learned skill in a new conversation, and a learned skill that has a program.
+- **Tested on 2026-11-20:** in a new conversation, Falcon read the learned method and used it directly.
+- **Fault found:** the engine does not ask for approval of a new program when the request comes from Falcon's window. It refuses the program. Thus a learned program could not operate.
+- **Correction:** the tab "Learned" shows each new program with its text and the control "Allow this program". When the owner allows it, Falcon adds that program to the list of programs that the engine trusts. If the program changes later, Falcon removes the permission until the owner allows it again.
+- The panel "What I can do" has the tile "Learned" (see section 8B).
+- **Not tested yet:** the control "Allow this program" on the owner's PC, and a learned program that operates after that.
 
-### Stage 2: Git and the workshop
+### Stage 2: Git and the workshop (built on 2026-11-20, clean-Windows test not done)
 
+- **Built:** finding Git or installing the portable Git with its checksum, the local history, the workshop copy, the tests and the start check in the workshop, the switch, and the watchdog that puts the last working version back.
+- **Tested on a temporary copy on a developer PC:** a good change was switched in and kept in 5 seconds. A change that breaks the start was put back after the 60-second wait, and the last working version started again (66 seconds in total).
+- **The watchdog waits 60 seconds** for the new version to answer. Then it puts the last working version back and starts it. The total time is a little more than 60 seconds.
+- **Not done yet:** the test on a clean Windows PC without Git, and a message in the window when Falcon puts the last version back. The owner cannot use the workshop yet; Stage 3 connects it.
 - **Task:** Install the portable Git if the PC does not have Git. Make the local history from the installed files.
 - **Task:** Make the workshop copy, the test step, the start step, and the automatic return to the last version.
 - **Task:** Add the removal of Falcon's Git to the uninstaller.

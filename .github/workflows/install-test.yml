@@ -256,6 +256,11 @@ jobs:
           foreach ($i in 1..60) { openclaw gateway status *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 3 }
           openclaw gateway status
           if ($LASTEXITCODE -ne 0) { throw "the engine did not start again after the move" }
+          # A new conversation must still be accepted (no key here, so it fails for that reason only).
+          # Seen on a real PC: through the link the engine refused every new one ("workspace path alias").
+          $talk = cmd /c "openclaw agent --agent falcon --message hello --json --timeout 90 2>&1" | Out-String
+          $talk.Substring(0, [Math]::Min(600, $talk.Length))
+          if ($talk -match "WORKSPACE_ALIAS|path alias points") { throw "the engine refuses new conversations after the move" }
 
       - name: Window sees the engine
         shell: powershell
@@ -303,6 +308,13 @@ jobs:
         shell: powershell
         run: |
           & $env:FALCON_NODE --test (Get-ChildItem test\*.test.js | ForEach-Object FullName)
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Self-repair workshop - portable Git, a change switched in, and a broken one put back
+        shell: powershell
+        timeout-minutes: 25
+        run: |
+          & $env:FALCON_NODE scripts\ci-workshop.mjs "$env:LOCALAPPDATA\Falcon\app"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Falcon is listed in Settings > Apps, and his icon can sit by the clock
