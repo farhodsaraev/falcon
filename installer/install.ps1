@@ -49,7 +49,7 @@ function Copy-Falcon([string]$from) {
   # version it was tested with, which Falcon's Update button goes by.
   $described = Join-Path $from "package.json"
   if (Test-Path $described) { Copy-Item $described (Join-Path $app "package.json") -Force }
-  else { '{ "name": "falcon", "version": "0.3.0", "private": true, "type": "module" }' | Set-Content (Join-Path $app "package.json") -Encoding ascii }
+  else { '{ "name": "falcon", "version": "0.4.0", "private": true, "type": "module" }' | Set-Content (Join-Path $app "package.json") -Encoding ascii }
   # Sample files so the "things to try" work on a fresh PC
   $samples = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Falcon Samples"
   if ((Test-Path (Join-Path $from "demo")) -and -not (Test-Path $samples) -and -not $NoShortcuts) {

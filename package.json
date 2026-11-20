@@ -1,6 +1,6 @@
 {
   "name": "falcon",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "falconEngine": "2026.11.5",
   "private": true,
   "description": "Falcon: a private butler-style assistant that controls your Windows PC",

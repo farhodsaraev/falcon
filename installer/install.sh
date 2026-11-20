@@ -90,7 +90,7 @@ copy_falcon() {
   cp "$from/installer/falcon.png" "$APP_DIR/falcon.png" 2>/dev/null || cp "$from/falcon.png" "$APP_DIR/falcon.png" 2>/dev/null || true
   # The package's own description travels with it: which version this is, and which engine version it was tested with.
   cp "$from/package.json" "$APP_DIR/package.json" 2>/dev/null ||
-    printf '{ "name": "falcon", "version": "0.3.0", "private": true, "type": "module" }\n' >"$APP_DIR/package.json"
+    printf '{ "name": "falcon", "version": "0.4.0", "private": true, "type": "module" }\n' >"$APP_DIR/package.json"
   # Sample files so the "things to try" work on a fresh Mac
   local samples="$HOME/Documents/Falcon Samples"
   if [ -d "$from/demo" ] && [ ! -e "$samples" ]; then
