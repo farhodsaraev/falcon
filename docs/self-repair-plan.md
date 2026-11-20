@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stage 0 is complete. Stage 1 is built and tested, except the control "Allow this program" on the owner's PC. Stage 2 is built; its test on a clean Windows PC is not done.
+Status: Stages 0 and 1 are complete. Stage 2 is built; its test on a clean Windows PC is in progress.
 
 ## 1. Purpose
 
@@ -195,7 +195,8 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - **Fault found:** the engine does not ask for approval of a new program when the request comes from Falcon's window. It refuses the program. Thus a learned program could not operate.
 - **Correction:** the tab "Learned" shows each new program with its text and the control "Allow this program". When the owner allows it, Falcon adds that program to the list of programs that the engine trusts. If the program changes later, Falcon removes the permission until the owner allows it again.
 - The panel "What I can do" has the tile "Learned" (see section 8B).
-- **Not tested yet:** the control "Allow this program" on the owner's PC, and a learned program that operates after that.
+- **Tested on 2026-11-20 on the owner's PC:** the owner allowed the C-drive program. Then Falcon used it and gave the correct free space (76.1 GB of 475.8 GB, the same as Windows shows).
+- **Small gap:** while the program operates, the step shows the engine's own title, not "Using something I learned". The window gets only the title of that step.
 
 ### Stage 2: Git and the workshop (built on 2026-11-20, clean-Windows test not done)
 

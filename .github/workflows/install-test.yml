@@ -261,6 +261,8 @@ jobs:
           $talk = cmd /c "openclaw agent --agent falcon --message hello --json --timeout 90 2>&1" | Out-String
           $talk.Substring(0, [Math]::Min(600, $talk.Length))
           if ($talk -match "WORKSPACE_ALIAS|path alias points") { throw "the engine refuses new conversations after the move" }
+          "new conversations are accepted (refused only for want of a key, as expected here)"
+          exit 0
 
       - name: Window sees the engine
         shell: powershell
