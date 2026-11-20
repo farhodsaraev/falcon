@@ -117,6 +117,21 @@ const PROVIDERS = {
   },
 };
 
+// The AI for coding and self-repair (self-repair plan, section 9): a stronger model than everyday work.
+// With an OpenAI key the work is done by Codex; with only an OpenRouter key, by the engine's own coding
+// part. Tried on 2026-11-20: GPT-6.1 Terra repaired 3 of 3 real Falcon faults with each tool.
+export const CODING_MODELS = {
+  openai: [
+    { model: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', note: 'Recommended. Repaired 3 of 3 faults in Falcon\'s trial.', tested: true },
+    { model: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', note: 'Stronger, about twice the price. Not yet tried on repairs.' },
+  ],
+  openrouter: [
+    { model: 'openai/gpt-6.1-terra', label: 'GPT-6.1 Terra', note: 'Recommended. The model that repaired 3 of 3 faults in Falcon\'s trial.', tested: true },
+    { model: 'anthropic/claude-sonnet-5.5', label: 'Claude Sonnet 5.5', note: 'Strong at code, about twice the price. Not yet tried on repairs.' },
+  ],
+};
+const CODING_TOOL = { openai: 'Codex', openrouter: 'Falcon\'s engine' };
+
 /** Which company a key belongs to, from how it starts. */
 export function recogniseKey(key) {
   if (/^sk-or-/.test(key)) return 'openrouter';
@@ -440,6 +455,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // is ready, starts a run of its own in the same conversation that ends with the file's name. The
   // window holds a place for it meanwhile, and is sent the picture on its events channel.
   if (!api.mediaRoot) api.mediaRoot = () => path.join(engineHome(), 'media');
+  // Where his screen skill puts the picture it takes (see falcon-agent/skills-*/screen).
+  if (!api.screenDir) api.screenDir = () => path.join(api.workspaceDir(), 'skills', 'screen');
   if (!api.keepFolder) api.keepFolder = (kind) => keepFolder(kind);
   const shownMedia = new Map();    // what the window may load: id -> { file, type }
   const keptCopies = new Map();    // the engine's file -> what was offered for it, so one picture is copied once
@@ -450,16 +467,21 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
 
   /** Makes a file Falcon named loadable by the window, if it is one of his own pictures, videos or sounds. */
   function offerMedia(named) {
-    const admitted = admitMedia(named, api.mediaRoot());
+    // His own pictures, videos and sounds, and the pictures he takes of the screen (one file, taken anew
+    // each time, which is why a copy is told apart by when it was taken).
+    const admitted = admitMedia(named, api.mediaRoot()) || admitMedia(named, api.screenDir());
     if (!admitted) return null;
-    const before = keptCopies.get(admitted.file);
+    let taken = 0;
+    try { taken = fs.statSync(admitted.file).mtimeMs; } catch { /* just checked */ }
+    const key = `${admitted.file}|${taken}`;
+    const before = keptCopies.get(key);
     if (before && shownMedia.has(before.id) && fs.existsSync(before.path)) { offeredFiles.add(before.path); return before; }
     // Keep a copy under a plain name in the user's own Pictures (or Videos) folder: the engine's folder
     // is hidden and gets tidied up. If the copy cannot be written, show the engine's file itself.
     const file = keepCopy(admitted.file, api.keepFolder(admitted.kind)) || admitted.file;
     const item = { id: crypto.randomBytes(9).toString('hex'), kind: admitted.kind, name: path.basename(file), path: file };
     shownMedia.set(item.id, { file, type: admitted.type });
-    keptCopies.set(admitted.file, item);
+    keptCopies.set(key, item);
     for (const map of [shownMedia, keptCopies]) if (map.size > 80) map.delete(map.keys().next().value);
     offeredFiles.add(file);          // so Open and Show in folder work under it
     if (offeredFiles.size > 30) offeredFiles.delete(offeredFiles.values().next().value);
@@ -843,6 +865,45 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     }
   }
 
+  // ---- Which AI does what: everyday work, voice, and coding (self-repair plan, section 9.2) ----
+  const aiJobsFile = () => path.join(path.dirname(api.profileFile()), 'ai-jobs.json');
+  // The everyday model, from the engine's settings file (instant), or from the engine itself.
+  async function everydayModel() {
+    let current = '';
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(path.dirname(api.envFile()), 'openclaw.json'), 'utf8'));
+      const model = config.agents?.defaults?.model;
+      current = String((typeof model === 'string' ? model : model?.primary) || '');
+    } catch { /* no settings to read: ask the engine */ }
+    if (!current) current = (await api.runEngine(['models', 'status', '--plain'], { timeoutMs: 60000 })).out.trim().split(/\r?\n/).pop() || '';
+    const owner = Object.values(PROVIDERS).find((p) => p.models.some((m) => m.model === current));
+    const known = owner?.models.find((m) => m.model === current);
+    return { model: current, label: known ? known.label : current.split('/').pop(), provider: owner?.name || '' };
+  }
+  // Which keys can do coding: an OpenAI key (kept for the live voice) and an OpenRouter key (in the engine's file).
+  async function codingKeys() {
+    const keys = [];
+    try { if (await api.voiceKey.get()) keys.push('openai'); } catch { /* none */ }
+    if (readEnvKey(api.envFile(), 'OPENROUTER_API_KEY')) keys.push('openrouter');
+    return keys;
+  }
+  function savedCoding() {
+    try { const doc = JSON.parse(fs.readFileSync(aiJobsFile(), 'utf8')); return doc?.coding || null; } catch { return null; }
+  }
+  /** The AI for coding: the user's choice while its key is there, else the recommended one his keys allow. */
+  async function codingChoice() {
+    const keys = await codingKeys();
+    const saved = savedCoding();
+    const pick = (provider, model) => {
+      const known = CODING_MODELS[provider]?.find((m) => m.model === model);
+      return known ? { provider, model, label: known.label, tool: CODING_TOOL[provider], chosen: Boolean(saved) } : null;
+    };
+    if (saved && keys.includes(saved.provider)) { const chosen = pick(saved.provider, saved.model); if (chosen) return chosen; }
+    const provider = keys[0];
+    return provider ? { ...pick(provider, CODING_MODELS[provider][0].model), chosen: false } : null;
+  }
+  api.codingChoice = codingChoice;     // Stage 3's repairs use this
+
   // ---- Programs inside learned methods: each runs only after the user allows it ----
   // Where the engine keeps what Falcon learns, and Falcon's record of the programs the user allowed, with
   // a fingerprint of each: a program changed after it was allowed loses its permission until allowed again.
@@ -1166,6 +1227,32 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (!LEARNED_NAME.test(name)) return { ok: false, error: 'That is not something I have learned.' };
       const { code } = await api.runEngine(['skills', 'workshop', 'restore', name, '--json'], { timeoutMs: 120000 });
       return code === 0 ? { ok: true } : { ok: false, error: 'I could not bring it back just now. Please try again.' };
+    },
+    // ---- Which AI does what ----
+    'GET /api/ai-jobs': async () => {
+      const keys = await codingKeys();
+      return {
+        everyday: await everydayModel(),
+        // The live voice needs an OpenAI key; without one the window's own built-in voice speaks, for free.
+        voice: { live: keys.includes('openai') },
+        coding: {
+          current: await codingChoice(),
+          options: keys.flatMap((provider) => CODING_MODELS[provider].map((m) => ({ provider, providerName: PROVIDERS[provider].name, tool: CODING_TOOL[provider], ...m }))),
+          // What a repair usually costs on the user's own key (self-repair plan, section 11).
+          price: 'A repair usually costs 20 cents to 2 US dollars on your own key.',
+        },
+      };
+    },
+    'POST /api/ai-jobs': async (body) => {
+      const provider = String(body.coding?.provider || '');
+      const model = String(body.coding?.model || '');
+      if (!CODING_MODELS[provider]?.some((m) => m.model === model)) return { ok: false, error: 'That is not one of the models offered for coding.' };
+      if (!(await codingKeys()).includes(provider)) return { ok: false, error: `Falcon has no ${PROVIDERS[provider].name} key yet. Add one under AI key first.` };
+      try {
+        fs.mkdirSync(path.dirname(aiJobsFile()), { recursive: true });
+        fs.writeFileSync(aiJobsFile(), JSON.stringify({ coding: { provider, model } }, null, 2));
+      } catch { return { ok: false, error: 'The choice could not be saved.' }; }
+      return { ok: true, coding: await codingChoice() };
     },
     // For the "What I can do" panel: how many methods he has learned and how many programs wait for a yes.
     // Read from the folder itself, so it is instant.

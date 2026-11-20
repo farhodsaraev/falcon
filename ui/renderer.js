@@ -9,7 +9,7 @@ function showScreen(name) {
   $('more').hidden = name !== 'main';
   document.body.classList.toggle('on-main', name === 'main');
   for (const side of document.querySelectorAll('.side')) side.hidden = name !== 'main';
-  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); checkUpdateOnce(); refreshMind(); refreshLearnedCount(); }
+  if (name === 'main') { $('ask-text').focus(); refreshVoice(); refreshDots(); showShortcut(); checkUpdateOnce(); refreshMind(); refreshLearnedCount(); refreshAbilities(); }
   if (name !== 'main' && voice && voice.active()) voice.stop();
   if (name === 'connections') refreshConnections();
 }
@@ -33,8 +33,47 @@ async function refreshDots() {
   } catch { /* leave as is */ }
 }
 
+// ---- Settings > AI key: which AI does what (everyday work, voice, coding) ----
+async function refreshAiJobs() {
+  let jobs;
+  try { jobs = await window.falcon.aiJobs(); } catch { return; }
+  $('job-everyday').textContent = jobs.everyday.label ? `${jobs.everyday.label}${jobs.everyday.provider ? `, through ${jobs.everyday.provider}` : ''}` : 'Not set up';
+  let live = true;
+  try { live = localStorage.getItem('falcon-live-voice') !== 'off'; } catch { /* default */ }
+  $('job-voice').textContent = jobs.voice.live && live ? 'OpenAI live voice' : jobs.voice.live ? 'Built-in voice (free); live voice is switched off below' : 'Built-in voice (free). An OpenAI key gives the live voice';
+  const now = jobs.coding.current;
+  $('job-coding').textContent = now ? `${now.label}, through ${now.tool}` : 'Needs an OpenAI or OpenRouter key';
+  const box = $('job-coding-choice');
+  box.hidden = !jobs.coding.options.length;
+  box.replaceChildren(...jobs.coding.options.map((m) => {
+    const option = document.createElement('label');
+    option.className = 'model-option';
+    const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'job-coding', checked: Boolean(now && now.provider === m.provider && now.model === m.model) });
+    radio.addEventListener('change', async () => {
+      note('job-message', 'Saving', 'working');
+      try {
+        const r = await window.falcon.setCodingAi(m.provider, m.model);
+        if (!r.ok) return note('job-message', r.error, 'bad');
+        note('job-message', `Coding and repairs will use ${r.coding.label}. ${jobs.coding.price}`, 'ok');
+        refreshAiJobs();
+      } catch { note('job-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+    });
+    const text = document.createElement('span');
+    const title = document.createElement('b');
+    title.textContent = `${m.label}, ${m.providerName} key`;
+    text.append(title);
+    if (m.tested) { const badge = document.createElement('em'); badge.textContent = 'tested'; text.append(badge); }
+    const about = document.createElement('small');
+    about.textContent = `${m.note} Done by ${m.tool}.`;
+    text.append(about);
+    option.append(radio, text);
+    return option;
+  }));
+}
+
 async function refreshConnections() {
   showCurrentModel();
+  refreshAiJobs();
   $('about-callme').textContent = callMe;
   showVoiceSetting();
   $('chrome-state').textContent = chromeKnown ? '✓ connected' : '';
@@ -279,7 +318,7 @@ $('key-save').addEventListener('click', () => withButton($('key-save'), async ()
     panelKey.reset();
     refreshSearch();
     note('key-message', r.thinking ? `Saved. Falcon now thinks with ${r.thinking}, on your ${r.provider} key.` : `Saved. Falcon can now use your ${r.provider} key.`, 'ok');
-    showCurrentModel();
+    showCurrentModel(); refreshAiJobs();
     await refreshVoice();
     refreshConnections();
   } catch { note('key-message', 'Falcon could not be reached. Please try again.', 'bad'); }
@@ -623,18 +662,35 @@ function archiveMedia() {
 // ---- What Falcon can do, and what he is doing ----
 // The skills shown in the wide view. Each lights up while a step uses it; pressing one puts an
 // example in the box, so the user learns what to ask without anything being done.
+// All of his abilities, so the user sees everything he can ask for. Each roadmap stage adds its own
+// (see docs/self-repair-plan.md, section 8B). A tile's line shows its state where that matters.
 const SKILLS = [
   ['files', 'Files', 'Find last month\'s invoice.'],
+  ['documents', 'Documents', 'Make a Word document with my notes from today\'s meeting.'],
   ['apps', 'Apps', 'Open Excel.'],
-  ['screen', 'Screen', 'What is on my screen right now?'],
+  ['screen', 'Screen', 'Show me what is on my screen right now.'],
   ['browser', 'Browser', 'Open bbc.com/news and tell me the top headline.'],
+  ['search', 'Web search', 'What is the weather in Tashkent today?'],
+  ['mail', 'Mail & calendar', 'What is on my calendar today?'],
   ['slides', 'Slides', 'Open my quarterly review presentation and go to slide 5.'],
-  ['pictures', 'Pictures', 'Draw a falcon over a city at sunset.'],
+  ['pictures', 'Pictures & video', 'Draw a falcon over a city at sunset.'],
   ['scout', 'Scout', 'Scout Uzum and tell me what you find.'],
   ['memory', 'Memory', 'Remember that my accountant is called Ann.'],
+  ['controls', 'Music & volume', 'Turn the volume up.'],
+  ['telegram', 'Telegram', 'Send me this file on Telegram.'],
+  ['briefing', 'Morning briefing', 'Send me my morning briefing now.'],
+  ['voice', 'Voice', null],
   // What he learned when asked (self-repair plan, stage 1). Its line shows how many, or one waiting for a yes.
   ['learned', 'Learned', 'Learn how to tell me the official dollar rate.'],
 ];
+// What pressing a tile shows besides an example: where to switch the ability on, or how to use it.
+const SKILL_HELP = {
+  voice: ['Press the microphone next to the box and just talk.', null],
+  telegram: ['Talk to me from your phone.', 'connections'],
+  briefing: ['Every morning in Telegram: weather, headlines, your reminders.', 'briefing'],
+  mail: ['Uses your own Chrome, where you are signed in.', 'connections'],
+  search: ['A free Google key makes searches more thorough.', 'key'],
+};
 for (const [id, name, example] of SKILLS) {
   const tile = document.createElement('button');
   tile.type = 'button';
@@ -647,12 +703,24 @@ for (const [id, name, example] of SKILLS) {
   state.textContent = 'Ready';
   tile.append(title, state);
   tile.addEventListener('click', () => {
-    const tryIt = document.createElement('button');
-    tryIt.type = 'button';
-    tryIt.textContent = `“${example}”`;
-    tryIt.title = 'Put this in the box';
-    tryIt.addEventListener('click', () => { $('ask-text').value = example; $('ask-text').focus(); });
-    $('skill-try').replaceChildren('Try: ', tryIt);
+    $('skill-try').replaceChildren();
+    if (example) {
+      const tryIt = document.createElement('button');
+      tryIt.type = 'button';
+      tryIt.textContent = `“${example}”`;
+      tryIt.title = 'Put this in the box';
+      tryIt.addEventListener('click', () => { $('ask-text').value = example; $('ask-text').focus(); });
+      $('skill-try').append('Try: ', tryIt);
+    }
+    const [help, settingsTab] = SKILL_HELP[id] || [];
+    if (help) $('skill-try').append(example ? ' ' : '', help);
+    if (settingsTab) {
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.textContent = 'Settings';
+      go.addEventListener('click', () => { showScreen('connections'); showTab(settingsTab); });
+      $('skill-try').append(' ', go);
+    }
     if (id === 'learned') {
       // What he has learned so far, with Remove and the programs waiting for a yes.
       const see = document.createElement('button');
@@ -682,6 +750,24 @@ function showLearnedCount({ count = 0, waiting = 0 } = {}) {
 }
 function refreshLearnedCount() {
   window.falcon.learnedCount().then(showLearnedCount).catch(() => {});
+}
+// A tile's line when it is not in use: its state, in one to three words.
+function setTileIdle(id, text, wait = false) {
+  const tile = document.querySelector(`.tile[data-skill="${id}"]`);
+  if (!tile) return;
+  tile.dataset.idle = text;
+  tile.classList.toggle('wait', wait);
+  if (!tile.classList.contains('use')) tile.lastChild.textContent = text;
+}
+// The states of the abilities that need something set up: read once each time the main screen opens.
+async function refreshAbilities() {
+  setTileIdle('mail', chromeKnown ? 'Ready' : 'Needs your Chrome', !chromeKnown);
+  try {
+    setTileIdle('voice', window.falconSpeech?.supported?.() || voiceReady ? (liveVoice && voiceReady ? 'Live voice' : 'Ready') : 'Not available');
+  } catch { /* the voice is still being set up */ }
+  window.falcon.connections().then((c) => setTileIdle('telegram', c.telegram ? 'Connected' : 'Not set up', !c.telegram)).catch(() => {});
+  window.falcon.searchStatus().then(({ via }) => setTileIdle('search', via ? 'Ready' : 'Off', !via)).catch(() => {});
+  window.falcon.briefing().then((b) => setTileIdle('briefing', b.enabled ? `Daily at ${b.time}` : 'Off')).catch(() => {});
 }
 
 // Today's counts, kept on this computer only.

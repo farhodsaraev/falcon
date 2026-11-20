@@ -110,7 +110,11 @@ test('direct line: each step is described in the user\'s terms, never by the nam
 
 test('direct line: each step names the skill it uses, so the window can light it up', () => {
   const cases = [
-    [{ name: 'web_search', args: { query: 'x' } }, 'browser'],
+    [{ name: 'web_search', args: { query: 'x' } }, 'search'],
+    [{ name: 'browser', args: { url: 'https://calendar.google.com/calendar/r' } }, 'mail'],
+    [{ name: 'browser', args: { url: 'https://bbc.com/news' } }, 'browser'],
+    [{ name: 'exec', args: { command: 'powershell -File "C:\\x\\skills\\documents\\make-document.ps1"' } }, 'documents'],
+    [{ name: 'message', args: { channel: 'telegram' } }, 'telegram'],
     [{ name: 'exec', args: { command: 'powershell -File "C:\\x\\skills\\presentations\\slides.ps1" -Go 5' } }, 'slides'],
     [{ name: 'exec', args: { command: 'powershell -File "C:\\x\\skills\\files\\find-files.ps1" -Query invoice' } }, 'files'],
     [{ name: 'exec', args: { command: 'whoami' } }, ''],
@@ -169,7 +173,7 @@ test('the window sends requests the owner\'s way and uses the direct line to sho
   const ask = (text, signal) => fetch(`http://127.0.0.1:${s.port}/api/chat`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ text }) }).then((r) => r.text());
   try {
     const text = await ask('What is the weather?');
-    assert.match(text, /event: step\ndata: {"text":"Searching the web: weather tashkent","skill":"browser"}/);
+    assert.match(text, /event: step\ndata: {"text":"Searching the web: weather tashkent","skill":"search"}/);
     assert.match(text, /Sunny, sir\./);
     assert.match(text, /event: actions\ndata: {"items":\["Checked the weather"\]}/);
     assert.match(sent[0][0], /^falcon-window-/, 'sent to the engine\'s web address, where it counts as the owner\'s');

@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stages 0, 1 and 2 are complete. Stage 2B is next.
+Status: Stages 0, 1 and 2 are complete. Stage 2B is built. Stage 3 is next.
 
 ## 1. Purpose
 
@@ -123,7 +123,7 @@ How it operates: the coding tool sends its work to Falcon as a sequence of event
 
 ## 8B. The panel "What I can do"
 
-The panel "What I can do" shows each function of Falcon as a tile. Each stage that adds a function to the owner also adds or changes a tile. A tile shows the state of its function in 1 to 3 words. It lights while Falcon uses it. When the owner presses it, it shows an example request.
+The panel "What I can do" shows each function of Falcon as a tile: Files, Documents, Apps, Screen, Browser, Web search, Mail and calendar, Slides, Pictures and video, Scout, Memory, Music and volume, Telegram, Morning briefing, Voice, and Learned. A function that needs a setting shows its state, for example "Not set up" or "Daily at 08:00". Each stage that adds a function to the owner also adds or changes a tile. A tile shows the state of its function in 1 to 3 words. It lights while Falcon uses it. When the owner presses it, it shows an example request.
 
 | Stage | Tile | Text on the tile |
 |---|---|---|
@@ -212,7 +212,10 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - **Done when:** a change that breaks the start is installed for test, and Falcon goes back in 60 seconds.
 - **Time:** 4 to 5 days.
 
-### Stage 2B: The screen "Which AI does what"
+### Stage 2B: The screen "Which AI does what" (built on 2026-11-20)
+
+- **Built:** Settings, tab "AI key", has the panel "Which AI does what". It shows the AI for everyday work, for voice, and for coding and repairs. The owner selects the coding AI from the models that his keys give. Without a selection, Falcon uses the recommended model of his keys: with an OpenAI key, Codex does the work; with only an OpenRouter key, the engine does it.
+- **Not tested yet:** a repair that uses the selected AI. Stage 3 adds repairs.
 
 - **Task:** Make the screen as section 9.2 tells, in the first setup and in Settings.
 - **Task:** Make each action use the key and the model of its job.

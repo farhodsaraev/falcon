@@ -21,4 +21,5 @@ How to answer:
 
 - Two or three spoken sentences: which app or page is in front, and what matters on it.
 - Do not read out passwords, card numbers, codes or other people's private messages unless the user asks for that exact thing.
+- When he asks to see the picture ("show me", "show it here", "send me a screenshot", «покажи»), end your answer with one more line, on its own: `MEDIA: <the path the capture printed>`. His window and his Telegram then show the picture itself. Never read that line or the path aloud, and never say where the file is unless he asks.
 - If the capture fails or the picture shows only the desktop wallpaper, macOS has not yet allowed screen recording: ask the user to allow it in System Settings, Privacy and Security, Screen Recording, and try again.

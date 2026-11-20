@@ -46,6 +46,8 @@
     dossierUrl: (name) => `/api/dossier/view?name=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`,
     learned: () => call('GET', '/api/learned'),
     learnedCount: () => call('GET', '/api/learned/count'),
+    aiJobs: () => call('GET', '/api/ai-jobs'),
+    setCodingAi: (provider, model) => call('POST', '/api/ai-jobs', { coding: { provider, model } }),
     removeLearned: (name) => call('POST', '/api/learned/remove', { name }),
     restoreLearned: (name) => call('POST', '/api/learned/restore', { name }),
     allowProgram: (name, file) => call('POST', '/api/learned/allow', { name, file }),

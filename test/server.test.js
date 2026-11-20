@@ -518,3 +518,41 @@ test('the Learned tile counts what he learned and the programs waiting for a yes
     assert.deepEqual(r, { count: 2, waiting: 1 });
   } finally { await s.close(); }
 });
+
+test('which AI does what: everyday, voice and coding each show their AI; coding is chosen only among the user\'s own keys', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-jobs-'));
+  const envPath = path.join(dir, '.env');
+  fs.writeFileSync(path.join(dir, 'openclaw.json'), JSON.stringify({ agents: { defaults: { model: { primary: 'openrouter/anthropic/claude-haiku-5.5' } } } }));
+  fs.writeFileSync(envPath, 'OPENROUTER_API_KEY=sk-or-v1-test\n');
+  let openaiKey = null;
+  const s = await startServer({ engine: { ...engine, envFile: () => envPath, profileFile: () => path.join(dir, 'profile.json'),
+    voiceKey: { get: async () => openaiKey, set: async () => {} } } });
+  const base = `http://127.0.0.1:${s.port}`;
+  const get = () => fetch(`${base}/api/ai-jobs`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+  const choose = (provider, model) => fetch(`${base}/api/ai-jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ coding: { provider, model } }) }).then((x) => x.json());
+  try {
+    let r = await get();
+    assert.equal(r.everyday.label, 'Claude Haiku 5.5');
+    assert.equal(r.everyday.provider, 'OpenRouter');
+    assert.equal(r.voice.live, false, 'no OpenAI key: the built-in voice');
+    assert.equal(r.coding.current.provider, 'openrouter', 'one OpenRouter key fills the coding job too');
+    assert.equal(r.coding.current.model, 'openai/gpt-6.1-terra');
+    assert.equal(r.coding.current.tool, 'Falcon\'s engine');
+    assert.ok(r.coding.options.every((o) => o.provider === 'openrouter'), 'only what his keys allow');
+    assert.equal((await choose('openai', 'gpt-6.1-terra')).ok, false, 'no OpenAI key yet');
+    assert.equal((await choose('openrouter', 'some/unknown-model')).ok, false);
+
+    openaiKey = 'sk-proj-test';
+    r = await get();
+    assert.equal(r.voice.live, true);
+    assert.equal(r.coding.current.provider, 'openai', 'with an OpenAI key, Codex does the coding');
+    assert.equal(r.coding.current.tool, 'Codex');
+    const saved = await choose('openrouter', 'anthropic/claude-sonnet-5.5');
+    assert.equal(saved.ok, true);
+    assert.equal(saved.coding.label, 'Claude Sonnet 5.5');
+    assert.equal((await get()).coding.current.model, 'anthropic/claude-sonnet-5.5', 'the user\'s choice is kept');
+    // If that key goes, the choice falls back to what the remaining keys allow.
+    fs.writeFileSync(envPath, '');
+    assert.equal((await get()).coding.current.provider, 'openai');
+  } finally { await s.close(); }
+});

@@ -168,6 +168,17 @@
 
     <div class="tab-body" data-tab="key">
       <div class="panel">
+        <p class="panel-title">Which AI does what</p>
+        <p class="panel-text">Each job uses its own AI. One key can do several jobs.</p>
+        <dl class="jobs">
+          <dt>Everyday work</dt><dd id="job-everyday">…</dd>
+          <dt>Voice</dt><dd id="job-voice">…</dd>
+          <dt>Coding and repairs</dt><dd id="job-coding">…</dd>
+        </dl>
+        <div id="job-coding-choice" class="models" role="radiogroup" aria-label="AI for coding and repairs" hidden></div>
+        <p id="job-message" class="message" role="status"></p>
+      </div>
+      <div class="panel">
         <p class="panel-title">AI key and model</p>
         <p class="panel-text">Falcon is thinking with <b id="model-now">…</b>. To change the model or the key, paste a key: Falcon recognises whose it is and shows the models it can use. An OpenAI key also gives Falcon his voice. OpenAI and OpenRouter keys also let him search the web. Keys stay on this computer.</p>
         <p class="panel-text">Web search: <b id="web-search-now">…</b></p>

@@ -228,3 +228,58 @@ test('the window holds a place for a picture being made, then shows it, keeps a 
     await s.close();
   }
 });
+
+test('a picture of the screen he was asked to show appears in the window, a fresh copy each time, and nothing else does', async () => {
+  let ended;
+  const screenDir = path.join(tmp, 'workspace', 'skills', 'screen');
+  fs.mkdirSync(screenDir, { recursive: true });
+  const shot = path.join(screenDir, 'screen.jpg');
+  fs.writeFileSync(shot, 'first picture of the screen');
+  const elsewhere = path.join(tmp, 'private.jpg');
+  fs.writeFileSync(elsewhere, 'not his to show');
+  const directLine = { close() {}, stop: async () => true, watch: () => () => {}, follow(sessionKey, onEnd) { ended = onEnd; return () => {}; } };
+  const s = await startServer({ engine: {
+    findEngine: () => null, readGateway: () => ({ port: 1, token: 'gw' }), profileFile: () => path.join(tmp, 'profile.json'), fastLane: async () => null,
+    directLine, mediaRoot: () => mediaRoot, screenDir: () => screenDir, keepFolder: () => path.join(tmp, 'kept-screens'),
+    runEngine: async () => ({ code: 0, out: '{"approvals":[]}' }),
+    fetch: async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Here it is, sir.' } }] })}\n\ndata: [DONE]\n\n`, { status: 200 }),
+  } });
+  const base = `http://127.0.0.1:${s.port}`;
+  const events = await fetch(`${base}/api/events?token=${s.token}`);
+  const reader = events.body.getReader();
+  const decoder = new TextDecoder();
+  let pushed = '';
+  let reading = null;
+  const nextMedia = async (waitMs = 2000) => {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const found = /event: media\ndata: (.*)\n\n/.exec(pushed);
+      if (found) { pushed = pushed.slice(found.index + found[0].length); return JSON.parse(found[1]); }
+      const left = deadline - Date.now();
+      if (left <= 0) return null;
+      reading ??= reader.read();
+      let timer;
+      const chunk = await Promise.race([reading, new Promise((resolve) => { timer = setTimeout(() => resolve(null), left); })]);
+      clearTimeout(timer);
+      if (!chunk) return null;
+      reading = null;
+      pushed += decoder.decode(chunk.value, { stream: true });
+    }
+  };
+  try {
+    await fetch(`${base}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ text: 'Show me my screen here.' }) }).then((r) => r.text());
+    ended({ runId: 'chatcmpl_1', text: `Here it is, sir.\n\nMEDIA:${shot}`, media: [] });
+    const first = await nextMedia();
+    assert.equal(first?.items.length, 1, 'the picture of the screen is shown');
+    assert.equal(fs.readFileSync(first.items[0].path, 'utf8'), 'first picture of the screen');
+    ended({ runId: 'chatcmpl_2', text: `Here.\n\nMEDIA:${elsewhere}`, media: [] });
+    assert.equal(await nextMedia(800), null, 'a file anywhere else is never shown');
+    // A new picture of the screen overwrites the same file: the window shows the new one, not the first again.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    fs.writeFileSync(shot, 'second picture of the screen');
+    ended({ runId: 'chatcmpl_3', text: `Here it is again.\n\nMEDIA:${shot}`, media: [] });
+    const second = await nextMedia();
+    assert.equal(fs.readFileSync(second.items[0].path, 'utf8'), 'second picture of the screen');
+    assert.notEqual(second.items[0].path, first.items[0].path);
+  } finally { await reader.cancel().catch(() => {}); await s.close(); }
+});

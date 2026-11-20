@@ -283,12 +283,19 @@ export function stepSkill({ name, args = {}, meta = '' }) {
     case 'exec':
       if (LEARNED_STEP.test(command)) return 'learned';
       if (/slides\.(ps1|mjs)/.test(command)) return 'slides';
-      if (/(find-files|read-file|share-file|make-document)\.(ps1|mjs)/.test(command)) return 'files';
+      if (/make-document\.(ps1|mjs)/.test(command)) return 'documents';
+      if (/(find-files|read-file|share-file)\.(ps1|mjs)/.test(command)) return 'files';
       if (/screenshot\.(ps1|mjs)/.test(command)) return 'screen';
       if (/scout[\w.-]*\.(ps1|mjs)/.test(command)) return 'scout';
       if (/apps\.(ps1|mjs)/.test(command)) return 'apps';
       return '';
-    case 'web_search': case 'web_fetch': case 'browser': return 'browser';
+    case 'web_search': return 'search';
+    case 'web_fetch': case 'browser': {
+      // His mail and calendar are pages in the user's own Chrome.
+      const where = String(args.url || args.targetUrl || meta || '');
+      return /(mail\.google|calendar\.google|outlook\.(live|office)|mail\.yandex|mail\.ru)\b/i.test(where) ? 'mail' : 'browser';
+    }
+    case 'message': return 'telegram';
     case 'read': case 'write': case 'edit': case 'apply_patch': {
       const p = String(args.path || args.file_path || (name === 'read' ? meta : '') || '');
       if (/[\\/]workshop-skills[\\/]/i.test(p)) return 'learned';

@@ -155,6 +155,11 @@ button.wide { width: 100%; margin-top: 6px; }
 .model-option small { display: block; color: var(--muted); font-size: 11.5px; }
 #screen-setup { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
+/* ---- Settings > AI key: which AI does what ---- */
+.jobs { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0 4px; width: 100%; font-size: 13px; }
+.jobs dt { color: var(--muted); }
+.jobs dd { margin: 0; overflow-wrap: anywhere; }
+
 /* ---- Settings > Learned: what Falcon learned, each with Remove or Bring back ---- */
 .learned { list-style: none; margin: 8px 0 2px; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .learned li {
