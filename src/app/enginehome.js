@@ -120,7 +120,8 @@ export async function moveEngineHome({ runEngine, engineReady = async () => true
   }
   const putBack = async () => {
     log('Putting the engine back where it was');
-    try { if (isLink(from)) fs.rmdirSync(from); } catch { /* no link made */ }
+    // Remove only the link, never what it points to (Windows removes it as a folder, others as a file).
+    if (isLink(from)) { try { fs.rmdirSync(from); } catch { try { fs.unlinkSync(from); } catch { /* left */ } } }
     try { if (isRealFolder(to) && !fs.existsSync(from)) fs.renameSync(to, from); } catch { /* left where it is */ }
     const back = { env: engineEnv(process.env, home, windows) };
     await runEngine(['gateway', 'install', '--force'], { ...back, timeoutMs: 300000 });
