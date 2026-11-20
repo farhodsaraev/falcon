@@ -22,6 +22,7 @@ export function createDirectLine({ readGateway, WebSocketImpl = globalThis.WebSo
   const pending = new Map(); // request id -> { resolve, reject, timer }
   const runs = new Map();    // run id -> (event, payload) => void
   const watchers = new Map(); // conversation key -> { onStep, seen }
+  const followers = new Set(); // { sessionKey, onEnd }: told when a run in that conversation has finished
 
   function drop(reason) {
     const error = new DirectLineUnavailable(reason);
@@ -88,6 +89,19 @@ export function createDirectLine({ readGateway, WebSocketImpl = globalThis.WebSo
               if (id && watcher.seen.has(id)) continue;      // announced twice by the engine, shown once
               if (id) watcher.seen.add(id);
               try { watcher.onStep({ name: p.data.name, args: p.data.args || {}, meta: p.data.meta || '' }); } catch { /* display only */ }
+            }
+          }
+        }
+        // A run finishing in a conversation someone follows. Its closing words arrive here whole,
+        // with the "MEDIA:" lines (a picture or video he made) that the answer itself leaves out.
+        if (frame.type === 'event' && frame.event === 'agent' && followers.size) {
+          const p = frame.payload || {};
+          if (p.stream === 'lifecycle' && p.data?.phase === 'end') {
+            const reply = p.data.terminalReply || {};
+            const media = [reply.mediaUrl, ...(Array.isArray(reply.mediaUrls) ? reply.mediaUrls : [])].filter((m) => typeof m === 'string' && m);
+            for (const follower of followers) {
+              if (!String(p.sessionKey || '').endsWith(`:${follower.sessionKey}`) && p.sessionKey !== follower.sessionKey) continue;
+              try { follower.onEnd({ runId: String(p.runId || ''), text: String(reply.text || ''), media }); } catch { /* display only */ }
             }
           }
         }
@@ -174,12 +188,24 @@ export function createDirectLine({ readGateway, WebSocketImpl = globalThis.WebSo
     return () => { watchers.delete(sessionKey); };
   }
 
+  /**
+   * Reports every run that finishes in a conversation, whoever started it: { runId, text, media }.
+   * This is how a picture or video made in the background is noticed: the engine starts a run of its
+   * own when one is ready. Returns a function that ends the following.
+   */
+  function follow(sessionKey, onEnd) {
+    const follower = { sessionKey, onEnd };
+    followers.add(follower);
+    connect().catch(() => {});   // without the line there are simply no notices
+    return () => { followers.delete(follower); };
+  }
+
   /** Tells the engine to abandon whatever is running in a conversation. */
   function stop(sessionKey) {
     return connect().then(() => send('chat.abort', { sessionKey }, 10000)).then(() => true, () => false);
   }
 
-  return { chat, watch, stop, connect, close: () => drop('closed'), connected: () => Boolean(ready && ws) };
+  return { chat, watch, follow, stop, connect, close: () => drop('closed'), connected: () => Boolean(ready && ws) };
 }
 
 /**
@@ -228,7 +254,10 @@ export function stepText({ name, args = {}, meta = '' }, russian = false) {
     }
     case 'memory_search': case 'memory_get': return say('Checking my memory', 'Вспоминаю');
     case 'message': return say('Sending it to you', 'Отправляю вам');
-    case 'image': return say('Looking at the picture', 'Смотрю на изображение');
+    case 'image': case 'view_image': return say('Looking at the picture', 'Смотрю на изображение');
+    case 'image_generate': return say('Painting the picture', 'Рисую изображение');
+    case 'video_generate': return say('Making the video', 'Создаю видео');
+    case 'music_generate': return say('Composing the music', 'Сочиняю музыку');
     case 'computer': return say('Working on the screen', 'Работаю на экране');
     default: return say('Working on it', 'Работаю над этим');
   }

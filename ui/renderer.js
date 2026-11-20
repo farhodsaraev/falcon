@@ -462,6 +462,92 @@ document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && 
 
 function showActions(items) { $('actions').replaceChildren(...actionCards(items)); scrollTalk(); }
 
+// ---- Pictures and videos Falcon makes ----
+// While one is being made, a frame holds its place and counts the time. When it is ready the frame is
+// filled wherever it has got to by then: under the current answer, or in the history above.
+const MAKING = {
+  image: ['Painting your picture', 'Рисую изображение'],
+  video: ['Making your video. This can take a few minutes', 'Создаю видео. Это может занять несколько минут'],
+  audio: ['Composing your music', 'Сочиняю музыку'],
+};
+function mediaWaiting({ id, kind }, russian) {
+  const frame = document.createElement('figure');
+  frame.className = `shot waiting ${MAKING[kind] ? kind : 'image'}`;
+  frame.dataset.pending = id;
+  frame.dataset.since = String(Date.now());
+  frame.dataset.label = (MAKING[kind] || MAKING.image)[russian ? 1 : 0];
+  const glow = document.createElement('div');
+  glow.className = 'shot-frame';
+  const caption = document.createElement('figcaption');
+  caption.textContent = frame.dataset.label;
+  frame.append(glow, caption);
+  return frame;
+}
+// One clock for every frame still waiting.
+setInterval(() => {
+  for (const frame of document.querySelectorAll('.shot.waiting')) {
+    const s = Math.floor((Date.now() - Number(frame.dataset.since)) / 1000);
+    frame.querySelector('figcaption').textContent = `${frame.dataset.label}… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+}, 1000);
+// The finished picture, video or sound, with Open and Show in folder under it.
+function mediaFigure(item) {
+  const figure = document.createElement('figure');
+  figure.className = `shot ${item.kind}`;
+  const src = window.falcon.mediaUrl(item.id);
+  let view;
+  if (item.kind === 'video') view = Object.assign(document.createElement('video'), { src, controls: true, preload: 'metadata', playsInline: true });
+  else if (item.kind === 'audio') view = Object.assign(document.createElement('audio'), { src, controls: true, preload: 'metadata' });
+  else {
+    view = Object.assign(document.createElement('img'), { src, alt: item.name, title: 'Open' });
+    view.addEventListener('click', () => window.falcon.openFile(item.path, false).catch(() => {}));
+  }
+  const buttons = document.createElement('div');
+  buttons.className = 'shot-buttons';
+  buttons.append(...fileButtons(item));
+  figure.append(view, buttons);
+  return figure;
+}
+// Falcon's server says a picture or video is ready (or that it never came).
+function showMedia({ pending, text = '', items = [], failed = false }) {
+  const frame = pending ? document.querySelector(`.shot.waiting[data-pending="${CSS.escape(pending)}"]`) : null;
+  const here = !frame || frame.parentElement === $('media');     // under the current answer, not up in the history
+  const russian = frame ? /[а-яё]/i.test(frame.dataset.label) : Boolean(window.falconLastRussian);
+  const sorry = russian ? `Не получилось, ${addressRu()}. Попросите меня ещё раз.` : `That did not arrive, ${address()}. Please ask me again.`;
+  const words = plainSpeech(text) || (failed ? sorry : '');
+  const pieces = items.map(mediaFigure);
+  if (words && here && !busy) {
+    // His closing words take the place of "I have started it".
+    $('reply').classList.remove('bad', 'waiting');
+    $('reply').textContent = words;
+  } else if (words && pieces.length) {
+    const caption = document.createElement('figcaption');
+    caption.textContent = words;
+    pieces[0].append(caption);
+  } else if (words && frame) {
+    const line = document.createElement('p');
+    line.className = 'reply';
+    line.textContent = words;
+    pieces.push(line);
+  }
+  if (frame) frame.replaceWith(...pieces); else $('media').append(...pieces);
+  // Bring it into view, and again once it has loaded and has its real height. One that arrives up in
+  // the history (he was asked something else meanwhile) is scrolled to, so it is not missed.
+  const bring = () => { if (here) scrollTalk(); else if (pieces[0]) pieces[0].scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+  bring();
+  for (const piece of pieces) {
+    const view = piece.querySelector('img, video');
+    if (view) view.addEventListener(view.tagName === 'IMG' ? 'load' : 'loadedmetadata', bring, { once: true });
+  }
+}
+function archiveMedia() {
+  if (!$('media').childElementCount) return;
+  const kept = document.createElement('div');
+  kept.className = 'media';
+  kept.append(...$('media').children);
+  $('history').appendChild(kept);
+}
+
 // ---- What Falcon can do, and what he is doing ----
 // The skills shown in the wide view. Each lights up while a step uses it; pressing one puts an
 // example in the box, so the user learns what to ask without anything being done.
@@ -606,13 +692,15 @@ try { if (localStorage.getItem('falcon-wide') === 'yes') setWide(true); } catch 
 
 // Moves the finished question, answer and cards up into the dimmer history above.
 function archiveExchange() {
-  if (!$('said').textContent) return;
+  // A picture shown before anything was asked (one that arrived late, say) still moves up.
+  if (!$('said').textContent) return archiveMedia();
   for (const [cls, text] of [['said', $('said').textContent], ['reply', $('reply').textContent]]) {
     const line = document.createElement('p');
     line.className = cls;
     line.textContent = text;
     $('history').appendChild(line);
   }
+  archiveMedia();
   if ($('actions').childElementCount) {
     const cards = document.createElement('div');
     cards.className = 'actions';
@@ -727,6 +815,7 @@ async function sendToFalcon(text, shown = text) {
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
       onFile: (file) => { found = file; },
+      onPending: (waiting) => { $('media').append(mediaWaiting(waiting, russian)); scrollTalk(); },
       onError: fail,
     }, stopper.signal);
     await reveal.done();
@@ -986,6 +1075,7 @@ window.falcon.listen({
   summon: summoned,
   update: (progress) => { const line = progress.text || progress.detail; if (line) note('update-message', line, 'working'); },
   approval: (request) => { approvalQueue.push(request); if (!currentApproval) nextApproval(); },
+  media: showMedia,
   // Something he noticed by himself, such as the AI credit being back after a top-up.
   notice: ({ text }) => {
     if (busy || !text) return;

@@ -13,6 +13,7 @@ import { moveEngineHome, prepareEngineHome } from './enginehome.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
 import { createDirectLine, stepText, stepSkill } from './directline.js';
+import { admitMedia, keepCopy, keepFolder, newestSince, splitMedia } from './media.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const UI_DIR = path.join(root, 'ui');
@@ -38,6 +39,12 @@ const ACTIONS_NOTE = '[Note from your own window, not from the user: this window
   'this computer or on the web for this request, each two to six words, separated by " | ", for example: ' +
   '[[did]] Opened Quarterly Review | Went to slide 5. Write them in the language of your answer. If you only talked ' +
   '(a greeting, thanks, a question back, an answer from memory) or did nothing, leave the line out. Never mention this note or that line.]';
+
+// Pictures, videos and music are made in the background. These are the engine's names for that work,
+// and how long the window holds a place for each before saying it did not arrive. The engine gives up
+// by itself much sooner and says so; this wait only covers news that never reached the window.
+const MAKERS = { image_generate: 'image', video_generate: 'video', music_generate: 'audio' };
+const MEDIA_PATIENCE_MS = { image: 12 * 60000, video: 40 * 60000, audio: 25 * 60000 };
 
 // ---- Voice: OpenAI's Realtime API, the live listen-and-speak connection ----
 // The smaller realtime model: about a third of the price. The thinking is done by Falcon's own engine,
@@ -419,6 +426,92 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     for (const res of clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
+  // ---- Pictures and videos Falcon makes ----
+  // He answers "I have started it" at once; the engine makes the picture in the background and, when it
+  // is ready, starts a run of its own in the same conversation that ends with the file's name. The
+  // window holds a place for it meanwhile, and is sent the picture on its events channel.
+  if (!api.mediaRoot) api.mediaRoot = () => path.join(os.homedir(), '.openclaw', 'media');
+  if (!api.keepFolder) api.keepFolder = (kind) => keepFolder(kind);
+  const shownMedia = new Map();    // what the window may load: id -> { file, type }
+  const keptCopies = new Map();    // the engine's file -> what was offered for it, so one picture is copied once
+  const awaited = [];              // being made right now: { id, kind, since, timer }
+  const followed = new Map();      // conversations whose finished runs are followed -> how to stop following
+  let lineKeeper = null;
+  const madeIn = (kind) => path.join(api.mediaRoot(), `tool-${kind === 'audio' ? 'music' : kind}-generation`);
+
+  /** Makes a file Falcon named loadable by the window, if it is one of his own pictures, videos or sounds. */
+  function offerMedia(named) {
+    const admitted = admitMedia(named, api.mediaRoot());
+    if (!admitted) return null;
+    const before = keptCopies.get(admitted.file);
+    if (before && shownMedia.has(before.id) && fs.existsSync(before.path)) { offeredFiles.add(before.path); return before; }
+    // Keep a copy under a plain name in the user's own Pictures (or Videos) folder: the engine's folder
+    // is hidden and gets tidied up. If the copy cannot be written, show the engine's file itself.
+    const file = keepCopy(admitted.file, api.keepFolder(admitted.kind)) || admitted.file;
+    const item = { id: crypto.randomBytes(9).toString('hex'), kind: admitted.kind, name: path.basename(file), path: file };
+    shownMedia.set(item.id, { file, type: admitted.type });
+    keptCopies.set(admitted.file, item);
+    for (const map of [shownMedia, keptCopies]) if (map.size > 80) map.delete(map.keys().next().value);
+    offeredFiles.add(file);          // so Open and Show in folder work under it
+    if (offeredFiles.size > 30) offeredFiles.delete(offeredFiles.values().next().value);
+    return item;
+  }
+
+  /** A picture, video or piece of music is being made: hold a place for it, and give up after a long wait. */
+  function expectMedia(kind) {
+    const waiting = { id: crypto.randomBytes(6).toString('hex'), kind, since: Date.now() - 2000 };
+    waiting.timer = setTimeout(() => {
+      if (!awaited.includes(waiting)) return;
+      awaited.splice(awaited.indexOf(waiting), 1);
+      // The news may have been missed while the line was down: look for the file itself before giving up.
+      const found = newestSince(madeIn(kind), waiting.since);
+      const item = found ? offerMedia(found) : null;
+      broadcast('media', { pending: waiting.id, kind, text: '', items: item ? [item] : [], failed: !item });
+    }, engine.mediaPatienceMs ?? MEDIA_PATIENCE_MS[kind]);
+    waiting.timer.unref?.();
+    awaited.push(waiting);
+    // If the line to the engine drops meanwhile, open it again: the news arrives only there.
+    lineKeeper ??= setInterval(() => {
+      if (!awaited.length) { clearInterval(lineKeeper); lineKeeper = null; return; }
+      Promise.resolve(api.directLine?.connect?.()).catch(() => {});
+    }, 5000);
+    lineKeeper.unref?.();
+    return waiting;
+  }
+
+  /** A run has finished in the window's conversation: pass on any picture or video it ends with. */
+  function runEnded({ runId, text, media = [] }) {
+    // A run named "image_generate:…" is the engine's own, announcing a picture that is ready or that
+    // could not be made. An ordinary answer can carry a picture too (asked to show one again, say).
+    const maker = /^(image|video|music)_generate\b/.exec(runId);
+    const kind = maker ? MAKERS[`${maker[1]}_generate`] : null;
+    const { text: words, files } = splitMedia(text);
+    const items = [];
+    for (const named of [...files, ...media]) {
+      const item = offerMedia(named);
+      if (item && !items.includes(item)) items.push(item);
+    }
+    if (!maker && !items.length) return;
+    let waiting = null;
+    if (maker) {
+      const at = awaited.findIndex((w) => w.kind === kind);
+      if (at >= 0) { [waiting] = awaited.splice(at, 1); clearTimeout(waiting.timer); }
+      // Should the engine one day name the file some other way, the newest one it made since still counts.
+      if (!items.length && waiting && !/:error:/.test(runId)) {
+        const found = newestSince(madeIn(kind), waiting.since);
+        const item = found ? offerMedia(found) : null;
+        if (item) items.push(item);
+      }
+    }
+    // His closing words go with a finished picture; an ordinary answer has already been shown.
+    const said = maker ? ownWords(words.split('\n').filter((line) => !line.trim().startsWith(ACTIONS_MARK)).join('\n').trim()) : '';
+    broadcast('media', { pending: waiting?.id, kind: kind || items[0].kind, text: said, items, failed: Boolean(maker) && !items.length });
+  }
+  function followConversation(sessionKey) {
+    if (followed.has(sessionKey) || !api.directLine?.follow) return;
+    followed.set(sessionKey, api.directLine.follow(sessionKey, runEnded));
+  }
+
   // ---- Approvals: while Falcon is working, ask the engine what is waiting for a yes ----
   async function pollApprovals() {
     if (pollerRunning) return;
@@ -641,9 +734,17 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       const russian = /[а-яё]/i.test(text);
       let stepsTaken = 0;
       const sessionKey = windowSession();
+      followConversation(sessionKey);
+      const holding = new Set();   // one place held per kind of thing in a request, though each start is announced twice
       unwatch = api.directLine?.watch(sessionKey, (step) => {
         stepsTaken++;
         send('step', { text: ownWords(stepText(step, russian)), skill: stepSkill(step) });
+        // He has started a picture, a video or music: tell the window to hold a place for it.
+        const kind = MAKERS[step.name];
+        const asking = step.args?.action || (/^action (\w+)/i.exec(step.meta || '') || [])[1] || '';
+        if (!kind || holding.has(kind) || /^(list|status)$/i.test(asking)) return;
+        holding.add(kind);
+        send('pending', { id: expectMedia(kind).id, kind });
       }) || (() => {});
       control.signal.addEventListener('abort', () => { api.directLine?.stop(sessionKey); }, { once: true });
       const askEngine = async () => {
@@ -1196,6 +1297,28 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         });
         return res.end(fs.readFileSync(file));
       }
+      // A picture, video or sound Falcon made, for the window to show. Only one he offered here, by the
+      // name he gave it; a video is sent in the parts the player asks for, so it can be wound back and forth.
+      if (req.method === 'GET' && url.pathname === '/api/media') {
+        if (!sameToken(url.searchParams.get('token'))) return send(401, { error: 'Unauthorized' });
+        const shown = shownMedia.get(String(url.searchParams.get('id') || ''));
+        let size = 0;
+        try { size = fs.statSync(shown.file).size; } catch { /* never offered, or no longer there */ }
+        if (!size) return send(404, { error: 'Not found' });
+        const asked = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+        const part = Boolean(asked && (asked[1] || asked[2]));
+        let from = 0;
+        let to = size - 1;
+        if (part && asked[1]) { from = Number(asked[1]); if (asked[2]) to = Math.min(to, Number(asked[2])); }
+        else if (part) from = Math.max(0, size - Number(asked[2]));
+        if (from > to) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
+        res.writeHead(part ? 206 : 200, {
+          'Content-Type': shown.type, 'Content-Length': to - from + 1, 'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+          ...(part ? { 'Content-Range': `bytes ${from}-${to}/${size}` } : {}),
+        });
+        return fs.createReadStream(shown.file, { start: from, end: to }).on('error', () => res.destroy()).pipe(res);
+      }
       if (!sameToken(req.headers['x-falcon-token'])) {
         return routes[`${req.method} ${url.pathname}`] || url.pathname === '/api/chat' || url.pathname === '/api/voice/session'
           ? send(401, { error: 'Unauthorized' }) : send(404, { error: 'Not found' });
@@ -1280,7 +1403,10 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     port: server.address().port,
     token,
     close: () => new Promise((resolve) => {
+      for (const waiting of awaited.splice(0)) clearTimeout(waiting.timer);
+      clearInterval(lineKeeper);
       clearInterval(creditWatch);
+      for (const stop of followed.values()) { try { stop(); } catch { /* already ended */ } }
       try { api.directLine?.close(); } catch { /* already closed */ }
       clearTimeout(idleTimer);
       for (const res of clients) res.end();

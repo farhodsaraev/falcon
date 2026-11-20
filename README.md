@@ -27,6 +27,7 @@ No administrator password is needed. The installer adds a **Falcon** app (Applic
 - "Open bbc.com/news and tell me the top headline."
 - "Scout Uzum and make me a five-slide deck from what you find."
 - "Put last month's invoices in a spreadsheet."
+- "Make me a picture of a falcon over a city at sunrise." The picture appears in his window and a copy is kept in Pictures, in a folder called Falcon. (Works with an OpenRouter key.)
 - "Remind me tomorrow at nine to call the bank." · "Draft an email to Ann about the contract." (Mac)
 - «Фалкон, что у меня сейчас на экране?»
 
