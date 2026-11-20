@@ -52,6 +52,18 @@
         <pre id="w-log" class="raw" hidden></pre>
       </div>
     </section>
+    <!-- The owner's own changes on this PC (self-repair plan, stage 4) -->
+    <section id="mine" class="panel">
+      <p class="panel-title">Your own changes</p>
+      <p class="panel-text">Every repair you approve is kept here. When Falcon is updated, he puts them back on top of the new version and tests them; one that no longer fits is switched off, and you can ask him to adapt it.</p>
+      <p id="mine-empty" class="panel-text" hidden>None yet.</p>
+      <ul id="mine-list" class="learned" aria-label="Your own changes"></ul>
+      <div class="row tight">
+        <button id="mine-off" class="ghost" type="button" hidden>Switch all off for a test</button>
+        <button id="mine-on" class="ghost" type="button" hidden>Switch all back on</button>
+      </div>
+      <p id="mine-message" class="message" role="status"></p>
+    </section>
   </main>
 
   <script src="bridge.js"></script>

@@ -129,7 +129,77 @@ $('w-details').addEventListener('click', async () => {
   if (open) { try { $('w-log').textContent = (await window.falcon.repairLog()).lines.join('\n') || 'Nothing yet.'; } catch { /* leave it */ } }
 });
 
-window.falcon.listen({ repair: (s) => { if (s && (!current || s.id === current.id || BUSY.includes(s.phase))) render(s); } });
+// ---- The owner's own changes (stage 4) ----
+const CHANGE_STATE = {
+  applied: 'On', off: 'Off', 'did-not-fit': 'Off: it no longer fits this version', 'tests-failed': 'Off: it broke this version\'s tests', 'did-not-start': 'Off: Falcon did not start with it',
+};
+async function showMine() {
+  let r;
+  try { r = await window.falcon.personal(); } catch { return; }
+  const list = r.changes;
+  $('mine-empty').hidden = list.length > 0;
+  $('mine-off').hidden = !list.some((c) => c.on);
+  $('mine-on').hidden = !list.some((c) => !c.on);
+  $('mine-list').replaceChildren(...list.slice().reverse().map((c) => {
+    const row = document.createElement('li');
+    const text = document.createElement('div');
+    const title = document.createElement('b');
+    title.textContent = c.title;
+    const about = document.createElement('small');
+    about.textContent = `${CHANGE_STATE[c.state] || (c.on ? 'On' : 'Off')} · ${new Date(c.at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`;
+    text.append(title, about);
+    row.append(text);
+    const toggle = document.createElement('button');
+    toggle.className = 'ghost small-btn';
+    toggle.type = 'button';
+    toggle.textContent = c.on ? 'Switch off' : 'Switch on';
+    toggle.addEventListener('click', () => setMine(c.id, !c.on));
+    row.append(toggle);
+    if (['did-not-fit', 'tests-failed', 'did-not-start'].includes(c.state)) {
+      const adapt = document.createElement('button');
+      adapt.className = 'primary small-btn';
+      adapt.type = 'button';
+      adapt.textContent = 'Adapt it';
+      adapt.addEventListener('click', () => adaptMine(c));
+      row.append(adapt);
+    }
+    return row;
+  }));
+  if (r.busy) note('mine-message', 'Falcon is putting your changes in place', 'working');
+}
+async function setMine(id, on) {
+  note('mine-message', 'Rebuilding Falcon with your choice and testing it', 'working');
+  try {
+    const r = await window.falcon.setPersonal(id, on);
+    if (!r.ok) note('mine-message', r.error, 'bad');
+  } catch { note('mine-message', 'Falcon could not be reached.', 'bad'); }
+}
+async function adaptMine(change) {
+  let info;
+  try { info = await window.falcon.repair(); } catch { return note('mine-message', 'Falcon could not be reached.', 'bad'); }
+  if (!info.choice) return note('mine-message', 'Falcon needs an OpenAI or OpenRouter key for coding. Add one in Settings, under AI key.', 'bad');
+  if (!window.confirm(`Ask Falcon to adapt “${change.title}” to this version?\n\nDone by ${info.choice.tool} with ${info.choice.label}. It usually costs ${info.estimate}.`)) return;
+  try {
+    const r = await window.falcon.adaptPersonal(change.id, true);
+    if (!r.ok) return note('mine-message', r.error, 'bad');
+    note('mine-message', '');
+    render((await window.falcon.repair()).status);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch { note('mine-message', 'Falcon could not be reached.', 'bad'); }
+}
+$('mine-off').addEventListener('click', () => setMine('all', false));
+$('mine-on').addEventListener('click', () => setMine('all', true));
+showMine();
+
+window.falcon.listen({
+  repair: (s) => { if (s && (!current || s.id === current.id || BUSY.includes(s.phase))) render(s); if (s?.phase === 'approved') showMine(); },
+  personal: ({ phase, error }) => {
+    if (phase === 'switching') note('mine-message', 'Rebuilding Falcon with your choice and testing it', 'working');
+    if (phase === 'restarting') note('mine-message', 'Done. Falcon is starting again with your choice.', 'ok');
+    if (phase === 'failed') note('mine-message', error || 'That could not be done.', 'bad');
+    showMine();
+  },
+});
 window.falcon.repair().then((info) => {
   const s = info.status;
   // A repair in progress, or one waiting for a decision, is shown; a finished one gives way to a new request.

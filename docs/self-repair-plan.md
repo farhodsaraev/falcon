@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stages 0, 1 and 2 are complete. Stages 2B and 3 are built and tried. Stage 4 is next.
+Status: Stages 0, 1 and 2 are complete. Stages 2B, 3 and 4 are built and tried. Stage 5 is next.
 
 ## 1. Purpose
 
@@ -237,7 +237,14 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - **Done when:** the owner sees each step and each changed file in the workshop window, and the Stop control operates.
 - **Time:** 4 to 6 days.
 
-### Stage 4: Personal changes that stay after a release
+### Stage 4: Personal changes that stay after a release (built and tried on 2026-11-20)
+
+- **Built:** each approved repair is kept as a personal change, with its title, date and state. At each start, Falcon looks for a new version. If one was installed, he records it as the release, puts the changes that are on back on top in a workshop copy, does the tests and the start check, and switches it in with the watchdog. A change that does not fit is set to off. If the changes together break the tests, all are set to off for this version. The owner gets a notice in plain words.
+- The Workshop window lists the changes. The owner can set each one, or all, to off or on, and can ask Falcon to adapt a change that does not fit (a repair, with the estimate and his agreement).
+- If the watchdog puts the last version back after a change, Falcon sets that change to off and tells the owner. This also gives the message that Stage 2 did not have.
+- The tile "Repair" shows the number of the owner's changes.
+- **Tested:** two changes kept after an update; one that no longer fits set to off and named; changes that break the new tests all set to off; all off and back on; edits by hand. A trial on a throwaway copy, through Falcon's real start: the change came back on the new version, and the notice was shown.
+- **Not tested yet:** on the owner's own PC with a real update, and adapting a change with a real AI.
 
 - **Task:** Save each personal change on the personal branch, as a separate item with a plain description.
 - **Task:** Change the Update button so that a release goes through the local history.

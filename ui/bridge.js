@@ -53,6 +53,9 @@
     repairApprove: () => call('POST', '/api/repair/approve'),
     repairRefuse: () => call('POST', '/api/repair/refuse'),
     repairLog: () => call('GET', '/api/repair/log'),
+    personal: () => call('GET', '/api/personal'),
+    setPersonal: (id, on) => call('POST', '/api/personal/set', { id, on }),
+    adaptPersonal: (id, agreed) => call('POST', '/api/personal/adapt', { id, agreed }),
     // The Workshop window: a second window, opened with this one's access.
     workshopUrl: () => `/workshop#token=${encodeURIComponent(token)}`,
     setCodingAi: (provider, model) => call('POST', '/api/ai-jobs', { coding: { provider, model } }),

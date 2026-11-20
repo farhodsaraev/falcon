@@ -594,3 +594,40 @@ test('repairs from the window: shown with the estimate, started only after agree
     assert.match(page, /Workshop/);
   } finally { await s.close(); }
 });
+
+test('the owner\'s own changes: listed, switched by id only, adapted as a paid repair, and notices reach the window once', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-mine-'));
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(path.join(home, '.falcon', 'personal'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.falcon', 'personal', 'changes.json'), JSON.stringify([{ id: 'aaaaaaaaaaaa', title: 'Greet me by name', at: '2026-11-20T10:00:00Z', on: false, state: 'did-not-fit', commit: 'c1' }]));
+  fs.writeFileSync(path.join(home, '.falcon', 'personal', 'aaaaaaaaaaaa.patch'), 'diff --git a/x b/x\n');
+  fs.writeFileSync(path.join(home, '.falcon', 'personal', 'notice.json'), JSON.stringify({ text: 'Falcon was updated to version 2.0.0.' }));
+  const envPath = path.join(dir, '.env');
+  fs.writeFileSync(envPath, 'OPENROUTER_API_KEY=sk-or-v1-test\n');
+  const started = [];
+  const repairs = { estimate: () => ({ text: 'x' }), status: () => null, busy: () => false, start: (request, choice, options) => { started.push({ request, options }); return { ok: true }; } };
+  const before = process.env.USERPROFILE; const beforeHome = process.env.HOME;
+  process.env.USERPROFILE = home; process.env.HOME = home;
+  const s = await startServer({ engine: { ...engine, envFile: () => envPath, profileFile: () => path.join(dir, 'profile.json'), repairs } });
+  const base = `http://127.0.0.1:${s.port}`;
+  const post = (route, body = {}) => fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify(body) }).then((x) => x.json());
+  try {
+    const r = await fetch(`${base}/api/personal`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+    assert.deepEqual(r.changes.map((c) => [c.title, c.state]), [['Greet me by name', 'did-not-fit']]);
+    assert.equal(r.changes[0].commit, undefined);
+    assert.equal((await post('/api/personal/set', { id: '../../etc', on: true })).ok, false);
+    const adapted = await post('/api/personal/adapt', { id: 'aaaaaaaaaaaa', agreed: true });
+    assert.equal(adapted.ok, true);
+    assert.match(started[0].request, /Bring back my earlier change: Greet me by name/);
+    assert.equal(started[0].options.replaces, 'aaaaaaaaaaaa');
+    assert.match(started[0].options.context, /diff --git/);
+    // The waiting notice reaches the window when it connects, once.
+    const events = await fetch(`${base}/api/events?token=${s.token}`);
+    const reader = events.body.getReader();
+    let got = '';
+    for (let i = 0; i < 5 && !got.includes('event: notice'); i++) got += new TextDecoder().decode((await reader.read()).value);
+    assert.match(got, /event: notice\ndata: {"text":"Falcon was updated to version 2\.0\.0\."}/);
+    await reader.cancel();
+    assert.ok(!fs.existsSync(path.join(home, '.falcon', 'personal', 'notice.json')));
+  } finally { await s.close(); process.env.USERPROFILE = before; process.env.HOME = beforeHome; }
+});

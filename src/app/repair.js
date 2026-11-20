@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { checkWorkshopStarts, createWorkshop, removeWorkshop, runGit, saveWorkshop, switchToWorkshop, testWorkshop } from './workshop.js';
+import { dropChange, recordChange } from './personal.js';
 
 const WINDOWS = process.platform === 'win32';
 export const CODEX_VERSION = '0.171.0';     // the version tried in the trial of 2026-11-20
@@ -278,7 +279,7 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
   // What the AI companies billed so far, where the tool reports it (Falcon's engine does; Codex does not).
   const addCost = (r) => { if (Number(r?.cost) > 0) { status.cost = (status.cost || 0) + Number(r.cost); save(); } };
 
-  async function run(request, choice) {
+  async function run(request, choice, context = '') {
     const id = status.id;
     try {
       phase('preparing', 'Making a separate workshop copy of Falcon');
@@ -289,7 +290,9 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
       if (stopped) return finish('stopped');
 
       phase('writing', choice.provider === 'openai' ? 'Codex is reading Falcon\'s code' : 'Reading Falcon\'s code');
-      let written = await writer({ dir: ws.dir, request, choice, extra: '', step, log });
+      // Adapting an earlier change of the owner's to a newer Falcon: the writer sees that change.
+      const earlier = context ? `\nThe owner made this change for an older version of Falcon; make the same change work in this version:\n${context}` : '';
+      let written = await writer({ dir: ws.dir, request, choice, extra: earlier, step, log });
       addCost(written);
       if (stopped) return finish('stopped');
       if (!written.ok) return finish('failed', { error: written.error });
@@ -341,7 +344,7 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
     busy: () => Boolean(status && ['preparing', 'writing', 'testing', 'reviewing', 'fixing', 'switching'].includes(status.phase)),
 
     /** Starts a repair. The owner has seen the estimate (`agreed`). */
-    start(request, choice, { agreed = false } = {}) {
+    start(request, choice, { agreed = false, context = '', replaces = '' } = {}) {
       const text = String(request || '').replace(/\s+/g, ' ').trim();
       if (!text) return { ok: false, error: 'Say what Falcon should fix or add.' };
       if (text.length > MAX_REQUEST) return { ok: false, error: 'Please say it in fewer words.' };
@@ -351,9 +354,10 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
       if (status?.phase === 'ready') return { ok: false, error: 'A finished repair is waiting for your decision. Approve or refuse it first.' };
       stopped = false;
       const id = `repair-${new Date().toISOString().slice(0, 10)}-${crypto.randomBytes(3).toString('hex')}`;
-      status = { id, request: text, model: choice.label, provider: choice.provider, tool: choice.tool, estimate: estimate(choice).text, phase: 'preparing', steps: [], log: [], diff: [], startedAt: Date.now() };
+      status = { id, request: text, model: choice.label, provider: choice.provider, tool: choice.tool, estimate: estimate(choice).text, phase: 'preparing', steps: [], log: [], diff: [], startedAt: Date.now(), replaces: String(replaces || '') };
+      context = String(context || '').slice(0, 60000);
       save();
-      run(text, choice);
+      run(text, choice, context);
       return { ok: true, id };
     },
 
@@ -373,6 +377,11 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
       const r = await switchTo({ history: historyNow, id: status.id, home, oldPid });
       if (!r.ok) { finish('ready', { error: r.error }); return r; }
       finish('approved', { switched: r.commit });
+      // Kept as one of the owner's own changes, so updates do not lose it (personal.js).
+      try {
+        await recordChange({ history: historyNow, base: status.base, commit: r.commit, title: status.request, home });
+        if (status.replaces) dropChange(status.replaces, home);
+      } catch { /* the change is in place; it is only not listed */ }
       return { ok: true };
     },
 

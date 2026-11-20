@@ -11,7 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { engineHome, moveEngineHome, prepareEngineHome } from './enginehome.js';
 import { ensureGit } from './git.js';
-import { openHistory } from './workshop.js';
+import { historyDir, openHistory, switchToWorkshop } from './workshop.js';
+import { adoptRelease, changePatch, leaveNotice, readChanges, rebuild, setChanges, takeNotice } from './personal.js';
 import { createRepairs } from './repair.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
@@ -923,6 +924,46 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     })().catch((err) => { historyMade = null; throw err; });
     return historyMade;
   };
+  // ---- At start: a new version of Falcon, and the owner's own changes (self-repair plan, stage 4) ----
+  // A version that did not start was put back by the watchdog: say so, and switch that change off.
+  function noteRolledBack() {
+    const file = path.join(os.homedir(), '.falcon', 'switch-result.json');
+    let result;
+    try { result = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return; }
+    try { fs.renameSync(file, `${file}.seen`); } catch { /* told once anyway */ }
+    if (!result?.rolledBack) return;
+    const list = readChanges();
+    const change = list.find((c) => c.commit === result.commit);
+    if (change) {
+      setChanges({ id: change.id, on: false });
+      leaveNotice(`The change “${change.title}” stopped Falcon from starting, so he went back to the last version that worked and switched that change off. You can ask him to adapt it in the Workshop.`);
+    } else {
+      leaveNotice('Falcon tried a new version of himself, but it did not start, so he went back to the last version that worked.');
+    }
+  }
+  let adopting = null;
+  if (!Object.keys(engine).length && fs.existsSync(historyDir())) {
+    adopting = (async () => {
+      await moving;                       // the engine's own move comes first
+      noteRolledBack();
+      const result = await adoptRelease({ history: await repairHistory(), switchTo: switchToWorkshop });
+      // Switched to the new version with his changes back on top: close, so the watchdog starts it.
+      if (result.switched) setTimeout(() => onIdle('switch'), 1500).unref?.();
+    })().catch(() => {}).finally(() => { adopting = null; });
+  }
+  // The owner switches his changes on or off: rebuilt and switched in, like an update.
+  let rebuilding = null;
+  function rebuildPersonal() {
+    rebuilding ??= (async () => {
+      broadcast('personal', { phase: 'switching' });
+      const r = await rebuild({ history: await repairHistory(), switchTo: switchToWorkshop });
+      broadcast('personal', { phase: r.switched ? 'restarting' : 'failed', error: r.error || '' });
+      if (r.switched) setTimeout(() => onIdle('switch'), 1500).unref?.();
+      return r;
+    })().catch((err) => { broadcast('personal', { phase: 'failed', error: String(err.message || err) }); return { ok: false }; }).finally(() => { rebuilding = null; });
+    return rebuilding;
+  }
+
   // What the window may see of a repair: not the folder on disk, and not the coding tool's raw output.
   const repairView = (s) => (s ? (({ dir, log, base, ...shown }) => ({ ...shown, logLines: log?.length || 0 }))(s) : null);
   if (!api.repairs) {
@@ -978,7 +1019,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
 
   const routes = {
     'GET /api/state': async () => {
-      if (moving) return { configured: true, ready: false, updating: true };
+      if (moving || adopting) return { configured: true, ready: false, updating: true };
       const configured = Boolean(api.readGateway());
       let ready = configured && await api.engineReady();
       // Set up before but asleep (for example after a restart): wake it quietly, once. The engine can take
@@ -1305,6 +1346,21 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     // "Show details": the coding tool's own output, for the maker. Keys are already blanked out.
     'GET /api/repair/log': async () => ({ lines: api.repairs.status()?.log || [] }),
 
+    // ---- The owner's own changes (Workshop window) ----
+    'GET /api/personal': async () => ({ changes: readChanges().map(({ id, title, at, on, state }) => ({ id, title, at, on, state })), busy: Boolean(rebuilding || adopting) }),
+    'POST /api/personal/set': async (body) => {
+      if (rebuilding || adopting || api.repairs.busy()) return { ok: false, error: 'Falcon is busy with another change. Please try again in a moment.' };
+      if (!setChanges({ id: String(body.id || ''), on: body.on === true })) return { ok: false, error: 'That is not one of your changes.' };
+      rebuildPersonal();
+      return { ok: true };
+    },
+    // Asking Falcon to adapt a change that no longer fits: a repair, agreed to and paid for like any other.
+    'POST /api/personal/adapt': async (body) => {
+      const change = readChanges().find((c) => c.id === String(body.id || ''));
+      if (!change) return { ok: false, error: 'That is not one of your changes.' };
+      return api.repairs.start(`Bring back my earlier change: ${change.title}`, await codingChoice(), { agreed: body.agreed === true, context: changePatch(change.id), replaces: change.id });
+    },
+
     // For the "What I can do" panel: how many methods he has learned and how many programs wait for a yes.
     // Read from the folder itself, so it is instant.
     'GET /api/learned/count': async () => ({ count: learnedNames().length, waiting: waitingPrograms().length }),
@@ -1527,6 +1583,9 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
         res.write(': connected\n\n');
         clients.add(res);
+        // Something Falcon has to tell the owner since he last looked (his own changes after an update, say).
+        const waiting = takeNotice();
+        if (waiting) res.write(`event: notice\ndata: ${JSON.stringify({ text: waiting })}\n\n`);
         windowSeen = true;
         clearTimeout(idleTimer);
         req.on('close', () => { clients.delete(res); watchForGoodbye(); });

@@ -781,14 +781,17 @@ async function refreshAbilities() {
   window.falcon.connections().then((c) => setTileIdle('telegram', c.telegram ? 'Connected' : 'Not set up', !c.telegram)).catch(() => {});
   window.falcon.searchStatus().then(({ via }) => setTileIdle('search', via ? 'Ready' : 'Off', !via)).catch(() => {});
   window.falcon.briefing().then((b) => setTileIdle('briefing', b.enabled ? `Daily at ${b.time}` : 'Off')).catch(() => {});
-  window.falcon.repair().then(showRepairState).catch(() => {});
+  Promise.all([window.falcon.repair(), window.falcon.personal().catch(() => ({ changes: [] }))])
+    .then(([repair, mine]) => showRepairState({ ...repair, changes: mine.changes.filter((c) => c.on).length })).catch(() => {});
 }
 // The Repair tile: ready, needs a coding key, working, or waiting for the owner's decision.
-function showRepairState({ status, choice } = {}) {
+function showRepairState({ status, choice, changes = 0 } = {}) {
   const phase = status?.phase;
   if (['preparing', 'writing', 'testing', 'reviewing', 'fixing', 'switching'].includes(phase)) setTileIdle('repair', 'Working');
   else if (phase === 'ready') setTileIdle('repair', 'Waiting for you', true);
-  else setTileIdle('repair', choice ? 'Ready' : 'Needs a coding key', !choice);
+  else if (!choice) setTileIdle('repair', 'Needs a coding key', true);
+  // The owner's own changes that are on (stage 4).
+  else setTileIdle('repair', changes ? ` of your changes` : 'Ready');
 }
 
 // Today's counts, kept on this computer only.

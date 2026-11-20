@@ -75,20 +75,21 @@ export function openHistory({ git, appRoot, home = os.homedir() }) {
 }
 
 /** A separate full copy of Falcon on its own branch, made from what is in use now. */
-export async function createWorkshop({ history, id, home = os.homedir() }) {
+export async function createWorkshop({ history, id, home = os.homedir(), from = 'personal', sync = true }) {
   if (!WORKSHOP_ID.test(id)) throw new Error('A workshop name is lowercase letters, digits and hyphens.');
-  await history.sync();
+  if (!['personal', 'release'].includes(from)) throw new Error('A workshop starts from personal or release.');
+  if (sync) await history.sync();
   const dir = path.join(workshopsDir(home), id);
   if (fs.existsSync(dir)) throw new Error(`A workshop named ${id} already exists.`);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
-  const clone = await runGit(history.git, ['clone', '--quiet', '--no-hardlinks', '--branch', 'personal', history.dir, dir], { cwd: path.dirname(dir), timeoutMs: 300000 });
+  const clone = await runGit(history.git, ['clone', '--quiet', '--no-hardlinks', '--branch', from, history.dir, dir], { cwd: path.dirname(dir), timeoutMs: 300000 });
   if (clone.code !== 0) throw new Error(`The workshop copy could not be made: ${clone.out.trim()}`);
   const w = (args, options) => runGit(history.git, args, { cwd: dir, ...options });
   for (const [key, value] of Object.entries(SETTINGS)) await w(['config', key, value]);
   await w(['remote', 'remove', 'origin']);       // the workshop names no other place either
   const branch = await w(['checkout', '--quiet', '-b', `workshop/${id}`]);
   if (branch.code !== 0) throw new Error(`The workshop branch could not be made: ${branch.out.trim()}`);
-  return { id, dir, base: await history.head() };
+  return { id, dir, base: await history.head(from) };
 }
 
 /** Records everything changed in the workshop as one step, with a plain description. */
@@ -149,7 +150,7 @@ export function checkWorkshopStarts({ dir, node = process.execPath, timeoutMs = 
  *
  * @returns {Promise<{ok: boolean, job?: string, lastGood?: string, commit?: string, error?: string}>}
  */
-export async function switchToWorkshop({ history, id, home = os.homedir(), node = process.execPath, start, windowFile = path.join(home, '.falcon', 'window.json'), waitMs = 60000, oldPid = 0, startEnv = {} }) {
+export async function switchToWorkshop({ history, id, home = os.homedir(), node = process.execPath, start, windowFile = path.join(home, '.falcon', 'window.json'), waitMs = 60000, oldPid = 0, startEnv = {}, force = false }) {
   if (!WORKSHOP_ID.test(id)) return { ok: false, error: 'Unknown workshop.' };
   const dir = path.join(workshopsDir(home), id);
   const branch = `workshop/${id}`;
@@ -161,7 +162,8 @@ export async function switchToWorkshop({ history, id, home = os.homedir(), node 
   const commit = await history.head(branch);
   if (commit === lastGood) return { ok: false, error: 'The workshop has no change to switch to.' };
   // Only a change made on top of the Falcon in use is switched in, never one that would undo other changes.
-  const onTop = await history.run(['merge-base', '--is-ancestor', lastGood, commit]);
+  // (orce: the owner's changes rebuilt on a new version, which is on top of the release instead; see personal.js.)
+  const onTop = force ? { code: 0 } : await history.run(['merge-base', '--is-ancestor', lastGood, commit]);
   if (onTop.code !== 0) return { ok: false, error: 'The workshop was made from an older Falcon. Make the change again in a new workshop.' };
 
   // The watchdog runs from its own copy, made before any file changes.
