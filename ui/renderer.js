@@ -782,9 +782,11 @@ async function refreshAbilities() {
   window.falcon.connections().then((c) => setTileIdle('telegram', c.telegram ? 'Connected' : 'Not set up', !c.telegram)).catch(() => {});
   window.falcon.searchStatus().then(({ via }) => setTileIdle('search', via ? 'Ready' : 'Off', !via)).catch(() => {});
   window.falcon.briefing().then((b) => setTileIdle('briefing', b.enabled ? `Daily at ${b.time}` : 'Off')).catch(() => {});
-  window.falcon.addons().then(({ addons }) => {
-    const off = addons.filter((a) => a.loaded === false).length;
-    setTileIdle('addons', off ? 'Off' : addons.length ? `${addons.length} made` : 'None yet', off > 0);
+  window.falcon.addons().then(({ addons, patches = [] }) => {
+    // Add-ons and changes to the engine's own files; Off when one does not load or no longer fits.
+    const off = addons.filter((a) => a.loaded === false).length + patches.filter((p) => p.state === 'no-fit').length;
+    const made = addons.length + patches.length;
+    setTileIdle('addons', off ? 'Off' : made ? `${made} made` : 'None yet', off > 0);
   }).catch(() => {});
   Promise.all([window.falcon.repair(), window.falcon.personal().catch(() => ({ changes: [] }))])
     .then(([repair, mine]) => showRepairState({ ...repair, changes: mine.changes.filter((c) => c.on).length })).catch(() => {});

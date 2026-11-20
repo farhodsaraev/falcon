@@ -167,3 +167,54 @@ test('an add-on the writer makes is load-checked; one that does not load gets th
   assert.deepEqual(checked[0], ['coin'], 'only the add-on the repair touched is checked');
   assert.deepEqual(done.addons.map((a) => a.tools), [['flip_coin']]);
 });
+
+test('a change to the engine copy becomes a patch in Falcon, is checked, and gets one correction; a too-large one is refused', { skip, timeout: 120000 }, async () => {
+  const { home, history } = pretendFalcon();
+  const attempts = [];
+  const checked = [];
+  let made = null;
+  const smallPatch = (word) => `diff --git a/dist/greeting.js b/dist/greeting.js\n--- a/dist/greeting.js\n+++ b/dist/greeting.js\n@@ -1 +1 @@\n-old\n+${word}\n`;
+  const repairs = createRepairs({
+    home, history, keys: async () => ({ openrouter: 'k' }), engineCli: () => null,
+    write: async ({ dir, extra }) => {
+      attempts.push(extra);
+      fs.writeFileSync(path.join(dir, 'src', 'app', 'greeting.js'), "export const greeting = () => 'Hello, engine';\n");
+      return { ok: true, said: 'Changed the engine greeting.' };
+    },
+    review: async ({ diff }) => ({ ok: /engine-patches/.test(diff), problems: [] }),
+    check: {
+      engineCopy: async ({ dir }) => { made = dir; return { ok: true }; },
+      patchFrom: async () => smallPatch(attempts.length === 1 ? 'broken' : 'fixed'),
+      enginePatch: async ({ file }) => {
+        const text = fs.readFileSync(file, 'utf8');
+        checked.push(text);
+        return /fixed/.test(text) ? { ok: true } : { ok: false, error: 'The engine copy stopped: SyntaxError' };
+      },
+    },
+  });
+  repairs.start('Change how the engine greets', CHOICE, { agreed: true });
+  const done = await until(repairs, ['ready', 'failed']);
+  assert.equal(done.phase, 'ready', done.error);
+  assert.ok(made, 'an engine copy was asked for');
+  assert.match(attempts[0], /A copy of the engine that Falcon runs on is in the folder \.engine-copy/);
+  assert.match(attempts[1], /The change to the engine cannot be used: The engine copy stopped: SyntaxError/);
+  assert.equal(checked.length, 2);
+  assert.ok(done.diff.some((f) => f.file === `falcon-agent/engine-patches/${done.id}.patch`), 'the patch is part of the change');
+  assert.equal(done.enginePatch.ok, true);
+  repairs.refuse();
+
+  const big = createRepairs({
+    home, history, keys: async () => ({ openrouter: 'k' }), engineCli: () => null,
+    write: async ({ dir }) => { fs.writeFileSync(path.join(dir, 'src', 'app', 'greeting.js'), "export const greeting = () => 'Hello, big';\n"); return { ok: true }; },
+    review: async () => ({ ok: true, problems: [] }),
+    check: {
+      engineCopy: async () => ({ ok: true }),
+      patchFrom: async () => `diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,300 +1,300 @@\n${'-a\n+b\n'.repeat(150)}`,
+      enginePatch: async () => { throw new Error('a too-large patch must not be started'); },
+    },
+  });
+  big.start('Rewrite the engine', CHOICE, { agreed: true });
+  const refused = await until(big, ['ready', 'failed']);
+  assert.equal(refused.phase, 'failed');
+  assert.match(refused.error, /changes 300 lines of the engine; at most 200 are permitted/);
+});

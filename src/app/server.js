@@ -10,11 +10,12 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { engineHome, moveEngineHome, prepareEngineHome } from './enginehome.js';
-import { ensureGit } from './git.js';
+import { ensureGit, findGit } from './git.js';
 import { historyDir, openHistory, switchToWorkshop } from './workshop.js';
 import { adoptRelease, changePatch, leaveNotice, readChanges, rebuild, setChanges, takeNotice } from './personal.js';
 import { createRepairs } from './repair.js';
 import { lastJson as engineJson, listAddons } from './addons.js';
+import { listPatches, patchState, syncPatches } from './enginepatch.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
 import { createDirectLine, stepText, stepSkill } from './directline.js';
@@ -952,6 +953,28 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (result.switched) setTimeout(() => onIdle('switch'), 1500).unref?.();
     })().catch(() => {}).finally(() => { adopting = null; });
   }
+  // Falcon's patches to the engine's own files (stage 6): an engine update replaces those files, so the
+  // patches are put back at each start and after each update; one the owner switched off is taken out.
+  async function syncEnginePatches({ restart = true } = {}) {
+    const git = findGit();
+    const dir = engineDir(api.findEngine());
+    if (!git || !dir) return null;
+    const r = await syncPatches({ git, appRoot: root, engineDir: dir, engineVersion: api.engineVersion() });
+    for (const name of r.newlyFailed) {
+      let title = '';
+      try { title = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.falcon', 'repairs', `${name}.json`), 'utf8')).request || ''; } catch { /* no record */ }
+      leaveNotice(`The change to the engine${title ? ` for “${title}”` : ''} does not fit the new version of the engine, so it is off. The rest of that change still works. You can ask Falcon in the Workshop to make it again.`);
+    }
+    if (r.changed && restart) {
+      await api.runEngine(['gateway', 'stop', '--force'], { timeoutMs: 60000 });
+      await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+    }
+    return r;
+  }
+  if (!Object.keys(engine).length) {
+    (async () => { await moving; await adopting; await syncEnginePatches(); })().catch(() => {});
+  }
+
   // The owner switches his changes on or off: rebuilt and switched in, like an update.
   let rebuilding = null;
   function rebuildPersonal() {
@@ -1076,6 +1099,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           say('Finishing the update');
           const repaired = result.code === 0 ? null : await api.runEngine(['update', 'repair', '--yes'], progress);
           await ownPairingText();          // a new engine brings its own wording back
+          try { await syncEnginePatches({ restart: false }); } catch { /* put back at the next start */ }
           say('Starting again');
           await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
           let awake = false;
@@ -1350,7 +1374,11 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     // ---- Add-ons Falcon made for himself (stage 6): how many, and whether the engine loaded each ----
     'GET /api/addons': async () => {
       const own = listAddons(root);
-      if (!own.length) return { addons: [] };
+      const git = findGit();
+      const dir = engineDir(api.findEngine());
+      const patches = [];
+      for (const p of listPatches(root)) patches.push({ name: p.name, state: git && dir ? await patchState({ git, engineDir: dir, file: p.file }) : 'unknown' });
+      if (!own.length) return { addons: [], patches };
       const { code, out } = await api.runEngine(['plugins', 'list', '--json'], { timeoutMs: 120000 });
       let listed = [];
       const doc = engineJson(out);
@@ -1360,6 +1388,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           const seen = listed.find((p) => p.id === a.id);
           return { id: a.id, name: String(a.manifest.name || a.id), loaded: code === 0 && seen ? seen.status === 'loaded' && seen.enabled !== false : null };
         }),
+        patches,
       };
     },
 

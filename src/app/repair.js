@@ -17,6 +17,11 @@ import path from 'node:path';
 import { checkWorkshopStarts, createWorkshop, removeWorkshop, runGit, saveWorkshop, switchToWorkshop, testWorkshop } from './workshop.js';
 import { dropChange, recordChange } from './personal.js';
 import { ADDONS_DIR, checkAddons } from './addons.js';
+import { COPY_DIR, PATCHES_DIR, checkEngineCopyStarts, makeEngineCopy, patchFromCopy, patchSize, patchState, removeEngineCopy } from './enginepatch.js';
+import { findGit } from './git.js';
+
+// A personal patch to the engine's own files must stay small (plan section 6).
+export const MAX_PATCH_LINES = 200;
 
 const WINDOWS = process.platform === 'win32';
 export const CODEX_VERSION = '0.171.0';     // the version tried in the trial of 2026-11-20
@@ -102,6 +107,8 @@ function killTree(child) {
   else { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } }
 }
 
+const ENGINE_NOTE = `\nA copy of the engine that Falcon runs on is in the folder ${COPY_DIR}. Change it only if settings, a skill or an add-on cannot do what he asked, and keep that change small (at most ${MAX_PATCH_LINES} changed lines). Falcon turns your change there into a patch for the real engine. Never change ${COPY_DIR}/node_modules.`;
+
 const WRITER_PROMPT = (request, extra = '') => `You are improving Falcon, a personal assistant program. His code is in this folder.
 The owner asked: "${request}"
 Make the smallest change that does what he asked, in the style of the code around it.
@@ -132,7 +139,28 @@ A problem is something that makes the change wrong, unsafe, harmful to the owner
  */
 export function createRepairs({ home = os.homedir(), node = process.execPath, history, keys, engineCli, onChange = () => {}, write, review, switchTo = switchToWorkshop, check: checks = {} }) {
   // The checks a change must pass; add-ons are loaded in a private copy of the engine (addons.js).
-  const check = { test: testWorkshop, starts: checkWorkshopStarts, addons: ({ dir, only }) => checkAddons({ dir, cli: engineCli(), node, home, only }), ...checks };
+  // The engine's package folder (the command-line program is <package>/dist/index.js).
+  const enginePackage = () => { const cli = engineCli(); return cli ? path.resolve(path.dirname(cli), '..') : null; };
+  const check = {
+    test: testWorkshop,
+    starts: checkWorkshopStarts,
+    addons: ({ dir, only }) => checkAddons({ dir, cli: engineCli(), node, home, only }),
+    // A second copy of the engine for changes only its own files can make (enginepatch.js).
+    engineCopy: async ({ dir }) => (enginePackage() ? makeEngineCopy({ engineDir: enginePackage(), dir }) : { ok: false, error: 'the engine is not installed here' }),
+    patchFrom: ({ dir }) => patchFromCopy({ git: historyNow?.git || findGit({ home }), dir, home }),
+    // The patch must fit the engine in use, and the engine copy with the change must start and answer.
+    enginePatch: async ({ dir, file }) => {
+      const engineDir = enginePackage();
+      if (!engineDir) return { ok: false, error: 'the engine is not installed here' };
+      const fits = await patchState({ git: historyNow?.git || findGit({ home }), engineDir, file });
+      if (fits === 'no-fit') return { ok: false, error: 'it does not fit the engine that is installed' };
+      const copy = path.join(dir, COPY_DIR);
+      if (!fs.existsSync(copy)) return { ok: true };
+      const started = await checkEngineCopyStarts({ copy, node, home });
+      return started.ok ? { ok: true, ms: started.ms } : { ok: false, error: started.error };
+    },
+    ...checks,
+  };
   const recordDir = path.join(falconDir(home), 'repairs');
   let status = null;
   let child = null;
@@ -282,7 +310,35 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
       step(bad.length ? `The add-on ${bad[0].id} does not load` : `The add-on loads, with ${loaded.flatMap((a) => a.tools || []).length || 'no'} new tools`);
       if (bad.length) return false;
     }
+    // A patch to the engine's own files: small, fits the engine in use, and the changed engine starts.
+    status.enginePatch = null;
+    const patchFile = path.join(dir, PATCHES_DIR, `${status.id}.patch`);
+    if (fs.existsSync(patchFile)) {
+      const lines = patchSize(fs.readFileSync(patchFile, 'utf8'));
+      if (lines > MAX_PATCH_LINES) {
+        status.enginePatch = { ok: false, lines, error: `it changes ${lines} lines of the engine; at most ${MAX_PATCH_LINES} are permitted` };
+        step('The change to the engine is too large');
+        return false;
+      }
+      step('Starting a second copy of the engine with the change, beside the one in use');
+      const r = await check.enginePatch({ dir, file: patchFile });
+      status.enginePatch = { lines, ...r };
+      step(r.ok ? 'The changed engine starts and answers' : 'The changed engine does not work');
+      if (!r.ok) return false;
+    }
     return true;
+  }
+
+  // The writer's change to the engine copy becomes falcon-agent/engine-patches/<repair>.patch.
+  async function capturePatch(dir) {
+    if (!status.engineCopy) return;
+    const patch = await check.patchFrom({ dir });
+    const file = path.join(dir, PATCHES_DIR, `${status.id}.patch`);
+    if (patch.trim()) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, patch.endsWith('\n') ? patch : `${patch}\n`);
+      step(`Made a patch for the engine (${patchSize(patch)} changed lines)`);
+    } else fs.rmSync(file, { force: true });
   }
 
   async function diffOf(dir) {
@@ -303,15 +359,22 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
       status.dir = ws.dir;
       status.base = ws.base;
       if (stopped) return finish('stopped');
+      step('Making a second copy of the engine, for changes that only its own files can make');
+      const copy = await check.engineCopy({ dir: ws.dir });
+      status.engineCopy = Boolean(copy.ok);
+      if (!copy.ok) log(`No engine copy: ${copy.error}`);
+      if (stopped) return finish('stopped');
 
       phase('writing', choice.provider === 'openai' ? 'Codex is reading Falcon\'s code' : 'Reading Falcon\'s code');
       // Adapting an earlier change of the owner's to a newer Falcon: the writer sees that change.
       const earlier = context ? `\nThe owner made this change for an older version of Falcon; make the same change work in this version:\n${context}` : '';
-      let written = await writer({ dir: ws.dir, request, choice, extra: earlier, step, log });
+      const engineNote = status.engineCopy ? ENGINE_NOTE : '';
+      let written = await writer({ dir: ws.dir, request, choice, extra: earlier + engineNote, step, log });
       addCost(written);
       if (stopped) return finish('stopped');
       if (!written.ok) return finish('failed', { error: written.error });
       status.said = written.said || '';
+      await capturePatch(ws.dir);
       if (!await saveWorkshop({ git: historyNow.git, dir: ws.dir, message: `Repair: ${request}`.slice(0, 200) })) return finish('failed', { error: 'The writer changed nothing.' });
       let good = await checkCopy(ws.dir);
       status.diff = readDiff(await diffOf(ws.dir));
@@ -328,14 +391,16 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
           ...(!status.tests?.ok ? [`These tests fail: ${(status.tests?.failing || []).slice(0, 5).join('; ') || 'see the test output'}.`] : []),
           ...(status.tests?.ok && status.starts === false ? ['Falcon does not start with this change.'] : []),
           ...((status.addons || []).filter((a) => !a.ok).map((a) => `The add-on ${a.id} does not load in the engine: ${a.error}`)),
+          ...(status.enginePatch && !status.enginePatch.ok ? [`The change to the engine cannot be used: ${status.enginePatch.error}.`] : []),
           ...(opinion.ok ? [] : opinion.problems.map((p) => `A reviewer found: ${p}`)),
         ];
         phase('fixing', 'Correcting what was found');
-        written = await writer({ dir: ws.dir, request, choice, extra: `\nYour first attempt is already in the folder. Correct it:\n- ${reasons.join('\n- ')}`, step, log });
+        written = await writer({ dir: ws.dir, request, choice, extra: `${engineNote}\nYour first attempt is already in the folder. Correct it:\n- ${reasons.join('\n- ')}`, step, log });
         addCost(written);
         if (stopped) return finish('stopped');
         if (!written.ok) return finish('failed', { error: written.error });
         if (written.said) status.said = written.said;
+        await capturePatch(ws.dir);
         await saveWorkshop({ git: historyNow.git, dir: ws.dir, message: `Repair, corrected: ${request}`.slice(0, 200) });
         good = await checkCopy(ws.dir);
         status.diff = readDiff(await diffOf(ws.dir));
@@ -351,11 +416,15 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
         const addonBad = (status.addons || []).find((a) => !a.ok);
         return finish('failed', { error: !status.tests?.ok ? 'Falcon\'s tests still fail with this change, so it cannot be used.'
           : status.starts === false ? 'This copy of Falcon does not start, so it cannot be used.'
-            : `The add-on ${addonBad?.id || ''} does not load in the engine, so it cannot be used: ${addonBad?.error || ''}`.trim() });
+            : addonBad ? `The add-on ${addonBad.id} does not load in the engine, so it cannot be used: ${addonBad.error || ''}`.trim()
+              : `The change to the engine cannot be used: ${status.enginePatch?.error || 'it did not pass its checks'}.` });
       }
       finish('ready', { error: opinion.ok ? '' : 'The reviewer still has doubts: read them before you decide.' });
     } catch (err) {
       finish(stopped ? 'stopped' : 'failed', { error: String(err.message || err).slice(0, 600) });
+    } finally {
+      // The engine copy is large and only needed while the change is written and checked.
+      if (status.dir) removeEngineCopy(status.dir);
     }
   }
 

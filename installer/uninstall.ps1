@@ -115,8 +115,15 @@ if (Test-Path $nodeMarker) {
 # ---- 3b. The portable Git Falcon installed for his workshop, only if he installed it ----
 $falconGit = Join-Path $env:USERPROFILE ".falcon\git"
 if (Test-Path (Join-Path $falconGit "installed-by-falcon.txt")) { Remove-Item $falconGit -Recurse -Force -ErrorAction SilentlyContinue }
-# The coding tool (Codex) and the private engine settings Falcon's repairs used: always his own.
-foreach ($own in "tools", "codex-home", "repair-engine") { Remove-Item (Join-Path $env:USERPROFILE ".falcon\$own") -Recurse -Force -ErrorAction SilentlyContinue }
+# A repair's engine copy links to the engine's libraries. Windows PowerShell deletes through such a link,
+# so each link is removed on its own first (rmdir removes only the link).
+Get-ChildItem (Join-Path $env:USERPROFILE ".falcon\workshops") -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
+  $libs = Join-Path $_.FullName ".engine-copy\node_modules"
+  if (Test-Path $libs) { cmd /c rmdir "$libs" *> $null }
+}
+# The coding tool (Codex), the private engine settings Falcon's repairs used, and his checks of add-ons and
+# engine patches: always his own.
+foreach ($own in "tools", "codex-home", "repair-engine", "addon-check", "engine-copy-check") { Remove-Item (Join-Path $env:USERPROFILE ".falcon\$own") -Recurse -Force -ErrorAction SilentlyContinue }
 
 # ---- 4. Falcon's icons, his entry in Settings > Apps, and his files ----
 foreach ($link in @(

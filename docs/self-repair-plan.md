@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stages 0, 1 and 2 are complete. Stages 2B, 3 and 4 are built and tried. Stage 5 is postponed. Stage 6 add-ons are built; engine patches are not started.
+Status: Stages 0, 1 and 2 are complete. Stages 2B, 3 and 4 are built and tried. Stage 5 is postponed. Stage 6 (add-ons and engine patches) is built. Stage 7 is optional.
 
 ## 1. Purpose
 
@@ -130,7 +130,7 @@ The panel "What I can do" shows each function of Falcon as a tile: Files, Docume
 | 1 | Learned | "Ready", the number of learned methods, or the number of programs that wait for the owner's approval |
 | 3 | Repair | "Ready", "Needs a coding key", or "Working" while a repair is in progress |
 | 4 | Repair | Also the number of personal changes |
-| 6 | Add-ons | The number of add-ons that Falcon made, or "Off" if one has a fault |
+| 6 | Add-ons | The number of add-ons and engine patches that Falcon made, or "Off" if one has a fault |
 
 ## 9. Coding tools and AI keys
 
@@ -263,15 +263,20 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - **Done when:** a repair from a test PC arrives on GitHub as a proposal, with no personal data.
 - **Time:** 1 to 2 days.
 
-### Stage 6: Add-ons and engine patches (add-ons built on 2026-11-20; engine patches not started)
+### Stage 6: Add-ons and engine patches (add-ons built on 2026-11-20; engine patches built on 2026-11-21)
 
 - **Built:** a repair can make an add-on in falcon-agent/addons/<name>. The writer gets the instructions for the folder, the manifest and the tool. After the tests and the start check, Falcon loads each add-on that the repair changed in a private copy of the engine settings (not the engine in use), and makes sure that it loads and gives its tools. If it does not load, the writer gets the reason for one correction. If it still does not load, the repair cannot be approved.
 - At each setup, Falcon copies his add-ons beside the engine settings, where an engine update does not go, and tells the engine to load them. He removes an add-on that is no longer in his folder. Other load paths stay.
 - An add-on is part of a repair, so it is a personal change and stays after a Falcon update (Stage 4).
 - The tile "Add-ons" shows "None yet", the number that Falcon made, or "Off" if the engine did not load one.
 - **Tested:** the load check with the real engine: a good add-on loaded with its tool, and a broken add-on was found ("failed during load"). The check takes 30 to 60 seconds. Automatic tests: the list of add-ons, the copy and the load paths at setup, and a repair whose add-on does not load the first time.
-- **Not done:** engine patches (section 6). The "second copy of the engine" is only the private load check, not a second running engine.
-- **Not tested yet:** an add-on made by a real AI, and an add-on after a real engine update.
+- **Engine patches, built:** when Falcon prepares a repair, he also makes a second copy of the engine in the workshop (folder .engine-copy). The copy has its own program files. It uses the libraries of the real engine through a link. The writer can change the copy, but only if settings, a skill or an add-on cannot do the task.
+- Falcon finds the files that the writer changed in the copy and makes a patch from them: falcon-agent/engine-patches/<repair>.patch. The patch is part of the repair, so the reviewer sees it, the owner approves it, and it is a personal change (Stage 4).
+- Checks: the patch must change 200 lines or fewer. It must fit the engine that is installed. Falcon starts the changed copy beside the real engine, with its own settings and port, and makes sure that it answers. If a check fails, the writer gets the reason for one correction. Falcon removes the copy when the checks are done.
+- At each start of Falcon, and after each engine update, Falcon puts his patches into the engine's files again. Git shows whether each patch is in, can go in, or does not fit. Falcon takes out a patch that the owner set to off. If a patch does not fit a new engine, Falcon sets it to off and tells the owner one time. The rest of that change continues to operate.
+- The tile "Add-ons" also counts the engine patches. It shows "Off" if a patch does not fit.
+- **Tested:** 2 engines on one PC at the same time: the changed copy started beside the engine in use in 22 to 35 seconds, and the engine in use continued to operate. A real patch on throwaway copies: copy 11 to 40 seconds, patch of 2 lines, it fits the installed engine, the changed copy starts, the patch goes in and out of a stand-in engine, and the real engine did not change. Automatic tests: the copy, the changed files, the patch, put in, put back after an update, taken out, does not fit (told one time), a repair whose patch fails the first check, and a patch that is too large.
+- **Not tested yet:** an add-on or a patch made by a real AI, the restart of the engine after a patch on the owner's PC, and an add-on or a patch after a real engine update.
 
 - **Task:** Falcon writes an add-on in the workshop, tests it, and installs it.
 - **Task:** Start a second copy of the engine in the workshop for tests of add-ons and patches.

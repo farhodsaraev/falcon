@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gitEnv } from './git.js';
+import { removeEngineCopy } from './enginepatch.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Falcon's own files, as his installers copy them. Anything else in his folder is not part of him.
@@ -195,6 +196,8 @@ export async function switchToWorkshop({ history, id, home = os.homedir(), node 
 /** Removes a workshop copy. Its recorded change stays in the local history if it was brought over. */
 export function removeWorkshop({ id, home = os.homedir() }) {
   if (!WORKSHOP_ID.test(id)) return false;
+  // An engine copy links to the real engine's libraries: take the link away on its own first.
+  if (!removeEngineCopy(path.join(workshopsDir(home), id))) return false;
   fs.rmSync(path.join(workshopsDir(home), id), { recursive: true, force: true, maxRetries: 5 });
   return true;
 }
