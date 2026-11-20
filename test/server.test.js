@@ -556,3 +556,41 @@ test('which AI does what: everyday, voice and coding each show their AI; coding 
     assert.equal((await get()).coding.current.provider, 'openai');
   } finally { await s.close(); }
 });
+
+test('repairs from the window: shown with the estimate, started only after agreeing, approved then Falcon closes for the switch', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-repair-routes-'));
+  const envPath = path.join(dir, '.env');
+  fs.writeFileSync(envPath, 'OPENROUTER_API_KEY=sk-or-v1-test\n');
+  const asked = [];
+  let state = null;
+  const repairs = {
+    estimate: () => ({ text: 'about 20 cents to 2 US dollars on your own key' }),
+    status: () => state,
+    busy: () => false,
+    start: (request, choice, { agreed }) => { asked.push(['start', request, choice?.model, agreed]); if (!agreed) return { ok: false, error: 'agree first' }; state = { id: 'r1', phase: 'ready', request, dir: 'C:\\secret', log: ['raw'], base: 'x', steps: [] }; return { ok: true, id: 'r1' }; },
+    approve: async ({ oldPid }) => { asked.push(['approve', oldPid]); return { ok: true }; },
+    refuse: () => ({ ok: true }), stop: () => ({ ok: true }),
+  };
+  const stops = [];
+  const s = await startServer({ engine: { ...engine, envFile: () => envPath, profileFile: () => path.join(dir, 'profile.json'), repairs }, onIdle: (why) => stops.push(why) });
+  const base = `http://127.0.0.1:${s.port}`;
+  const post = (route, body = {}) => fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify(body) }).then((x) => x.json());
+  const get = (route) => fetch(base + route, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+  try {
+    let r = await get('/api/repair');
+    assert.equal(r.choice.model, 'openai/gpt-6.1-terra');
+    assert.match(r.estimate, /20 cents/);
+    assert.equal((await post('/api/repair/start', { request: 'Fix it', agreed: 'yes' })).ok, false, 'only a real yes counts');
+    assert.equal((await post('/api/repair/start', { request: 'Fix it', agreed: true })).ok, true);
+    r = await get('/api/repair');
+    assert.equal(r.status.dir, undefined, 'the window is not told where the copy is on disk');
+    assert.equal(r.status.log, undefined);
+    assert.deepEqual((await get('/api/repair/log')).lines, ['raw'], 'the raw output only on request');
+    assert.equal((await post('/api/repair/approve')).ok, true);
+    assert.equal(asked.at(-1)[1], process.pid, 'the watchdog waits for this Falcon to close');
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+    assert.deepEqual(stops, ['switch'], 'Falcon closes so the new version can start');
+    const page = await (await fetch(`${base}/workshop`)).text();
+    assert.match(page, /Workshop/);
+  } finally { await s.close(); }
+});

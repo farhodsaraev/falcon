@@ -10,6 +10,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
 import { engineHome, moveEngineHome, prepareEngineHome } from './enginehome.js';
+import { ensureGit } from './git.js';
+import { openHistory } from './workshop.js';
+import { createRepairs } from './repair.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
 import { createDirectLine, stepText, stepSkill } from './directline.js';
@@ -24,6 +27,8 @@ const UI_FILES = {
   '/renderer.js': ['renderer.js', 'text/javascript; charset=utf-8'],
   '/bridge.js': ['bridge.js', 'text/javascript; charset=utf-8'],
   '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'],
+  '/workshop': ['workshop.html', 'text/html; charset=utf-8'],
+  '/workshop.js': ['workshop.js', 'text/javascript; charset=utf-8'],
   '/falcon.png': ['falcon.png', 'image/png'],
 };
 const PROFILE_FILE = path.join(os.homedir(), '.falcon', 'profile.json');
@@ -321,7 +326,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   let refreshing = false;
   let refreshChecked = false;
   let updateRunning = false;
-  const busy = () => Boolean(moving) || setupRunning || refreshing || updateRunning || chatsInFlight > 0;
+  const busy = () => Boolean(moving) || setupRunning || refreshing || updateRunning || chatsInFlight > 0 || Boolean(api.repairs?.busy());
 
   // ---- Out of credit, and back again ----
   // Seen on a real PC: once the OpenRouter account ran dry, the engine marked the key "disabled: billing"
@@ -904,6 +909,31 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   }
   api.codingChoice = codingChoice;     // Stage 3's repairs use this
 
+  // ---- Repairs: Falcon changes himself in a workshop copy, and only the owner switches a change in ----
+  // (self-repair plan, stage 3; see repair.js). The local history is made on first use, with Git found on
+  // the computer or the portable copy installed (git.js).
+  let historyMade = null;
+  const repairHistory = async () => {
+    historyMade ??= (async () => {
+      const got = await ensureGit();
+      if (!got.ok) throw new Error(got.error);
+      const h = openHistory({ git: got.git, appRoot: root });
+      await h.init(String(api.appInfo().version || ''));
+      return h;
+    })().catch((err) => { historyMade = null; throw err; });
+    return historyMade;
+  };
+  // What the window may see of a repair: not the folder on disk, and not the coding tool's raw output.
+  const repairView = (s) => (s ? (({ dir, log, base, ...shown }) => ({ ...shown, logLines: log?.length || 0 }))(s) : null);
+  if (!api.repairs) {
+    api.repairs = createRepairs({
+      history: repairHistory,
+      keys: async () => ({ openai: await api.voiceKey.get().catch(() => null), openrouter: readEnvKey(api.envFile(), 'OPENROUTER_API_KEY') }),
+      engineCli: () => { const e = api.findEngine(); return e && /index\.js$/.test(e.prefix?.[0] || '') ? e.prefix[0] : null; },
+      onChange: (s) => broadcast('repair', repairView(s)),
+    });
+  }
+
   // ---- Programs inside learned methods: each runs only after the user allows it ----
   // Where the engine keeps what Falcon learns, and Falcon's record of the programs the user allowed, with
   // a fingerprint of each: a program changed after it was allowed loses its permission until allowed again.
@@ -1254,6 +1284,27 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       } catch { return { ok: false, error: 'The choice could not be saved.' }; }
       return { ok: true, coding: await codingChoice() };
     },
+    // ---- Repairs (the Workshop window) ----
+    'GET /api/repair': async () => {
+      const choice = await codingChoice();
+      return { status: repairView(api.repairs.status()), choice, estimate: choice ? api.repairs.estimate(choice).text : '' };
+    },
+    // Starts only with the owner's own words from the window, after he has seen the estimate.
+    'POST /api/repair/start': async (body) => {
+      if (setupRunning || updateRunning) return { ok: false, error: 'Falcon is busy with an update. Please try again in a moment.' };
+      return api.repairs.start(body.request, await codingChoice(), { agreed: body.agreed === true });
+    },
+    'POST /api/repair/stop': async () => api.repairs.stop(),
+    'POST /api/repair/refuse': async () => api.repairs.refuse(),
+    // The owner's yes: the change is switched in and Falcon starts again; the watchdog goes back if he does not.
+    'POST /api/repair/approve': async () => {
+      const r = await api.repairs.approve({ oldPid: process.pid });
+      if (r.ok) setTimeout(() => onIdle('switch'), 1500).unref?.();
+      return r;
+    },
+    // "Show details": the coding tool's own output, for the maker. Keys are already blanked out.
+    'GET /api/repair/log': async () => ({ lines: api.repairs.status()?.log || [] }),
+
     // For the "What I can do" panel: how many methods he has learned and how many programs wait for a yes.
     // Read from the folder itself, so it is instant.
     'GET /api/learned/count': async () => ({ count: learnedNames().length, waiting: waitingPrograms().length }),

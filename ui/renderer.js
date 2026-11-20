@@ -682,6 +682,8 @@ const SKILLS = [
   ['voice', 'Voice', null],
   // What he learned when asked (self-repair plan, stage 1). Its line shows how many, or one waiting for a yes.
   ['learned', 'Learned', 'Learn how to tell me the official dollar rate.'],
+  // Fixing or extending himself in his workshop (stage 3): opens the Workshop window.
+  ['repair', 'Repair', null],
 ];
 // What pressing a tile shows besides an example: where to switch the ability on, or how to use it.
 const SKILL_HELP = {
@@ -690,7 +692,11 @@ const SKILL_HELP = {
   briefing: ['Every morning in Telegram: weather, headlines, your reminders.', 'briefing'],
   mail: ['Uses your own Chrome, where you are signed in.', 'connections'],
   search: ['A free Google key makes searches more thorough.', 'key'],
+  repair: ['Tell Falcon what to fix or add. He works on a separate copy of himself and asks before anything changes.', null],
 };
+function openWorkshop() {
+  window.open(window.falcon.workshopUrl(), 'falcon-workshop', 'width=900,height=820');
+}
 for (const [id, name, example] of SKILLS) {
   const tile = document.createElement('button');
   tile.type = 'button';
@@ -720,6 +726,13 @@ for (const [id, name, example] of SKILLS) {
       go.textContent = 'Settings';
       go.addEventListener('click', () => { showScreen('connections'); showTab(settingsTab); });
       $('skill-try').append(' ', go);
+    }
+    if (id === 'repair') {
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.textContent = 'Open the workshop';
+      open.addEventListener('click', openWorkshop);
+      $('skill-try').append(' ', open);
     }
     if (id === 'learned') {
       // What he has learned so far, with Remove and the programs waiting for a yes.
@@ -768,6 +781,14 @@ async function refreshAbilities() {
   window.falcon.connections().then((c) => setTileIdle('telegram', c.telegram ? 'Connected' : 'Not set up', !c.telegram)).catch(() => {});
   window.falcon.searchStatus().then(({ via }) => setTileIdle('search', via ? 'Ready' : 'Off', !via)).catch(() => {});
   window.falcon.briefing().then((b) => setTileIdle('briefing', b.enabled ? `Daily at ${b.time}` : 'Off')).catch(() => {});
+  window.falcon.repair().then(showRepairState).catch(() => {});
+}
+// The Repair tile: ready, needs a coding key, working, or waiting for the owner's decision.
+function showRepairState({ status, choice } = {}) {
+  const phase = status?.phase;
+  if (['preparing', 'writing', 'testing', 'reviewing', 'fixing', 'switching'].includes(phase)) setTileIdle('repair', 'Working');
+  else if (phase === 'ready') setTileIdle('repair', 'Waiting for you', true);
+  else setTileIdle('repair', choice ? 'Ready' : 'Needs a coding key', !choice);
 }
 
 // Today's counts, kept on this computer only.
@@ -1259,6 +1280,7 @@ window.falcon.listen({
   media: showMedia,
   // A program in something he learned waits for the user's yes (Settings > Learned).
   learned: showLearnedCount,
+  repair: (s) => showRepairState({ status: s, choice: true }),
   // Something he noticed by himself, such as the AI credit being back after a top-up.
   notice: ({ text }) => {
     if (busy || !text) return;

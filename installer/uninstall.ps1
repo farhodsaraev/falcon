@@ -115,6 +115,8 @@ if (Test-Path $nodeMarker) {
 # ---- 3b. The portable Git Falcon installed for his workshop, only if he installed it ----
 $falconGit = Join-Path $env:USERPROFILE ".falcon\git"
 if (Test-Path (Join-Path $falconGit "installed-by-falcon.txt")) { Remove-Item $falconGit -Recurse -Force -ErrorAction SilentlyContinue }
+# The coding tool (Codex) and the private engine settings Falcon's repairs used: always his own.
+foreach ($own in "tools", "codex-home", "repair-engine") { Remove-Item (Join-Path $env:USERPROFILE ".falcon\$own") -Recurse -Force -ErrorAction SilentlyContinue }
 
 # ---- 4. Falcon's icons, his entry in Settings > Apps, and his files ----
 foreach ($link in @(

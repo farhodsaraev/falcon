@@ -532,3 +532,34 @@ body.wide.on-main .side-right { right: 0; border-left: 1px solid rgba(28, 42, 64
 .tile.use small { color: var(--glow); }
 .tile.wait small { color: var(--warn); }   /* a learned program waits for the user's yes */
 @media (prefers-reduced-motion: reduce) { .step, .side, .mind.working i, .step.now .ic::before { animation: none !important; } }
+
+/* ---- The Workshop window (self-repair plan, stage 3) ---- */
+body.workshop-page { overflow-y: auto; height: auto; min-height: 100vh; }
+.brand-sub { margin-left: 10px; letter-spacing: 0.08em; color: var(--muted); font-size: 12px; }
+.workshop { max-width: 880px; margin: 0 auto; padding: 16px; }
+.workshop textarea {
+  width: 100%; box-sizing: border-box; margin: 8px 0; padding: 10px 12px; resize: vertical; min-height: 84px;
+  font: inherit; font-size: 14px; color: var(--text); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 10px;
+}
+.workshop textarea:focus { outline: none; border-color: var(--glow); }
+.phase { margin: 8px 0 4px; font-size: 13px; color: var(--muted); }
+.phase.working { color: var(--glow); }
+.phase.ready, .phase.approved { color: var(--ok); }
+.phase.failed { color: var(--bad); }
+.message.warn { color: var(--warn); }
+.work-steps { list-style: none; padding: 0; margin: 6px 0 10px; }
+.work-steps .step { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; color: var(--muted); }
+.work-steps .step::before { content: "✓"; color: var(--ok); margin-right: 8px; flex: none; }
+.work-steps .step span { flex: 1; }
+.work-steps .step.now { color: var(--text); }
+.work-steps .step.now::before { content: "•"; color: var(--glow); animation: dots 1.4s steps(4, end) infinite; }
+.work-steps .step small { flex: none; color: var(--muted); }
+.diff details { margin: 6px 0; }
+.diff summary { cursor: pointer; font: 12.5px ui-monospace, Consolas, monospace; color: var(--text); }
+.diff pre, .raw {
+  margin: 6px 0; padding: 8px 10px; max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 11.5px/1.5 ui-monospace, Consolas, monospace; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); border-radius: 8px;
+}
+.diff .add { display: block; color: var(--ok); background: rgba(111, 227, 165, 0.08); }
+.diff .del { display: block; color: var(--bad); background: rgba(255, 122, 122, 0.08); }
+.diff .hunk { display: block; color: var(--muted); }

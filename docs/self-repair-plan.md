@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: Stages 0, 1 and 2 are complete. Stage 2B is built. Stage 3 is next.
+Status: Stages 0, 1 and 2 are complete. Stages 2B and 3 are built and tried. Stage 4 is next.
 
 ## 1. Purpose
 
@@ -222,7 +222,13 @@ The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falco
 - **Done when:** a conversation, a voice request, and a repair each use the AI that the owner selected for that job.
 - **Time:** 2 days.
 
-### Stage 3: Fault repair with a writer and a reviewer
+### Stage 3: Fault repair with a writer and a reviewer (built and tried for real on 2026-11-20)
+
+- **Built:** the Workshop window (the tile "Repair" opens it), the estimate and the owner's agreement before a start, the writer (Codex with an OpenAI key, installed when first needed; the engine with only an OpenRouter key), the tests and the start check in the workshop, the reviewer (a different AI model), one correction, Stop, Approve, and Refuse. Approve switches the change in with the watchdog.
+- **Tested with a pretend writer and reviewer:** a full repair, a correction, a repair that still fails and cannot be approved, and Stop.
+- **Real repair on a throwaway copy (2026-11-20):** the request "mute and unmute instantly, in English and Russian". The engine with GPT-6.1 Terra changed 3 files and added a test in 8 minutes. All 118 tests passed, the copy started, and Claude Haiku 5.5 found no problems. Approve switched it in, and the new Falcon answered in 2 seconds. The cost was 12 US cents (writer 11.9, reviewer 0.4).
+- **The window shows the real cost** when the engine does the work. With Codex it shows the estimate.
+- **Not tested yet:** a repair with Codex (it needs an OpenAI key saved in Falcon), Approve on the owner's own Falcon, and the new mute command on real speakers.
 
 - **Task:** Connect Codex and the engine to the workshop, as section 9.1 tells. Add the cost estimate.
 - **Task:** Install Codex when it is necessary, with its Windows safety setting. Add its removal to the uninstaller.
