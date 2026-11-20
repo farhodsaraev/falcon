@@ -14,6 +14,7 @@ Copy-Item (Join-Path $root "src\app") (Join-Path $out "src\app") -Recurse
 Copy-Item (Join-Path $root "ui") $out -Recurse
 Copy-Item (Join-Path $root "falcon-agent") $out -Recurse
 Copy-Item (Join-Path $root "installer\install.ps1") $out
+Copy-Item (Join-Path $root "NOTICE") $out   # OpenClaw's licence travels with every copy
 New-Item -ItemType Directory -Force (Join-Path $out "demo") | Out-Null
 Get-ChildItem (Join-Path $root "demo") -File | Where-Object { $_.Name -notlike '~$*' } | Copy-Item -Destination (Join-Path $out "demo")
 '{ "name": "falcon", "version": "0.1.0", "private": true, "type": "module" }' | Set-Content (Join-Path $out "package.json") -Encoding ascii

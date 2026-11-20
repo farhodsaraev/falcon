@@ -68,17 +68,29 @@ $engineCmd = (Get-Command openclaw.cmd -ErrorAction SilentlyContinue).Source
 foreach ($dir in @((Join-Path $env:LOCALAPPDATA "Programs\nodejs"), (Join-Path $env:APPDATA "npm"), (Join-Path $env:USERPROFILE ".local\bin"))) {
   if (-not $engineCmd -and (Test-Path (Join-Path $dir "openclaw.cmd"))) { $engineCmd = Join-Path $dir "openclaw.cmd" }
 }
+# The engine keeps its files in Falcon's folder, reached through a hidden .openclaw link, under Falcon's
+# start-up name (src/app/enginehome.js); an older install has a real .openclaw folder under the engine's
+# own name. Tell the engine which, then remove both.
+$oldHome = Join-Path $env:USERPROFILE ".openclaw"
+$linked = (Test-Path $oldHome) -and ((Get-Item $oldHome -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
+foreach ($name in "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "OPENCLAW_PROFILE", "OPENCLAW_HOME") { Remove-Item "env:$name" -ErrorAction SilentlyContinue }
+if ($linked) { $env:OPENCLAW_WINDOWS_TASK_NAME = "Falcon Engine" } else { Remove-Item env:OPENCLAW_WINDOWS_TASK_NAME -ErrorAction SilentlyContinue }
 if ($engineCmd) {
   & $engineCmd uninstall --service --yes --non-interactive *> $null
 }
 # Stop whatever is still running of the engine, then remove its start-at-sign-in leftovers.
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-  $_.ProcessId -ne $PID -and $_.CommandLine -and ($_.CommandLine -like "*node_modules\openclaw*" -or $_.CommandLine -like "*\.openclaw\gateway.cmd*" -or $_.CommandLine -like "*OpenClaw Gateway.vbs*")
+  $_.ProcessId -ne $PID -and $_.CommandLine -and ($_.CommandLine -like "*node_modules\openclaw*" -or $_.CommandLine -like "*\.openclaw\gateway.cmd*" -or $_.CommandLine -like "*OpenClaw Gateway.vbs*" -or
+    $_.CommandLine -like "*\.falcon\engine\gateway.cmd*" -or $_.CommandLine -like "*Falcon Engine.vbs*")
 } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 $startup = [Environment]::GetFolderPath("Startup")
-Remove-Item (Join-Path $startup "OpenClaw Gateway.vbs") -Force -ErrorAction SilentlyContinue
-schtasks /delete /tn "OpenClaw Gateway" /f *> $null
+foreach ($name in "OpenClaw Gateway", "Falcon Engine") {
+  Remove-Item (Join-Path $startup "$name.vbs") -Force -ErrorAction SilentlyContinue
+  Remove-Item (Join-Path $startup "$name.cmd") -Force -ErrorAction SilentlyContinue
+  schtasks /delete /tn $name /f *> $null
+}
+foreach ($name in "OPENCLAW_STATE_DIR", "OPENCLAW_WINDOWS_TASK_NAME") { [Environment]::SetEnvironmentVariable($name, $null, "User") }
 if ($engineCmd) {
   $engineDir = Split-Path $engineCmd -Parent
   $npm = Join-Path $engineDir "npm.cmd"
@@ -120,6 +132,8 @@ if ((Test-Path $InstallDir) -and -not (Get-ChildItem $InstallDir -Force -ErrorAc
 
 # ---- 5. What Falcon knows, only if the user agreed ----
 if ($DeleteData) {
+  # After the move, .openclaw is only a link to Falcon's folder: remove the link itself, not through it.
+  if ($linked) { cmd /c rmdir "$oldHome" *> $null }
   foreach ($dir in @((Join-Path $env:USERPROFILE ".openclaw"), (Join-Path $env:USERPROFILE ".falcon"), (Join-Path $env:LOCALAPPDATA "openclaw"),
       (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Falcon Samples"))) {
     Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue

@@ -16,9 +16,18 @@ const page = await (await fetch(base + '/')).text();
 check('window page loads', page.includes('F A L C O N'));
 check('no token, no access', (await fetch(base + '/api/state')).status === 401);
 
-const state = await (await fetch(base + '/api/state', { headers: { 'X-Falcon-Token': server.token } })).json();
+const ask = async () => (await fetch(base + '/api/state', { headers: { 'X-Falcon-Token': server.token } })).json();
+let state = await ask();
 check('state answers', typeof state.configured === 'boolean', JSON.stringify(state));
-if (expectReady) check('engine is awake behind the window', state.configured && state.ready, JSON.stringify(state));
+if (expectReady) {
+  // Right after setup Falcon re-learns his skills (and may move the engine into his folder) and says
+  // "updating" meanwhile; the window waits for that, so the check does too: up to 5 minutes.
+  for (let i = 0; i < 60 && state.configured && !state.ready; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    state = await ask();
+  }
+  check('engine is awake behind the window', state.configured && state.ready, JSON.stringify(state));
+}
 
 await server.close();
 process.exit(failed ? 1 : 0);
