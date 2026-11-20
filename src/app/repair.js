@@ -115,11 +115,12 @@ Make the smallest change that does what he asked, in the style of the code aroun
 Add or update a test in the test folder that shows it works, and run the tests with: node --test test/
 Work only inside this folder. Do not install anything and do not use the network.
 Never put a password, key, token or code into any file.
-If what he asked needs a new tool for the AI, make it an add-on for the engine in its own folder under falcon-agent/addons/<short-name> (lowercase words joined by hyphens): an openclaw.plugin.json manifest that lists the tool in contracts.tools, a package.json whose openclaw.extensions names ./index.js, and an index.js that exports { id, name, description, register(api) } and calls api.registerTool({ name, description, parameters (a JSON schema), async execute(id, params) { return { content: [{ type: 'text', text }] }; } }). falcon-agent/engine-addon is a small working example of the folder and manifest. Add a test for the add-on's own logic in the test folder.${extra}
+If what he asked needs a new tool for the AI, make it an add-on for the engine in its own folder under falcon-agent/addons/<short-name> (lowercase words joined by hyphens): an openclaw.plugin.json manifest that lists the tool in contracts.tools, a package.json whose openclaw.extensions names ./index.js, and an index.js that exports { id, name, description, register(api) } and calls api.registerTool({ name, description, parameters (a JSON schema), async execute(id, params) { return { content: [{ type: 'text', text }] }; } }). falcon-agent/engine-addon is a small working example of the folder and manifest. Add a test for the add-on's own logic in the test folder. Falcon's setup already copies and loads every add-on in falcon-agent/addons by itself: do not change falcon-agent/install-falcon.mjs or its tests for an add-on.${extra}
 When you are done, reply with one or two plain sentences saying what you changed.`;
 
 const REVIEW_PROMPT = (request, diff) => `You review a change to Falcon, a personal assistant program, before his owner decides on it.
 The owner asked: "${request}"
+Facts about Falcon that the diff does not show: his setup copies and loads every add-on folder in falcon-agent/addons by itself, and puts every patch in falcon-agent/engine-patches into the engine by itself, at each start and after each engine update. Falcon's own checks already ran: all tests pass, this copy starts, and each add-on loads in the engine.
 The change, as a diff:
 ${diff.slice(0, 60000)}
 
