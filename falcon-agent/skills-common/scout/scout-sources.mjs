@@ -307,10 +307,7 @@ function canonicalProfile(url) {
 }
 function openRouterKey() {
   if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY.trim();
-  // The engine's folder: given by the engine itself, else Falcon's, else where older installs kept it.
-  const homes = [process.env.OPENCLAW_STATE_DIR, path.join(os.homedir(), '.falcon', 'engine'), path.join(os.homedir(), '.openclaw')].filter(Boolean);
-  const envFile = homes.map((dir) => path.join(dir, '.env')).find((file) => fs.existsSync(file)) || '';
-  try { return (fs.readFileSync(envFile, 'utf8').match(/^OPENROUTER_API_KEY=(.+)$/m) || [])[1]?.trim() || ''; } catch { return ''; }
+  try { return (fs.readFileSync(path.join(os.homedir(), '.openclaw', '.env'), 'utf8').match(/^OPENROUTER_API_KEY=(.+)$/m) || [])[1]?.trim() || ''; } catch { return ''; }
 }
 const latinWords = (n) => fold(n).split(/[^a-z0-9]+/).filter((w) => w.length > 2);
 // The address carries the name if it holds the surname (or for a company, its main word) in Latin letters.

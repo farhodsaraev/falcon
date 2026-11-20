@@ -213,7 +213,6 @@ jobs:
         shell: powershell
         run: |
           $env:Path = (Split-Path $env:FALCON_NODE) + ";" + $env:Path
-          $env:OPENCLAW_STATE_DIR = "$env:USERPROFILE\.falcon\engine"; $env:OPENCLAW_WINDOWS_TASK_NAME = "Falcon Engine"   # as Falcon runs the engine (src/app/enginehome.js)
           & ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard
           $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
           & $env:FALCON_NODE -e "import('file:///' + process.argv[1].replace(/\\/g,'/')).then(m => { const e = m.findEngine(); console.log('engine found by Falcon:', JSON.stringify(e)); process.exit(e ? 0 : 1); })" "$env:LOCALAPPDATA\Falcon\app\src\app\engine.js"
@@ -223,21 +222,13 @@ jobs:
         shell: powershell
         run: |
           $env:Path = (Split-Path $env:FALCON_NODE) + ";" + [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
-          $env:OPENCLAW_STATE_DIR = "$env:USERPROFILE\.falcon\engine"; $env:OPENCLAW_WINDOWS_TASK_NAME = "Falcon Engine"   # as Falcon runs the engine (src/app/enginehome.js)
           openclaw --version
           openclaw onboard --non-interactive --accept-risk --mode local --auth-choice skip --gateway-bind loopback --gateway-auth token --install-daemon --agent-name Falcon
           openclaw gateway start
           foreach ($i in 1..30) { openclaw gateway status *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 2 }
           & $env:FALCON_NODE "$env:LOCALAPPDATA\Falcon\app\falcon-agent\install-falcon.mjs"
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          Select-String -Path "$env:USERPROFILE\.falcon\engine\workspace\AGENTS.md" -Pattern "this is a Windows PC" | Select-Object -First 1
-          # Falcon's names, not the engine's: its folder and its start-up item.
-          $startup = [Environment]::GetFolderPath("Startup")
-          cmd /c "schtasks /query /tn ""Falcon Engine"" >nul 2>&1"; $task = $LASTEXITCODE -eq 0
-          if (-not ($task -or (Test-Path "$startup\Falcon Engine.vbs") -or (Test-Path "$startup\Falcon Engine.cmd"))) { throw "the engine's start-up item is not named Falcon Engine" }
-          cmd /c "schtasks /query /tn ""OpenClaw Gateway"" >nul 2>&1"; if ($LASTEXITCODE -eq 0 -or (Test-Path "$startup\OpenClaw Gateway.vbs")) { throw "a start-up item still carries the engine's name" }
-          if (Test-Path "$env:USERPROFILE\.openclaw") { throw "the engine made a .openclaw folder" }
-          "start-up item: Falcon Engine; engine folder: .falcon\engine"
+          Select-String -Path "$env:USERPROFILE\.openclaw\workspace\AGENTS.md" -Pattern "this is a Windows PC" | Select-Object -First 1
 
       - name: Window sees the engine
         shell: powershell
@@ -248,15 +239,15 @@ jobs:
       - name: Windows skill - find a file
         shell: powershell
         run: |
-          $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.falcon\engine\workspace\skills\files\find-files.ps1" -Query "invoice" -Ext "pdf"
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\find-files.ps1" -Query "invoice" -Ext "pdf"
           $out
           if ($out -notmatch '"ok":true' -or $out -notmatch 'Invoice') { exit 1 }
 
       - name: Windows skill - read what is inside the sample invoice
         shell: powershell
         run: |
-          $found = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.falcon\engine\workspace\skills\files\find-files.ps1" -Query "invoice" -Ext "pdf" | ConvertFrom-Json
-          $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.falcon\engine\workspace\skills\files\read-file.ps1" -Path $found.files[0].path
+          $found = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\find-files.ps1" -Query "invoice" -Ext "pdf" | ConvertFrom-Json
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\files\read-file.ps1" -Path $found.files[0].path
           $out
           if ($out -notmatch '"ok":true' -or $out -notmatch '4,800.00') { exit 1 }
 
@@ -264,7 +255,7 @@ jobs:
         shell: powershell
         run: |
           foreach ($t in "docx", "xlsx", "pptx") {
-            $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.falcon\engine\workspace\skills\documents\make-document.ps1" -Spec "$PWD\test\fixtures\documents\$t.json"
+            $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.openclaw\workspace\skills\documents\make-document.ps1" -Spec "$PWD\test\fixtures\documents\$t.json"
             $out
             if ($out -notmatch '"ok":true') { exit 1 }
             if (-not (Test-Path ($out | ConvertFrom-Json).path)) { exit 1 }
@@ -274,7 +265,6 @@ jobs:
         shell: powershell
         run: |
           $env:Path = (Split-Path $env:FALCON_NODE) + ";" + [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
-          $env:OPENCLAW_STATE_DIR = "$env:USERPROFILE\.falcon\engine"; $env:OPENCLAW_WINDOWS_TASK_NAME = "Falcon Engine"   # as Falcon runs the engine (src/app/enginehome.js)
           $status = openclaw gateway call computer.status --params '{\"probe\":false}' | Out-String
           $status
           if ($status -notmatch '"configured": true') { exit 1 }
@@ -315,14 +305,13 @@ jobs:
           "Node.js installed by Falcon: $nodeWasFalcons"
           &"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Falcon\app\installer\uninstall.ps1" -Quiet -DeleteData -NoMessage
           # The uninstaller hands over to a copy of itself and finishes in the background: wait for it.
-          foreach ($i in 1..60) { if (-not (Test-Path "$env:LOCALAPPDATA\Falcon\app") -and -not (Test-Path "$env:USERPROFILE\.falcon")) { break }; Start-Sleep 2 }
+          foreach ($i in 1..60) { if (-not (Test-Path "$env:LOCALAPPDATA\Falcon\app") -and -not (Test-Path "$env:USERPROFILE\.openclaw")) { break }; Start-Sleep 2 }
           Start-Sleep 4
           $problems = @()
           if (Test-Path "$env:LOCALAPPDATA\Falcon\app") { $problems += "app folder still there" }
           if (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Falcon") { $problems += "still listed in Settings > Apps" }
           foreach ($l in (Join-Path ([Environment]::GetFolderPath("Desktop")) "Falcon.lnk"), (Join-Path ([Environment]::GetFolderPath("Startup")) "Falcon.lnk"), (Join-Path ([Environment]::GetFolderPath("StartMenu")) "Programs\Falcon.lnk")) { if (Test-Path $l) { $problems += "shortcut still there: $l" } }
-          if ((Test-Path "$env:USERPROFILE\.openclaw") -or (Test-Path "$env:USERPROFILE\.falcon")) { $problems += "engine data still there" }
-          if ([Environment]::GetEnvironmentVariable("OPENCLAW_STATE_DIR", "User")) { $problems += "the engine folder setting is still there" }
+          if (Test-Path "$env:USERPROFILE\.openclaw") { $problems += "engine data still there" }
           $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
           if (Get-Command openclaw.cmd -ErrorAction SilentlyContinue) { $problems += "engine still installed: $((Get-Command openclaw.cmd).Source)" }
           if (Get-NetTCPConnection -LocalPort 18789 -State Listen -ErrorAction SilentlyContinue) { $problems += "engine still running" }

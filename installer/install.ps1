@@ -33,9 +33,6 @@ function Copy-Falcon([string]$from) {
   Copy-Item (Join-Path $from "falcon-agent") $app -Recurse -Force
   $icon = @("falcon.ico", "installer\falcon.ico") | ForEach-Object { Join-Path $from $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
   if ($icon) { Copy-Item $icon (Join-Path $app "falcon.ico") -Force }
-  # The licence of OpenClaw, the engine Falcon runs on, travels with every copy.
-  $notice = Join-Path $from "NOTICE"
-  if (Test-Path $notice) { Copy-Item $notice (Join-Path $app "NOTICE") -Force }
   # The uninstaller and the icon among the hidden icons
   New-Item -ItemType Directory -Force (Join-Path $app "installer") | Out-Null
   foreach ($file in "uninstall.ps1", "tray.ps1") {

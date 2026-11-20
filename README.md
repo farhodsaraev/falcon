@@ -48,6 +48,4 @@ On a Mac, the first time Falcon looks at the screen or controls Keynote, macOS a
 
 ## Credits
 
-Falcon runs on the open-source [OpenClaw](https://github.com/openclaw/openclaw) agent runtime, © 2026 OpenClaw Foundation, MIT licence. The installer sets it up for you, unchanged, from OpenClaw's official installer, so OpenClaw's own updates and fixes keep arriving.
-
-On Windows, Falcon keeps the engine under his own name: its settings, memory and keys live in `%USERPROFILE%\.falcon\engine`, and its start-at-sign-in item is called **Falcon Engine**. Both use settings OpenClaw itself provides (`OPENCLAW_STATE_DIR`, `OPENCLAW_WINDOWS_TASK_NAME`). An older install that kept the engine in `.openclaw` is moved there automatically when Falcon next starts, and a hidden link stays at the old place. OpenClaw's program files keep their own name, together with its licence. See [NOTICE](NOTICE) for the licence text.
+Falcon runs on the open-source [OpenClaw](https://github.com/openclaw/openclaw) agent runtime (MIT licence), which the installer sets up for you.

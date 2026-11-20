@@ -4,17 +4,15 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { engineEnv, engineHome } from './enginehome.js';
 
 const WINDOWS = process.platform === 'win32';
-// Where some installs put the engine's program (not its settings, which engineHome() finds).
 const ENGINE_HOME = path.join(os.homedir(), '.openclaw');
 const SAFE_ARG = /^[\w@:\\/.=,~+\- ]*$/;
 
 /** Port and access token of the local engine, or null when it has never been set up. */
 export function readGateway() {
   try {
-    const config = JSON.parse(fs.readFileSync(path.join(engineHome(), 'openclaw.json'), 'utf8'));
+    const config = JSON.parse(fs.readFileSync(path.join(ENGINE_HOME, 'openclaw.json'), 'utf8'));
     return { port: config.gateway?.port || 18789, token: config.gateway?.auth?.token || '' };
   } catch {
     return null;
@@ -88,9 +86,8 @@ export function engineDir(engine = findEngine()) {
   return fs.existsSync(path.join(beside, 'package.json')) ? beside : null;
 }
 
-// Every engine command runs with Falcon's folder and Falcon's names (see enginehome.js).
-function childEnv(extraDirs = [], base = engineEnv()) {
-  const env = { ...base, NODE_NO_WARNINGS: '1' };
+function childEnv(extraDirs = []) {
+  const env = { ...process.env, NODE_NO_WARNINGS: '1' };
   if (!WINDOWS) env.PATH = [...new Set([path.dirname(process.execPath), ...extraDirs, ...(env.PATH || '').split(':')])].join(':');
   return env;
 }
@@ -117,13 +114,13 @@ function collect(child, timeoutMs, input, onLine) {
 }
 
 /** Runs one engine command and resolves with its exit code and output. Never rejects. */
-export function runEngine(args, { input, timeoutMs = 180000, onLine, env } = {}) {
+export function runEngine(args, { input, timeoutMs = 180000, onLine } = {}) {
   const engine = findEngine();
   if (!engine) return Promise.resolve({ code: -1, out: 'The engine is not installed.' });
   if (engine.viaShell && !args.every((a) => SAFE_ARG.test(a))) {
     return Promise.resolve({ code: -1, out: 'Refused to run a command with unusual characters.' });
   }
-  const child = spawn(engine.command, [...engine.prefix, ...args], { windowsHide: true, env: childEnv(engine.pathDirs, env) });
+  const child = spawn(engine.command, [...engine.prefix, ...args], { windowsHide: true, env: childEnv(engine.pathDirs) });
   return collect(child, timeoutMs, input, onLine);
 }
 
@@ -131,7 +128,7 @@ export function runEngine(args, { input, timeoutMs = 180000, onLine, env } = {})
 export function installEngine({ timeoutMs = 1200000, onLine } = {}) {
   const child = WINDOWS
     ? spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-      '& ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard'], { windowsHide: true, env: childEnv() })
+      '& ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard'], { windowsHide: true })
     : spawn('/bin/bash', ['-c', 'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'], { env: childEnv() });
   return collect(child, timeoutMs, undefined, onLine);
 }
