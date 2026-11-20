@@ -16,6 +16,16 @@ const APPROVALS = '{ "version": 1, "defaults": { "security": "allowlist", "ask":
 
 const read = (file) => fs.readFileSync(file, 'utf8');
 
+// The engine's folder: Falcon's own (~/.falcon/engine), or ~/.openclaw on a computer set up before it moved
+// (src/app/enginehome.js moves it).
+function engineHome() {
+  if (process.env.OPENCLAW_STATE_DIR) return process.env.OPENCLAW_STATE_DIR;
+  const fresh = path.join(os.homedir(), '.falcon', 'engine');
+  const old = path.join(os.homedir(), '.openclaw');
+  try { if (!fs.existsSync(fresh) && fs.lstatSync(old).isDirectory()) return old; } catch { /* none yet */ }
+  return fresh;
+}
+
 // The Node.js path written into Falcon's commands must survive updates. A package manager's real
 // path carries the version number (".../node@24/24.22.3/bin/node"), so prefer the stable link to it.
 function stableNode() {
@@ -60,8 +70,8 @@ export async function setupSearch({
   step,
   // Optional: collect plain settings to apply together with Falcon's others, instead of one command each.
   set = (what, key, value) => step(what, ['config', 'set', key, String(value)]),
-  envFile = path.join(os.homedir(), '.openclaw', '.env'),
-  configFile = path.join(os.homedir(), '.openclaw', 'openclaw.json'),
+  envFile = path.join(engineHome(), '.env'),
+  configFile = path.join(engineHome(), 'openclaw.json'),
 }) {
   let env = '';
   try { env = read(envFile); } catch { /* no keys saved */ }
@@ -92,11 +102,11 @@ export async function setupSearch({
  * @param {Function} [options.log]
  */
 export async function installFalcon({
-  workspace = path.join(os.homedir(), '.openclaw', 'workspace'),
+  workspace = path.join(engineHome(), 'workspace'),
   skipSettings = false,
   profileFile = path.join(os.homedir(), '.falcon', 'profile.json'),
-  envFile = path.join(os.homedir(), '.openclaw', '.env'),
-  configFile = path.join(os.homedir(), '.openclaw', 'openclaw.json'),
+  envFile = path.join(engineHome(), '.env'),
+  configFile = path.join(engineHome(), 'openclaw.json'),
   runEngine = defaultRunEngine,
   retryDelayMs = 3000,
   log = console.log,

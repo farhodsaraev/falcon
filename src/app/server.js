@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
+import { engineHome, moveEngineHome } from './enginehome.js';
 import { createVoiceKeyStore } from './voicekey.js';
 import { fastLane } from './fastlane.js';
 import { createDirectLine, stepText, stepSkill } from './directline.js';
@@ -208,14 +209,17 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   const APPROVAL_POLL_MS = engine.approvalPollMs ?? 8000;
   const UPDATE_WAKE_MS = engine.updateWakeMs ?? 2000;
   // `engine` lets tests replace the real engine with stand-ins.
+  // The engine's files live in Falcon's folder (see enginehome.js); tell the pack where.
+  const enginePaths = () => ({ workspace: path.join(engineHome(), 'workspace'), envFile: path.join(engineHome(), '.env'), configFile: path.join(engineHome(), 'openclaw.json') });
   const installFalcon = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
-    return pack.installFalcon(options);
+    return pack.installFalcon({ ...enginePaths(), ...options });
   };
-  const workspaceDir = () => path.join(os.homedir(), '.openclaw', 'workspace');
+  const workspaceDir = () => path.join(engineHome(), 'workspace');
   const setupSearch = async (options) => {
     const pack = await import(pathToFileURL(path.join(PACK_DIR, 'install-falcon.mjs')).href);
-    return pack.setupSearch(options);
+    const { envFile, configFile } = enginePaths();
+    return pack.setupSearch({ envFile, configFile, ...options });
   };
   const scoutProgressFile = () => path.join(os.homedir(), '.falcon', 'scout-progress.json');
   const scoutFolder = () => {
@@ -228,7 +232,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     child.on('error', () => {});
     child.unref();
   };
-  const envFile = () => path.join(os.homedir(), '.openclaw', '.env');
+  const envFile = () => path.join(engineHome(), '.env');
   const api = { fastLane, packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   // What an update needs to know and do; stand-ins replace these in checks.
   if (!api.appInfo) {
@@ -264,6 +268,15 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     } catch { /* the engine keeps its own wording; nothing else depends on this */ }
   };
   ownPairingText();
+  // An engine set up before Falcon had his own folder is moved into it, once (see enginehome.js). The
+  // window waits on its opening screen meanwhile. Only with the real engine: stand-ins have nothing to move.
+  const moveHome = engine.moveEngineHome ?? (Object.keys(engine).length ? null : moveEngineHome);
+  let moving = moveHome
+    ? moveHome({ runEngine: api.runEngine, engineReady: () => api.engineReady() })
+      // His skills are approved by their full path, which just changed: teach them again at the next chance.
+      .then((result) => { if (result === 'moved') { try { fs.rmSync(stampFile(), { force: true }); } catch { /* refreshed later */ } } })
+      .catch(() => {}).finally(() => { moving = null; })
+    : null;
   const token = crypto.randomBytes(24).toString('hex');
   const clients = new Set();
   const shownApprovals = new Set();
@@ -280,7 +293,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   let refreshing = false;
   let refreshChecked = false;
   let updateRunning = false;
-  const busy = () => setupRunning || refreshing || updateRunning || chatsInFlight > 0;
+  const busy = () => Boolean(moving) || setupRunning || refreshing || updateRunning || chatsInFlight > 0;
 
   // ---- Out of credit, and back again ----
   // Seen on a real PC: once the OpenRouter account ran dry, the engine marked the key "disabled: billing"
@@ -719,6 +732,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
 
   const routes = {
     'GET /api/state': async () => {
+      if (moving) return { configured: true, ready: false, updating: true };
       const configured = Boolean(api.readGateway());
       let ready = configured && await api.engineReady();
       // Set up before but asleep (for example after a restart): wake it quietly, once. The engine can take

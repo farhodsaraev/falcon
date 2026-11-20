@@ -7,6 +7,8 @@ import path from 'node:path';
 export class DirectLineUnavailable extends Error {}
 
 const CONNECT_TIMEOUT_MS = 8000;
+// The engine's own files (its notes, settings): in Falcon's folder, or where older installs kept them.
+const ENGINE_FILES = /[\\/](?:\.openclaw|\.falcon[\\/]engine)[\\/]/;
 
 /**
  * @param {object} options
@@ -216,12 +218,12 @@ export function stepText({ name, args = {}, meta = '' }, russian = false) {
     case 'browser': return host(args.url || args.targetUrl) ? say(`Working in the browser: ${host(args.url || args.targetUrl)}`, `Работаю в браузере: ${host(args.url || args.targetUrl)}`) : say('Working in the browser', 'Работаю в браузере');
     case 'read': {
       const p = String(args.path || args.file_path || '');
-      if (/[\\/]\.openclaw[\\/]/.test(p)) return say('Checking my notes', 'Сверяюсь с заметками');
+      if (ENGINE_FILES.test(p)) return say('Checking my notes', 'Сверяюсь с заметками');
       return file(p) ? say(`Reading ${short(file(p), 40)}`, `Читаю ${short(file(p), 40)}`) : say('Reading a file', 'Читаю файл');
     }
     case 'write': case 'edit': case 'apply_patch': {
       const p = String(args.path || args.file_path || '');
-      if (/[\\/]\.openclaw[\\/]/.test(p)) return say('Preparing the details', 'Готовлю данные');
+      if (ENGINE_FILES.test(p)) return say('Preparing the details', 'Готовлю данные');
       return say('Writing a file', 'Записываю файл');
     }
     case 'memory_search': case 'memory_get': return say('Checking my memory', 'Вспоминаю');
@@ -248,7 +250,7 @@ export function stepSkill({ name, args = {}, meta = '' }) {
       return '';
     case 'web_search': case 'web_fetch': case 'browser': return 'browser';
     case 'read': case 'write': case 'edit': case 'apply_patch':
-      return /[\\/]\.openclaw[\\/]/.test(String(args.path || args.file_path || (name === 'read' ? meta : '') || '')) ? '' : 'files';
+      return ENGINE_FILES.test(String(args.path || args.file_path || (name === 'read' ? meta : '') || '')) ? '' : 'files';
     case 'memory_search': case 'memory_get': return 'memory';
     case 'image': case 'view_image': case 'computer': return 'screen';
     case 'image_generate': case 'video_generate': case 'music_generate': return 'pictures';
