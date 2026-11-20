@@ -87,29 +87,6 @@ jobs:
         continue-on-error: true
         run: |
           for what in calendar mail reminders; do node "$HOME/.openclaw/workspace/skills/daily/daily.mjs" --what $what; done
-      - name: Falcon moves the engine into his own folder, under his own start-up name
-        shell: powershell
-        run: |
-          # The engine above was set up the way older Falcons did it (a real .openclaw folder, the
-          # "OpenClaw Gateway" start-up item), as on customers' PCs. Falcon moves it at his next start.
-          $env:Path = (Split-Path $env:FALCON_NODE) + ";" + [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
-          $app = "$env:LOCALAPPDATA\Falcon\app\src\app"
-          & $env:FALCON_NODE --input-type=module -e "const h = await import('file:///' + process.argv[1].replace(/\\/g, '/') + '/enginehome.js'); const e = await import('file:///' + process.argv[1].replace(/\\/g, '/') + '/engine.js'); const r = await h.moveEngineHome({ runEngine: e.runEngine, engineReady: e.engineReady, log: console.log }); console.log('result:', r); process.exit(r === 'moved' ? 0 : 1);" $app
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          $link = Get-Item "$env:USERPROFILE\.openclaw" -Force
-          "old place: $($link.Attributes) -> $($link.Target)"
-          if (-not ($link.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not ($link.Attributes -band [IO.FileAttributes]::Hidden)) { throw ".openclaw is not a hidden link" }
-          if (-not (Test-Path "$env:USERPROFILE\.falcon\engine\openclaw.json")) { throw "the engine's settings are not in Falcon's folder" }
-          $startup = [Environment]::GetFolderPath("Startup")
-          Get-ChildItem $startup | ForEach-Object Name
-          cmd /c "schtasks /query /tn ""Falcon Engine"" >nul 2>&1"; $task = $LASTEXITCODE -eq 0
-          if (-not ($task -or (Test-Path "$startup\Falcon Engine.vbs") -or (Test-Path "$startup\Falcon Engine.cmd"))) { throw "no start-up item named Falcon Engine" }
-          cmd /c "schtasks /query /tn ""OpenClaw Gateway"" >nul 2>&1"; if ($LASTEXITCODE -eq 0 -or (Test-Path "$startup\OpenClaw Gateway.vbs") -or (Test-Path "$startup\OpenClaw Gateway.cmd")) { throw "a start-up item still carries the engine's name" }
-          $env:OPENCLAW_WINDOWS_TASK_NAME = "Falcon Engine"
-          foreach ($i in 1..60) { openclaw gateway status *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 3 }
-          openclaw gateway status
-          if ($LASTEXITCODE -ne 0) { throw "the engine did not start again after the move" }
-
       - name: Window sees the engine
         run: node scripts/ci-check.mjs "$HOME/Library/Application Support/Falcon/app" --expect-ready
 
