@@ -73,6 +73,15 @@ function rememberForUser() {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Paths inside the engine's settings file that name one folder are made to name another. */
+function repointSettings(file, from, to) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return; }
+  const escaped = (p) => JSON.stringify(p).slice(1, -1);
+  const next = text.split(escaped(from)).join(escaped(to));
+  if (next !== text) fs.writeFileSync(file, next);
+}
+
 /**
  * Moves an engine set up before this change from a real ~/.openclaw folder into ~/.falcon/engine, leaves
  * a hidden link at ~/.openclaw, and renames its start-up item from "OpenClaw Gateway" to "Falcon Engine".
@@ -97,11 +106,20 @@ export async function moveEngineHome({ runEngine, engineReady = async () => true
     try { script = fs.readFileSync(path.join(to, 'gateway.cmd'), 'utf8'); } catch { /* none */ }
     if (!/OPENCLAW_STATE_DIR=/i.test(script)) return 'none';
     log('Updating the engine\'s start-up item');
-    const made = await runEngine(['gateway', 'install', '--force'], { env: env(), timeoutMs: 300000 });
-    if (made.code !== 0) return 'failed';
-    await runEngine(['gateway', 'restart'], { env: env(), timeoutMs: 180000 });
+    // The engine refuses to remake its start-up item while it runs ("state database is busy", seen on a
+    // real PC), so stop it first, as the move itself does, and always start it again afterwards.
+    await runEngine(['gateway', 'stop', '--force'], { env: env(), timeoutMs: 120000 });
+    // That first version also wrote Falcon's folder into the engine's settings; give them back the
+    // standard path, which the rest of Falcon's setup names the workspace by.
+    repointSettings(path.join(to, 'openclaw.json'), to, from);
+    let made = { code: -1 };
+    for (let i = 0; i < 3 && made.code !== 0; i++) {
+      if (i) await wait(settleMs * 3);
+      made = await runEngine(['gateway', 'install', '--force'], { env: env(), timeoutMs: 300000 });
+    }
+    await runEngine(['gateway', 'start'], { env: env(), timeoutMs: 120000 });
     await waitAwake();
-    return 'tidied';
+    return made.code === 0 ? 'tidied' : 'failed';
   }
   if (!isRealFolder(from)) return 'none';    // no engine yet: setup prepares the folder (prepareEngineHome)
   if (fs.existsSync(to) && fs.readdirSync(to).length) return 'none';    // something already there: leave both alone
@@ -109,7 +127,7 @@ export async function moveEngineHome({ runEngine, engineReady = async () => true
   log('Moving the engine into Falcon\'s folder');
   const before = { env: engineEnv(process.env, home, windows) };    // not moved yet: the engine's own name
   // Take down the old start-up item first: it would start the engine again from the old place.
-  await runEngine(['gateway', 'stop'], { ...before, timeoutMs: 120000 });
+  await runEngine(['gateway', 'stop', '--force'], { ...before, timeoutMs: 120000 });
   await runEngine(['gateway', 'uninstall'], { ...before, timeoutMs: 120000 });
   try { fs.rmdirSync(to); } catch { /* not there */ }
   fs.mkdirSync(path.dirname(to), { recursive: true });

@@ -212,7 +212,13 @@ jobs:
         shell: powershell
         run: |
           $env:Path = (Split-Path $env:FALCON_NODE) + ";" + $env:Path
-          & ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard
+          # The engine version Falcon was tested with, as Falcon's own setup installs it (package.json, "falconEngine").
+          $tested = (Get-Content package.json -Raw | ConvertFrom-Json).falconEngine
+          "engine version: $tested"
+          & ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard -Tag $tested
+          $installed = (Get-Content "$env:APPDATA\npm\node_modules\openclaw\package.json", "$env:LOCALAPPDATA\Programs\nodejs\node_modules\openclaw\package.json", "C:\npm\prefix\node_modules\openclaw\package.json" -Raw -ErrorAction SilentlyContinue | Select-Object -First 1 | ConvertFrom-Json).version
+          "installed engine: $installed"
+          if ($installed -and $installed -ne $tested) { throw "the engine installed is $installed, not the tested $tested" }
           $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $env:Path
           & $env:FALCON_NODE -e "import('file:///' + process.argv[1].replace(/\\/g,'/')).then(m => { const e = m.findEngine(); console.log('engine found by Falcon:', JSON.stringify(e)); process.exit(e ? 0 : 1); })" "$env:LOCALAPPDATA\Falcon\app\src\app\engine.js"
           if ($LASTEXITCODE -ne 0) { exit 1 }

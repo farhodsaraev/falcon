@@ -64,7 +64,7 @@ test('moving: the old start-up item goes, the folder moves whole behind a link, 
   assert.ok(isLink(standard(home)));
   assert.equal(fs.readFileSync(path.join(falconEngineDir(home), '.env'), 'utf8'), 'OPENROUTER_API_KEY=sk-test\n', 'keys kept');
   assert.equal(fs.readFileSync(path.join(standard(home), '.env'), 'utf8'), 'OPENROUTER_API_KEY=sk-test\n', 'old paths still open');
-  assert.deepEqual(calls.map((c) => c.args), ['gateway stop', 'gateway uninstall', 'gateway install --force', 'gateway start']);
+  assert.deepEqual(calls.map((c) => c.args), ['gateway stop --force', 'gateway uninstall', 'gateway install --force', 'gateway start']);
   assert.equal(calls[1].env.OPENCLAW_WINDOWS_TASK_NAME, undefined, 'the old item is taken down under its old name');
   assert.equal(calls[2].env.OPENCLAW_WINDOWS_TASK_NAME, 'Falcon Engine');
   assert.ok(calls.every((c) => !c.env.OPENCLAW_STATE_DIR));
@@ -84,14 +84,28 @@ test('moving: if the new start-up item cannot be made, everything is put back as
     ['gateway install --force (old name)', 'gateway start (old name)']);
 });
 
-test('a computer moved by the first version: its start-up item is made again without the folder setting', async () => {
+test('a computer moved by the first version: stopped, its settings given the standard path, its start-up item made again', async () => {
+  const home = tempHome();
+  prepareEngineHome(home, true);
+  const engineDir = falconEngineDir(home);
+  fs.writeFileSync(path.join(engineDir, 'gateway.cmd'), `set "OPENCLAW_STATE_DIR=${engineDir}"\r\n`);
+  const named = (dir) => JSON.stringify({ agents: { defaults: { workspace: path.join(dir, 'workspace') } } });
+  fs.writeFileSync(path.join(engineDir, 'openclaw.json'), named(engineDir));
+  const { calls, runEngine } = recorder();
+  assert.equal(await moveEngineHome({ runEngine, home, ...quiet }), 'tidied');
+  // The engine refuses to remake its start-up item while it runs, so it is stopped first.
+  assert.deepEqual(calls.map((c) => c.args), ['gateway stop --force', 'gateway install --force', 'gateway start']);
+  assert.ok(calls.every((c) => c.env.OPENCLAW_WINDOWS_TASK_NAME === 'Falcon Engine' && !c.env.OPENCLAW_STATE_DIR));
+  assert.equal(fs.readFileSync(path.join(engineDir, 'openclaw.json'), 'utf8'), named(standard(home)));
+});
+
+test('if the start-up item cannot be remade, it is tried again, and the engine is started again regardless', async () => {
   const home = tempHome();
   prepareEngineHome(home, true);
   fs.writeFileSync(path.join(falconEngineDir(home), 'gateway.cmd'), `set "OPENCLAW_STATE_DIR=${falconEngineDir(home)}"\r\n`);
-  const { calls, runEngine } = recorder();
-  assert.equal(await moveEngineHome({ runEngine, home, ...quiet }), 'tidied');
-  assert.deepEqual(calls.map((c) => c.args), ['gateway install --force', 'gateway restart']);
-  assert.ok(calls.every((c) => c.env.OPENCLAW_WINDOWS_TASK_NAME === 'Falcon Engine' && !c.env.OPENCLAW_STATE_DIR));
+  const { calls, runEngine } = recorder((args) => args[1] === 'install');
+  assert.equal(await moveEngineHome({ runEngine, home, ...quiet }), 'failed');
+  assert.deepEqual(calls.map((c) => c.args), ['gateway stop --force', 'gateway install --force', 'gateway install --force', 'gateway install --force', 'gateway start']);
 });
 
 test('nothing to move on a new computer, or on a Mac', async () => {

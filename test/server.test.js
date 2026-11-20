@@ -426,3 +426,49 @@ test('the window can open only a file Falcon himself offered', async () => {
     assert.equal((await (await post('/api/file/open', { path: 'C:\Windows\System32\cmd.exe' })).json()).ok, false);
   } finally { await s.close(); }
 });
+
+test('setup on a new PC installs the engine version this Falcon was tested with, not simply the newest', async () => {
+  const asked = [];
+  let installed = false;
+  const s = await startServer({ engine: { ...engine,
+    findEngine: () => (installed ? { command: 'node', prefix: [] } : null),
+    installEngine: async (options) => { asked.push(options.version); installed = true; return { code: 0, out: '' }; },
+    appInfo: () => ({ version: '0.3.0', falconEngine: '2026.11.5' }) } });
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.port}/api/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token },
+      body: JSON.stringify({ key: 'sk-or-v1-12345678901234567890', accepted: true }) }).then((x) => x.json());
+    assert.equal(r.ok, true);
+    assert.deepEqual(asked, ['2026.11.5']);
+  } finally { await s.close(); }
+});
+
+test('Settings > Learned: lists what Falcon learned, removes it and brings it back, by name only', async () => {
+  const asked = [];
+  const listed = {
+    agentId: 'falcon', mode: 'off', root: 'x',
+    skills: [{ name: 'dollar-rate', description: 'Tell the user the dollar rate in Tashkent.', files: ['SKILL.md', 'scripts/rate.ps1'], sizeBytes: 900, updatedAtMs: 1795183852095 }],
+    archived: [{ name: 'old-way', versionId: 'v1', archivedAtMs: 1795000000000 }, { name: 'old-way', versionId: 'v2' }, { name: 'dollar-rate', versionId: 'v0' }],
+    drafts: [],
+  };
+  const s = await startServer({ engine: { ...engine, runEngine: async (args) => {
+    asked.push(args.join(' '));
+    if (args[2] === 'list') return { code: 0, out: `Gateway is not running.\n${JSON.stringify(listed)}` };
+    return { code: 0, out: '{}' };
+  } } });
+  const post = (route, body) => fetch(`http://127.0.0.1:${s.port}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify(body) }).then((x) => x.json());
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.port}/api/learned`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.learned.map((l) => [l.name, l.files]), [['dollar-rate', 2]]);
+    assert.match(r.learned[0].about, /dollar rate/);
+    assert.deepEqual(r.removed.map((l) => l.name), ['old-way'], 'a removed one is shown once, and not when it is live again');
+    assert.equal((await post('/api/learned/remove', { name: 'dollar-rate' })).ok, true);
+    assert.equal((await post('/api/learned/restore', { name: 'old-way' })).ok, true);
+    assert.ok(asked.some((a) => a.startsWith('skills workshop archive dollar-rate --reason')));
+    assert.ok(asked.includes('skills workshop restore old-way --json'));
+    for (const bad of ['../etc', 'Dollar Rate', 'a;b', '', '-x']) {
+      assert.equal((await post('/api/learned/remove', { name: bad })).ok, false, `refused: ${bad}`);
+    }
+    assert.equal(asked.filter((a) => a.startsWith('skills workshop archive')).length, 1, 'nothing odd reached the engine');
+  } finally { await s.close(); }
+});

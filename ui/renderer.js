@@ -53,8 +53,52 @@ function showTab(name) {
     tab.setAttribute('aria-selected', String(on));
   }
   for (const body of document.querySelectorAll('.tab-body')) body.hidden = body.dataset.tab !== name;
+  if (name === 'learned') refreshLearned();
 }
 for (const tab of document.querySelectorAll('.tab')) tab.addEventListener('click', () => showTab(tab.dataset.tab));
+
+// ---- What Falcon learned (Settings > Learned) ----
+// Asking the engine takes a few seconds, so the list is read only when this tab is opened.
+const learnedTitle = (name) => name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+const learnedDate = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+function learnedRow(item, removed) {
+  const row = document.createElement('li');
+  const text = document.createElement('div');
+  const title = document.createElement('b');
+  title.textContent = learnedTitle(item.name);
+  text.append(title);
+  const about = document.createElement('small');
+  about.textContent = removed ? (item.when ? `Removed on ${learnedDate(item.when)}` : 'Removed') : [item.about, item.when ? `Learned or changed on ${learnedDate(item.when)}.` : ''].filter(Boolean).join(' ');
+  text.append(about);
+  const button = document.createElement('button');
+  button.className = 'ghost small-btn';
+  button.textContent = removed ? 'Bring back' : 'Remove';
+  button.setAttribute('aria-label', `${button.textContent}: ${learnedTitle(item.name)}`);
+  button.addEventListener('click', () => withButton(button, async () => {
+    try {
+      const r = removed ? await window.falcon.restoreLearned(item.name) : await window.falcon.removeLearned(item.name);
+      if (!r.ok) return note('learned-message', r.error, 'bad');
+      note('learned-message', removed ? `${learnedTitle(item.name)} is back.` : `${learnedTitle(item.name)} is removed. You can bring it back below.`, 'ok');
+      refreshLearned(false);
+    } catch { note('learned-message', 'Falcon could not be reached. Please try again.', 'bad'); }
+  }));
+  row.append(text, button);
+  return row;
+}
+let learnedReading = 0;
+async function refreshLearned(clearMessage = true) {
+  const mine = ++learnedReading;
+  if (clearMessage) note('learned-message', 'Looking', 'working');
+  let r;
+  try { r = await window.falcon.learned(); } catch { r = { ok: false, error: 'Falcon could not be reached.' }; }
+  if (mine !== learnedReading) return;
+  if (!r.ok) return note('learned-message', r.error, 'bad');
+  if (clearMessage) note('learned-message', '');
+  $('learned-list').replaceChildren(...r.learned.map((item) => learnedRow(item, false)));
+  $('removed-list').replaceChildren(...r.removed.map((item) => learnedRow(item, true)));
+  $('learned-empty').hidden = r.learned.length > 0;
+  $('removed-title').hidden = r.removed.length === 0;
+}
 $('about-intro').addEventListener('click', () => showScreen('intro'));
 
 // ---- Update: one button for Falcon and the engine he runs on ----

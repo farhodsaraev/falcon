@@ -2,7 +2,7 @@
 
 This plan obeys the ASD-STE100 rules: short sentences, active voice, one meaning for each word, and one instruction for each sentence.
 
-Status: plan only. No stage is started.
+Status: Stage 0 is complete. No other stage is started.
 
 ## 1. Purpose
 
@@ -29,9 +29,9 @@ The owner tells Falcon about a fault or asks for a new function. Falcon reads hi
 | Branch | A separate line of changes in the local history. |
 | Workshop | A full, separate copy of Falcon on the same PC, on its own branch. |
 | Workshop window | A second Falcon window that shows the work in the workshop while it occurs. |
-| Coding tool | A program that writes code: OpenCode, Codex, or the engine. |
+| Coding tool | A program that writes code. Falcon uses 2: Codex, and the coding part of the engine. |
 | Writer | The coding tool that makes a change. |
-| Reviewer | A different coding tool that examines the change. |
+| Reviewer | A second examination of the change, with a different AI model from the writer. |
 | Personal change | A change that stays on one PC only. |
 | Release | A new version of Falcon that the maker publishes. |
 
@@ -119,24 +119,68 @@ The window has these controls:
 - **Approve** and **Refuse:** shown when the work is complete.
 - **Show details:** shows the full output of the coding tool. This control is for the maker.
 
-How it operates: the coding tool sends its work to Falcon as a sequence of events. Falcon reads the events and shows them in the window. Stage 0 must make sure that each coding tool can send these events on Windows.
+How it operates: the coding tool sends its work to Falcon as a sequence of events. Falcon reads the events and shows them in the window. Codex sends these events on Windows (Stage 0 showed this). For the engine, Falcon uses his direct line to the engine, which shows each step in the main window today.
 
-## 9. Work stages
+## 9. Coding tools and AI keys
 
-### Stage 0: Trial of the coding tools
+### 9.1 The coding tools
 
-- **Task:** Give the same 3 real Falcon faults to OpenCode, to Codex, and to the engine. Do the trial on Windows.
-- **Measure:** the number of correct repairs, the time, and the cost for each tool.
-- **Examine:** if each tool can send its work as events for the workshop window.
-- **Result:** the best writer and the best reviewer.
-- **Time:** half a day. **Cost:** 2 to 5 US dollars of AI credit.
+| Condition | Writer |
+|---|---|
+| The owner has an OpenAI key. | Codex. It is the fastest tool, and it does its work in a safety box. |
+| The owner has only an OpenRouter key. | The coding part of the engine. It is part of OpenClaw, thus no installation is necessary. |
 
-### Stage 1: Falcon makes new skills
+- Falcon installs Codex only when the owner sets the coding job to an OpenAI key.
+- The reviewer is the engine with a different AI model from the writer.
+- OpenCode is not used. It repaired all faults in the trial, but it adds a download of 213 MB and no new function.
+- Codex with an OpenRouter key is not tested. Do this test before you permit it.
+
+### 9.2 The screen "Which AI does what"
+
+The owner selects a key and a model for each job. Each action of Falcon uses the key and the model of its job.
+
+| Job | Key | Model |
+|---|---|---|
+| Everyday work | OpenAI, Anthropic, or OpenRouter | The owner selects from the models that the key gives. |
+| Voice | OpenAI only | Fixed. Voice uses the OpenAI service. |
+| Coding and self-repair | OpenAI or OpenRouter | A stronger model. The screen shows a price note. |
+
+- At the first setup, the owner enters 1 key. Falcon fills each job that this key can do.
+- A second key is optional.
+- The same screen is in Settings. The owner can change each job there.
+- Falcon's window shows the AI that is in use for the current action.
+
+## 10. Work stages
+
+### Stage 0: Trial of the coding tools (complete)
+
+The trial was done on Windows on 2026-11-20. Each tool got the same 3 past Falcon faults in a separate copy of the code. The tests that were held back were the judge. All tools used the same AI model (GPT-6.1 Terra) with an OpenAI key.
+
+| | Codex | OpenCode | Engine |
+|---|---|---|---|
+| Faults repaired | 3 of 3 | 3 of 3 | 3 of 3 |
+| Added a test | each time | each time | each time |
+| Time for each repair | 1 to 3.5 minutes | 2.5 to 3.5 minutes | approximately 5 minutes |
+| Safety box | yes | no | no |
+| Sends each step as an event | yes | yes | no, only the result |
+| Installation | necessary | necessary, 213 MB | not necessary |
+
+- **Cost:** approximately 1 US dollar for all 9 repairs. This is an estimate. OpenCode reported 0.26 US dollars for its 3 repairs.
+- **Windows faults found:** The OpenCode installation failed until its Windows part was installed by name. Codex needs its Windows safety setting and its own key variable. The engine needs a new model list in a new settings folder.
+- **Limits of the trial:** The faults were small. Only an OpenAI key was tested.
+
+### Stage 1: Falcon makes new skills (built and tested on 2026-11-20)
 
 - **Task:** Falcon writes a new skill, tests it, and keeps it.
 - **Risk:** low. A bad skill stops only that skill.
 - **Done when:** the owner asks for a new skill, and the skill operates in the same conversation.
 - **Time:** 1 day.
+- **Method:** Falcon uses the learned-skills function of the engine. The engine keeps the previous version before each change. Thus each change can be undone.
+- Falcon sets the background learning of the engine to off. Falcon learns only when the owner asks in his window. The rules of Falcon tell him to confirm first, do the task once, and then keep the method.
+- Settings has a tab "Learned". It shows each learned skill. The owner can remove a skill and bring it back.
+- A program in a learned skill runs only after the owner approves it in the window.
+- **Real test:** the owner asked Falcon to learn the official dollar rate. Falcon asked first, did the task, and gave the correct rate. At the first attempt he said that the tool was not available. He did not try it. At the second attempt he saved the method correctly. The rules now tell him that the tool is always available in his window.
+- **Not tested yet:** a learned skill in a new conversation, and a learned skill that has a program.
 
 ### Stage 2: Git and the workshop
 
@@ -147,9 +191,17 @@ How it operates: the coding tool sends its work to Falcon as a sequence of event
 - **Done when:** a change that breaks the start is installed for test, and Falcon goes back in 60 seconds.
 - **Time:** 4 to 5 days.
 
+### Stage 2B: The screen "Which AI does what"
+
+- **Task:** Make the screen as section 9.2 tells, in the first setup and in Settings.
+- **Task:** Make each action use the key and the model of its job.
+- **Done when:** a conversation, a voice request, and a repair each use the AI that the owner selected for that job.
+- **Time:** 2 days.
+
 ### Stage 3: Fault repair with a writer and a reviewer
 
-- **Task:** Connect the 2 selected coding tools to the workshop. Add the cost estimate.
+- **Task:** Connect Codex and the engine to the workshop, as section 9.1 tells. Add the cost estimate.
+- **Task:** Install Codex when it is necessary, with its Windows safety setting. Add its removal to the uninstaller.
 - **Task:** Make the workshop window as section 8 tells.
 - **Done when:** Falcon repairs 3 known faults from a plain request, and all tests pass.
 - **Done when:** the owner sees each step and each changed file in the workshop window, and the Stop control operates.
@@ -183,10 +235,10 @@ How it operates: the coding tool sends its work to Falcon as a sequence of event
 
 ### Stage 7 (optional): The race for difficult faults
 
-- **Task:** 2 or 3 coding tools repair the same fault in separate workshops. Falcon keeps the repair that passes all tests with the smallest change.
+- **Task:** Codex and the engine repair the same fault in separate workshops, or one tool does it with 2 different AI models. Falcon keeps the repair that passes all tests with the smallest change.
 - **Time:** 1 day.
 
-## 10. Cost for the user
+## 11. Cost for the user
 
 | Method | Cost for each repair |
 |---|---|
@@ -196,13 +248,13 @@ How it operates: the coding tool sends its work to Falcon as a sequence of event
 
 Repairs use a stronger AI model than daily work. Daily work continues to use the low-cost model.
 
-## 11. Sequence and total time
+## 12. Sequence and total time
 
-Do the stages in this sequence: 0, 1, 2, 3, 4, 5, 6. Stage 7 is optional. The total time is approximately 17 to 24 work days.
+Do the stages in this sequence: 1, 2, 2B, 3, 4, 5, 6. Stage 7 is optional. The total time is approximately 19 to 26 work days.
 
-## 12. Decisions that the maker must make
+## 13. Decisions that the maker must make
 
-1. Approve the trial in Stage 0 and its cost of 2 to 5 US dollars.
+1. Approve a test of Codex with an OpenRouter key. The cost is approximately 0.10 to 0.20 US dollars.
 2. Decide if customers can install repairs on their PCs, or only send them to the maker.
 3. Set a cost limit for one repair. The recommended limit is 2 US dollars.
 4. Decide if Falcon does the reviewer step for every repair or only for large changes.

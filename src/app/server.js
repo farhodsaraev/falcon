@@ -28,6 +28,8 @@ const UI_FILES = {
 };
 const PROFILE_FILE = path.join(os.homedir(), '.falcon', 'profile.json');
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,300}$/;
+// The engine's rule for a learned skill's name: 1-63 lowercase letters, digits or hyphens.
+const LEARNED_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const SESSION_KEY = 'falcon-window';
 const BRIEFING_NAME = 'falcon-morning-briefing';
 
@@ -332,7 +334,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       const status = await api.runEngine(['models', 'status'], { timeoutMs: 60000 });
       const blocked = [...new Set([...String(status.out).matchAll(/(openrouter:[\w.-]+)=\S+\s*\[(?:disabled:billing|cooldown)/g)].map((m) => m[1]))];
       if (!blocked.length) return true;   // nothing held against the key: just ask again
-      await api.runEngine(['gateway', 'stop'], { timeoutMs: 60000 });
+      await api.runEngine(['gateway', 'stop', '--force'], { timeoutMs: 60000 });
       for (const profile of blocked) {
         await api.runEngine(['models', 'auth', 'paste-api-key', '--provider', 'openrouter', '--profile-id', profile], { input: `${key}\n`, timeoutMs: 90000 });
       }
@@ -587,10 +589,11 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     if (!accepted) return { ok: false, error: 'Please tick the box to continue.' };
 
     // A new computer: the engine's files go in Falcon's folder from the start (see enginehome.js).
-  if (!Object.keys(engine).length) { try { prepareEngineHome(); } catch { /* the engine uses its own folder */ } }
-  if (!api.findEngine()) {
+    if (!Object.keys(engine).length) { try { prepareEngineHome(); } catch { /* the engine uses its own folder */ } }
+    if (!api.findEngine()) {
       step('Installing the engine. This takes a few minutes…', 'engine');
-      const install = await api.installEngine({ onLine: detail });
+      // The engine version this Falcon was tested with, not simply the newest.
+      const install = await api.installEngine({ onLine: detail, version: api.appInfo().falconEngine });
       if (!api.findEngine()) return { ok: false, error: 'The engine could not be installed.', detail: failureLines(install.out) };
     }
 
@@ -1016,7 +1019,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       let result = await save();
       if (result.code !== 0) {
         // The engine was busy with its own files: pause it, save, and start it again.
-        await api.runEngine(['gateway', 'stop'], { timeoutMs: 60000 });
+        await api.runEngine(['gateway', 'stop', '--force'], { timeoutMs: 60000 });
         result = await save();
         await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
       } else if (/gateway restart/i.test(result.out)) {
@@ -1075,6 +1078,36 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (set.code !== 0) return { ok: false, error: 'The key was saved, but Falcon could not switch to Google search.' };
       await api.runEngine(['gateway', 'restart'], { timeoutMs: 120000 });
       return { ok: true };
+    },
+
+    // ---- What Falcon learned: methods he saved when the user asked him to learn something ----
+    // Kept by the engine's own learning store, which saves the earlier version before every change, so
+    // removing one (archiving it) and bringing it back are both safe.
+    'GET /api/learned': async () => {
+      const { code, out } = await api.runEngine(['skills', 'workshop', 'list', '--json'], { timeoutMs: 120000 });
+      if (code !== 0) return { ok: false, error: 'I could not read what I have learned just now.' };
+      let doc;
+      try { doc = JSON.parse(out.slice(out.indexOf('{'))); } catch { return { ok: false, error: 'I could not read what I have learned just now.' }; }
+      const when = (item) => Number(item?.updatedAtMs || item?.archivedAtMs || item?.createdAtMs || 0) || null;
+      const learned = (Array.isArray(doc.skills) ? doc.skills : []).filter((s) => typeof s?.name === 'string')
+        .map((s) => ({ name: s.name, about: ownWords(String(s.description || '')).slice(0, 300), when: when(s), files: Array.isArray(s.files) ? s.files.length : 0 }));
+      const live = new Set(learned.map((s) => s.name));
+      // An archived skill may have several saved versions: show it once, and not at all if it is live again.
+      const removed = [...new Map((Array.isArray(doc.archived) ? doc.archived : []).filter((a) => typeof a?.name === 'string' && !live.has(a.name))
+        .map((a) => [a.name, { name: a.name, when: when(a) }])).values()];
+      return { ok: true, learned, removed };
+    },
+    'POST /api/learned/remove': async (body) => {
+      const name = String(body.name || '');
+      if (!LEARNED_NAME.test(name)) return { ok: false, error: 'That is not something I have learned.' };
+      const { code } = await api.runEngine(['skills', 'workshop', 'archive', name, '--reason', 'Removed by the user in Falcon settings', '--json'], { timeoutMs: 120000 });
+      return code === 0 ? { ok: true } : { ok: false, error: 'I could not remove it just now. Please try again.' };
+    },
+    'POST /api/learned/restore': async (body) => {
+      const name = String(body.name || '');
+      if (!LEARNED_NAME.test(name)) return { ok: false, error: 'That is not something I have learned.' };
+      const { code } = await api.runEngine(['skills', 'workshop', 'restore', name, '--json'], { timeoutMs: 120000 });
+      return code === 0 ? { ok: true } : { ok: false, error: 'I could not bring it back just now. Please try again.' };
     },
 
     // ---- Scout: open a finished dossier. Only a file inside the "Falcon Scout" folder can be opened. ----

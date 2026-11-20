@@ -60,7 +60,11 @@ test('the pack installs into a workspace and can be re-run without duplicating i
   assert.equal(settings['agents.defaults.heartbeat.every'], undefined);
   assert.ok(once.includes('config set agents.defaults.heartbeat.every 0m'), 'check-ins are switched off on their own');
   assert.ok(once.includes('plugins enable cua-computer'), 'desktop control is switched on');
+  // He learns new methods only when asked: the engine's own background learning is off.
+  assert.equal(settings['skills.workshop.autonomous.mode'], 'off', 'background learning is switched off');
   assert.ok(!once.some((c) => /^config set (?!--batch-file|agents\.defaults\.heartbeat)/.test(c)), 'no other setting is sent on its own');
+  assert.match(agents, /### Learning something new/);
+  assert.match(agents, /only when he asks in your window/);
   // Ask-first approvals and the pre-approvals go in one document.
   const approvals = firstRun.find((c) => c.args[0] === 'approvals' && c.args[1] === 'set').file;
   assert.equal(approvals.defaults.ask, 'on-miss');
@@ -203,4 +207,18 @@ test('a newer engine that rejects the check-in setting still gets every other se
   const result = await installFalcon({ workspace: ws, runEngine, retryDelayMs: 1, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), configFile: path.join(ws, 'none-config.json'), log: () => {} });
   assert.equal(result.ok, true);
   fs.rmSync(ws, { recursive: true, force: true });
+});
+
+test('the name is set by the agent id when the engine knows the workspace by another path, and setup still counts as done', { skip: !variant }, async () => {
+  const ws = freshWorkspace();
+  const said = [];
+  const runEngine = async (args) => {
+    said.push(args.join(' '));
+    if (args[0] === 'agents' && args.includes('--workspace')) return { code: 1, out: 'No agent workspace matches ~\\.openclaw\\workspace. Pass --agent to target a specific agent.' };
+    if (args[0] === 'approvals' && args[1] === 'get') return { code: 0, out: '{}' };
+    return { code: 0, out: '' };
+  };
+  const result = await installFalcon({ workspace: ws, runEngine, profileFile: path.join(ws, 'none.json'), envFile: path.join(ws, 'none.env'), configFile: path.join(ws, 'none-config.json'), log: () => {}, retryDelayMs: 1 });
+  assert.ok(said.includes('agents set-identity --agent falcon --name Falcon'));
+  assert.equal(result.ok, true, 'a setup whose name went in by id is not re-run at every start');
 });

@@ -209,7 +209,7 @@ export async function installFalcon({
   // and the pre-approvals go in with the approvals themselves: about 6 commands instead of about 28.
   // If a batch is refused, the same settings are applied one by one, as before.
   const sets = [];
-  const set = (what, key, value) => { sets.push({ what, path: key, value }); return true; };
+  const set = (what, key, value, { optional = false } = {}) => { sets.push({ what, path: key, value, optional }); return true; };
   // A little thinking: with none, Falcon stopped after the first step of browser tasks (opened a site and answered).
   set('think before acting', 'agents.defaults.thinkingDefault', 'low');
   // One browser: the user's own Chrome. Smaller models forgot to name it on every step, so their next
@@ -222,6 +222,10 @@ export async function installFalcon({
   // without this the end of them (the scout steps among them) was cut off.
   set('read all of his rules', 'agents.defaults.bootstrapMaxChars', 60000);
   set('local chat for the Falcon window', 'gateway.http.endpoints.chatCompletions.enabled', true);
+  // Learning: Falcon learns a new method only when the user asks him (his rules say how), never on his own
+  // in the background, which would change his skills unseen and cost the user an AI call each time.
+  // Optional: an engine older than this setting refuses it, and that must not fail the setup.
+  set('learn only when asked', 'skills.workshop.autonomous.mode', 'off', { optional: true });
   // His own Telegram chat (saved by Falcon's window at pairing) as the default, so "send it to me on
   // Telegram" works from his window and by voice too, not only from inside Telegram.
   try {
@@ -244,7 +248,7 @@ export async function installFalcon({
     const batchFile = path.join(temp, 'settings.json');
     fs.writeFileSync(batchFile, JSON.stringify(sets.map(({ path: key, value }) => ({ path: key, value }))));
     if (!await step(`${sets.length} settings at once`, ['config', 'set', '--batch-file', batchFile], undefined, { optional: true })) {
-      for (const s of sets) await step(s.what, ['config', 'set', s.path, String(s.value)]);
+      for (const s of sets) await step(s.what, ['config', 'set', s.path, String(s.value)], undefined, { optional: s.optional });
     }
     // No background check-ins. Engines from 2026.11.5 have no such monitor (scheduled checks became
     // ordinary automation jobs) and reject the setting, so it is sent on its own and may fail harmlessly;
@@ -291,7 +295,11 @@ export async function installFalcon({
     fs.rmSync(temp, { recursive: true, force: true });
   }
 
-  await step('name', ['agents', 'set-identity', '--workspace', workspace, '--name', 'Falcon']);
+  // Found by its workspace; if the engine names that folder by another path ("No agent workspace
+  // matches", seen on a real PC after a folder move), by its id instead. Without this the step failed
+  // at every start, and Falcon re-learned his rules each time.
+  const named = await step('name', ['agents', 'set-identity', '--workspace', workspace, '--name', 'Falcon'], undefined, { optional: true });
+  if (!named) await step('name by id', ['agents', 'set-identity', '--agent', 'falcon', '--name', 'Falcon']);
   // A refused batch is not a failure in itself: what counts is that its settings then went in one by one.
   return { ok: results.every((r) => r.ok || r.optional), settings: results };
 }

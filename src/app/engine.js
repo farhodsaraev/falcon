@@ -127,12 +127,20 @@ export function runEngine(args, { input, timeoutMs = 180000, onLine, env } = {})
   return collect(child, timeoutMs, input, onLine);
 }
 
-/** Downloads and runs the engine's official installer for this kind of computer. */
-export function installEngine({ timeoutMs = 1200000, onLine } = {}) {
+/** The engine version to install, as written in Falcon's package.json: only a plain version number. */
+export const ENGINE_VERSION = /^\d{4}\.\d{1,2}\.\d{1,3}(?:-[\w.]{1,20})?$/;
+
+/**
+ * Downloads and runs the engine's official installer for this kind of computer. With `version`, it installs
+ * that version, the one Falcon was tested with, not simply the newest: on 2026-11-20 a new engine version
+ * broke first-time setup on every new PC within a day of its release.
+ */
+export function installEngine({ timeoutMs = 1200000, onLine, version = '' } = {}) {
+  const pinned = ENGINE_VERSION.test(String(version)) ? String(version) : '';
   const child = WINDOWS
     ? spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-      '& ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard'], { windowsHide: true, env: childEnv() })
-    : spawn('/bin/bash', ['-c', 'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'], { env: childEnv() });
+      `& ([scriptblock]::Create((Invoke-RestMethod https://openclaw.ai/install.ps1))) -NoOnboard${pinned ? ` -Tag ${pinned}` : ''}`], { windowsHide: true, env: childEnv() })
+    : spawn('/bin/bash', ['-c', `curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard${pinned ? ` --version ${pinned}` : ''}`], { env: childEnv() });
   return collect(child, timeoutMs, undefined, onLine);
 }
 

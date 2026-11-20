@@ -253,6 +253,12 @@ export function stepText({ name, args = {}, meta = '' }, russian = false) {
       return say('Writing a file', 'Записываю файл');
     }
     case 'memory_search': case 'memory_get': return say('Checking my memory', 'Вспоминаю');
+    case 'skill_workshop': {
+      const action = String(args.action || '');
+      if (['create', 'patch', 'write_file'].includes(action)) return say('Saving what I learned', 'Запоминаю, как это делать');
+      if (['archive', 'restore', 'remove_file'].includes(action)) return say('Updating what I learned', 'Обновляю то, чему научился');
+      return say('Checking what I have learned', 'Проверяю, чему я научился');
+    }
     case 'message': return say('Sending it to you', 'Отправляю вам');
     case 'image': case 'view_image': return say('Looking at the picture', 'Смотрю на изображение');
     case 'image_generate': return say('Painting the picture', 'Рисую изображение');
@@ -280,7 +286,7 @@ export function stepSkill({ name, args = {}, meta = '' }) {
     case 'web_search': case 'web_fetch': case 'browser': return 'browser';
     case 'read': case 'write': case 'edit': case 'apply_patch':
       return ENGINE_FILES.test(String(args.path || args.file_path || (name === 'read' ? meta : '') || '')) ? '' : 'files';
-    case 'memory_search': case 'memory_get': return 'memory';
+    case 'memory_search': case 'memory_get': case 'skill_workshop': return 'memory';
     case 'image': case 'view_image': case 'computer': return 'screen';
     case 'image_generate': case 'video_generate': case 'music_generate': return 'pictures';
     default: return '';

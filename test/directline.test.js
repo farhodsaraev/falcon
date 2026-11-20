@@ -186,3 +186,11 @@ test('the window sends requests the owner\'s way and uses the direct line to sho
     assert.match(sent.at(-1)[1], /pressed Stop on your previous request/, 'he is told the last job was cancelled');
   } finally { await s.close(); }
 });
+
+test('the step of saving something learned is named in the user\'s words', () => {
+  assert.equal(stepText({ name: 'skill_workshop', args: { action: 'create', name: 'cbu-usd-rate' } }), 'Saving what I learned');
+  assert.equal(stepText({ name: 'skill_workshop', args: { action: 'create' } }, true), 'Запоминаю, как это делать');
+  assert.equal(stepText({ name: 'skill_workshop', args: { action: 'archive' } }), 'Updating what I learned');
+  assert.equal(stepText({ name: 'skill_workshop', args: { action: 'list' } }), 'Checking what I have learned');
+  assert.equal(stepSkill({ name: 'skill_workshop', args: { action: 'create' } }), 'memory');
+});

@@ -155,6 +155,17 @@ button.wide { width: 100%; margin-top: 6px; }
 .model-option small { display: block; color: var(--muted); font-size: 11.5px; }
 #screen-setup { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
+/* ---- Settings > Learned: what Falcon learned, each with Remove or Bring back ---- */
+.learned { list-style: none; margin: 8px 0 2px; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.learned li {
+  display: flex; gap: 10px; align-items: center; justify-content: space-between;
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px;
+}
+.learned li div { min-width: 0; font-size: 13px; line-height: 1.4; }
+.learned li b { font-weight: 600; display: block; }
+.learned li small { display: block; color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.learned li button { flex: none; }
+
 /* ---- Chips: choices and example requests ---- */
 .chip {
   background: transparent; color: var(--text); border: 1px solid var(--line);

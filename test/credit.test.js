@@ -58,7 +58,7 @@ test('Credit: after a top-up, the engine\'s billing block is lifted by itself an
     assert.equal(spoken(text).trim(), 'Hello, sir.');
     assert.equal(error(text), undefined);
     assert.match(text, /Reconnecting to the AI/);
-    assert.deepEqual(f.did, ['models status', 'gateway stop', 'models auth paste-api-key --provider openrouter --profile-id openrouter:default <sk-or-v1-test>', 'gateway start'],
+    assert.deepEqual(f.did, ['models status', 'gateway stop --force', 'models auth paste-api-key --provider openrouter --profile-id openrouter:default <sk-or-v1-test>', 'gateway start'],
       'the key is saved again while the engine is stopped, which clears its block');
   } finally { await f.server.close(); }
 });
@@ -74,7 +74,7 @@ test('Credit: an empty account is said plainly, with where to top up; then Falco
     assert.match(said, /openrouter\.ai\/settings\/credits/);
     assert.match(said, /notice by myself/);
     assert.doesNotMatch(said, /openclaw|billing issue/i, 'no engine talk');
-    assert.ok(!f.did.includes('gateway stop'), 'nothing is restarted while there is no credit');
+    assert.ok(!f.did.some((d) => d.startsWith('gateway stop')), 'nothing is restarted while there is no credit');
     f.unblock();
     let pushed = '';
     while (!/event: notice/.test(pushed)) pushed += new TextDecoder().decode((await reader.read()).value);

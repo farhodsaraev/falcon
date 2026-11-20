@@ -161,6 +161,7 @@
       <button class="tab on" role="tab" aria-selected="true" data-tab="key">AI key</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="connections">Connections</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="briefing">Briefing</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="learned">Learned</button>
       <button class="tab" role="tab" aria-selected="false" data-tab="about">About</button>
     </div>
 
@@ -252,6 +253,18 @@
           <button id="brief-now" class="ghost">Send one now, to try it</button>
         </div>
         <p id="brief-message" class="message" role="status"></p>
+      </div>
+    </div>
+
+    <div class="tab-body" data-tab="learned" hidden>
+      <div class="panel">
+        <p class="panel-title">What Falcon learned</p>
+        <p class="panel-text">When you ask Falcon in this window to learn something new, for example “Learn how to send me the dollar rate every morning”, he does it once, then keeps the method for next time. It is listed here. You can remove it, and bring it back later.</p>
+        <p id="learned-empty" class="panel-text" hidden>Nothing yet.</p>
+        <ul id="learned-list" class="learned" aria-label="Things Falcon learned"></ul>
+        <p id="removed-title" class="panel-text" hidden><b>Removed</b></p>
+        <ul id="removed-list" class="learned" aria-label="Things Falcon learned and you removed"></ul>
+        <p id="learned-message" class="message" role="status"></p>
       </div>
     </div>
 

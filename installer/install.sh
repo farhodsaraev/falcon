@@ -49,8 +49,13 @@ if [ -z "$OPENCLAW" ]; then
   say "Installing the engine (a few minutes)..."
   ENGINE_INSTALLER="$(mktemp "${TMPDIR:-/tmp}/falcon-engine.XXXXXX")"
   curl -fsSL https://openclaw.ai/install-cli.sh -o "$ENGINE_INSTALLER" >>"$LOG" 2>&1 || fail "the engine installer could not be downloaded"
+  # The engine version this Falcon was tested with (package.json, "falconEngine"), not simply the newest:
+  # a new engine version once broke first-time setup within a day of its release.
+  ENGINE_VERSION="${FALCON_ENGINE_VERSION:-$(curl -fsSL https://raw.githubusercontent.com/farhodsaraev/falcon/main/package.json 2>>"$LOG" | sed -n 's/.*"falconEngine": *"\([0-9][0-9.]*\)".*/\1/p' | head -1)}"
+  ENGINE_ARGS=(--no-onboard)
+  if [[ "$ENGINE_VERSION" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,3}$ ]]; then ENGINE_ARGS+=(--version "$ENGINE_VERSION"); fi
   # Run it from a file with nothing on its input, so it can never sit waiting for an answer nobody sees.
-  /bin/bash "$ENGINE_INSTALLER" --no-onboard >>"$LOG" 2>&1 </dev/null || { rm -f "$ENGINE_INSTALLER"; fail "the engine did not install"; }
+  /bin/bash "$ENGINE_INSTALLER" "${ENGINE_ARGS[@]}" >>"$LOG" 2>&1 </dev/null || { rm -f "$ENGINE_INSTALLER"; fail "the engine did not install"; }
   rm -f "$ENGINE_INSTALLER"
   OPENCLAW="$(find_tool openclaw)"
   [ -n "$OPENCLAW" ] || fail "the engine was installed but cannot be found"
