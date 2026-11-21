@@ -20,6 +20,12 @@ if (!copy || !data || !fs.existsSync(path.join(copy, 'src', 'app', 'server.js'))
 const falcon = path.join(os.homedir(), '.falcon');
 fs.rmSync(data, { recursive: true, force: true });
 fs.mkdirSync(data, { recursive: true });
+// It runs on its own, with nobody watching its output: what went wrong is kept here.
+const logFile = path.join(data, 'preview.log');
+const logLine = (text) => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${text}\n`); } catch { /* nowhere to write */ } };
+process.on('uncaughtException', (err) => { logLine(`failed: ${err?.stack || err}`); process.exit(1); });
+process.on('unhandledRejection', (err) => { logLine(`failed: ${err?.stack || err}`); process.exit(1); });
+logLine(`starting the copy in ${copy}`);
 for (const file of ['profile.json', 'chats.json']) {
   try { fs.copyFileSync(path.join(falcon, file), path.join(data, file)); } catch { /* not there yet */ }
 }
@@ -38,7 +44,7 @@ server = await startServer({
   },
 });
 const url = `http://127.0.0.1:${server.port}/#token=${server.token}`;
-fs.writeFileSync(path.join(data, 'preview.json'), JSON.stringify({ pid: process.pid, port: server.port }));
+fs.writeFileSync(path.join(data, 'preview.json'), JSON.stringify({ pid: process.pid, port: server.port, token: server.token }), { mode: 0o600 });
 
 const edge = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles, process.env.LOCALAPPDATA].filter(Boolean)
   .map((base) => path.join(base, 'Microsoft', 'Edge', 'Application', 'msedge.exe')).find((file) => fs.existsSync(file));
@@ -51,5 +57,6 @@ if (process.env.FALCON_NO_WINDOW === '1') {
   spawn('open', [url], { stdio: 'ignore', detached: true }).unref();
 }
 console.log(`Preview: ${url}`);
+logLine(`serving on port ${server.port}${edge ? ', window opened' : ''}`);
 // Ends by itself once its window has been closed for a while (onIdle), or after an hour at most.
 setTimeout(stop, 60 * 60000).unref();

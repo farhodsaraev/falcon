@@ -616,7 +616,7 @@ body.workshop-page { overflow-y: auto; height: auto; min-height: 100vh; }
 /* ---- A preview of a repair (Workshop > Preview): marked plainly, so it is never taken for the real Falcon ---- */
 body.preview::before {
   content: "Preview of a change \2014  nothing here is kept until you approve it in the Workshop";
-  position: fixed; left: 50%; top: 6px; transform: translateX(-50%); z-index: 50; pointer-events: none;
+  position: fixed; left: 50%; top: 44px; transform: translateX(-50%); z-index: 50; pointer-events: none;   /* just below the top bar, which it must not hide */
   padding: 4px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap;
   color: #1a1204; background: var(--warn); box-shadow: 0 2px 12px rgba(255, 180, 84, 0.35);
 }
