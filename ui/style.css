@@ -153,7 +153,8 @@ button.wide { width: 100%; margin-top: 6px; }
   color: var(--ok); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 8px;
 }
 .model-option small { display: block; color: var(--muted); font-size: 11.5px; }
-#screen-setup { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+/* Screens taller than a small window scroll (the introduction's Skip was cut off on a laptop). */
+#screen-setup, #screen-intro, #screen-loading { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
 /* ---- Settings > AI key: which AI does what ---- */
 .jobs { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0 4px; width: 100%; font-size: 13px; }
@@ -407,6 +408,28 @@ button.small-btn { padding: 6px 12px; font-size: 12.5px; }
 }
 .setup-log p { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
 
+/* ---- Setup progress: the steps ticked off one by one, and a bar towards the usual end ---- */
+.setup-progress { width: 100%; margin: 10px 0 4px; padding: 12px 14px 8px; border: 1px solid var(--line); border-radius: 10px; background: rgba(12, 19, 32, 0.6); }
+.setup-steps { list-style: none; margin: 0; padding: 0; }
+.setup-steps li { display: grid; grid-template-columns: 22px 1fr; align-items: center; column-gap: 8px; padding: 5px 0; color: var(--muted); opacity: 0.55; transition: opacity 0.3s, color 0.3s; }
+.setup-steps li small { grid-column: 2; font-size: 11px; color: var(--muted); display: none; }
+.setup-steps li i { position: relative; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line); box-sizing: border-box; }
+.setup-steps li.now { opacity: 1; color: var(--text); }
+.setup-steps li.now small { display: block; }
+.setup-steps li.now i { border-color: rgba(79, 216, 255, 0.25); border-top-color: var(--glow); animation: spin 0.9s linear infinite; }
+.setup-steps li.done { opacity: 0.9; color: var(--text); animation: card-in 0.35s ease-out; }
+.setup-steps li.done i { border-color: var(--ok); background: rgba(111, 227, 165, 0.12); }
+.setup-steps li.done i::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--ok); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.setup-steps li.failed { opacity: 1; color: var(--bad); }
+.setup-steps li.failed i { border-color: var(--bad); }
+.setup-bar { height: 4px; margin: 10px 0 0; border-radius: 4px; background: var(--line); overflow: hidden; }
+.setup-bar b { display: block; height: 100%; width: 2%; border-radius: 4px; background: linear-gradient(90deg, var(--glow-deep), var(--glow)); transition: width 1s linear;
+  background-size: 200% 100%; animation: bar-shine 2.2s linear infinite; }
+@keyframes bar-shine { from { background-position: 200% 0; } to { background-position: 0 0; } }
+.setup-time { margin: 8px 0 0; font-size: 11.5px; color: var(--muted); }
+.setup-progress .link { margin-top: 4px; font-size: 11.5px; }
+@media (prefers-reduced-motion: reduce) { .setup-steps li.now i, .setup-bar b, .setup-steps li.done { animation: none; } }
+
 /* ---- Scout: the scan shown while Falcon researches a person or company ---- */
 .scout { display: flex; gap: 22px; align-items: center; width: min(640px, 100%); margin: 14px auto 6px; padding: 16px 18px; border: 1px solid rgba(84,194,228,.25); border-radius: 18px; background: rgba(12,26,38,.55); text-align: left; }
 .scout[hidden] { display: none; }
@@ -589,3 +612,17 @@ body.workshop-page { overflow-y: auto; height: auto; min-height: 100vh; }
 .chat-entry .chat-delete.asking { color: var(--bad); background: rgba(255, 122, 122, 0.12); font-size: 11px; }
 @media (hover: none) { .chat-entry .chat-delete { opacity: 0.7; } }
 @media (max-width: 560px) { .screen.main { padding-left: 140px; padding-right: 10px; } .chat-panel { width: 120px; } .chat-open .chat-title { font-size: 12px; } }
+
+/* ---- A preview of a repair (Workshop > Preview): marked plainly, so it is never taken for the real Falcon ---- */
+body.preview::before {
+  content: "Preview of a change \2014  nothing here is kept until you approve it in the Workshop";
+  position: fixed; left: 50%; top: 6px; transform: translateX(-50%); z-index: 50; pointer-events: none;
+  padding: 4px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap;
+  color: #1a1204; background: var(--warn); box-shadow: 0 2px 12px rgba(255, 180, 84, 0.35);
+}
+body.preview { box-shadow: inset 0 0 0 2px var(--warn); }
+
+/* ---- Setup: signing in with ChatGPT instead of a key ---- */
+.chatgpt-option { width: 100%; margin: 6px 0 4px; display: flex; flex-direction: column; align-items: stretch; }
+.chatgpt-option .or { align-self: center; color: var(--muted); font-size: 12px; margin: 2px 0 8px; letter-spacing: 0.08em; text-transform: uppercase; }
+#chatgpt-box { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }

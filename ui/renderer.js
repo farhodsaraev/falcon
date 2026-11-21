@@ -395,12 +395,17 @@ function setMessage(text, kind = '') {
 }
 
 // While setup runs: the last few real lines from the installers, and how long it has taken.
+// The steps are ticked off as they finish and a bar fills towards the usual end; the real lines are one press away.
 const setupLog = {
-  lines: [], started: 0, clock: 0, until: 0,
+  lines: [], started: 0, clock: 0, until: 0, showLines: false,
   start() {
-    this.lines = []; this.started = Date.now(); this.until = 0;
-    $('setup-log-lines').textContent = ''; $('setup-log').hidden = false;
-    $('setup-log').scrollIntoView({ block: 'end' });
+    this.lines = []; this.started = Date.now(); this.until = 0; this.showLines = false;
+    $('setup-log-lines').textContent = ''; $('setup-log').hidden = true;
+    $('setup-log-toggle').textContent = 'Show details';
+    for (const li of document.querySelectorAll('#setup-steps li')) li.className = '';
+    $('setup-bar-fill').style.width = '2%';
+    $('setup-progress').hidden = false;
+    $('setup-progress').scrollIntoView({ block: 'end' });
     clearInterval(this.clock);
     const tick = () => {
       const s = Math.floor((Date.now() - this.started) / 1000);
@@ -408,43 +413,67 @@ const setupLog = {
       const about = left === null ? '' : left > 90 ? `about ${Math.round(left / 60)} minutes left` : left > 30 ? 'about a minute left'
         : left > -20 ? 'almost done' : 'taking a little longer than usual';
       $('setup-log-time').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} so far${about ? `, ${about}` : ''}. Please keep this window open.`;
+      // The bar never quite reaches the end before Falcon is ready, and never goes backwards.
+      if (left !== null) {
+        const done = Math.min(0.96, s / Math.max(1, s + Math.max(left, 15)));
+        const now = parseFloat($('setup-bar-fill').style.width) || 0;
+        $('setup-bar-fill').style.width = `${Math.max(now, done * 100).toFixed(1)}%`;
+      }
     };
     tick(); this.clock = setInterval(tick, 1000);
   },
   eta(seconds) { if (this.started && seconds > 0) this.until = Date.now() + seconds * 1000; },
+  // A new step began: the ones before it are done (or were not needed), this one is under way.
+  step(name) {
+    const items = [...document.querySelectorAll('#setup-steps li')];
+    const at = items.findIndex((li) => li.dataset.step === name);
+    if (at < 0) return;
+    items.forEach((li, i) => { li.className = i < at ? 'done' : i === at ? 'now' : ''; });
+  },
   add(line) {
     if (!this.started || line === this.lines[this.lines.length - 1]) return;
     this.lines.push(line);
     if (this.lines.length > 5) this.lines.shift();
     $('setup-log-lines').textContent = this.lines.join('\n');
   },
-  stop() { clearInterval(this.clock); this.started = 0; $('setup-log').hidden = true; },
+  finish() {
+    for (const li of document.querySelectorAll('#setup-steps li')) li.className = 'done';
+    $('setup-bar-fill').style.width = '100%';
+  },
+  stop() { clearInterval(this.clock); this.started = 0; $('setup-log').hidden = true; $('setup-progress').hidden = true; },
   // A step failed: leave what the installer last said on screen, so there is something to go on.
   fail(detail) {
     clearInterval(this.clock); this.started = 0;
+    const now = document.querySelector('#setup-steps li.now');
+    if (now) now.className = 'failed';
+    $('setup-log-time').textContent = 'Nothing was changed that needs undoing. You can press Start again.';
     if (!detail) { $('setup-log').hidden = true; return; }
     $('setup-log-lines').textContent = detail;
-    $('setup-log-time').textContent = 'Nothing was changed that needs undoing. You can press Start again.';
     $('setup-log').hidden = false;
   },
 };
+$('setup-log-toggle').addEventListener('click', () => {
+  setupLog.showLines = $('setup-log').hidden;
+  $('setup-log').hidden = !setupLog.showLines;
+  $('setup-log-toggle').textContent = setupLog.showLines ? 'Hide details' : 'Show details';
+});
 
 const setOrb = (state) => { $('orb').dataset.state = state; };
 
 // ---- First launch ----
-$('setup-start').addEventListener('click', async () => {
+async function runSetup(chatgpt) {
   const key = $('setup-key').value.trim();
-  if (!key) return setMessage('Paste your AI key first.', 'bad');
+  if (!chatgpt && !key) return setMessage('Paste your AI key first, or sign in with ChatGPT.', 'bad');
   if (!$('setup-accept').checked) return setMessage('Please tick the box to continue.', 'bad');
   // Setup takes a few minutes: spin the button and the orb, and show each step as it happens.
   const smallOrb = $('screen-setup').querySelector('.orb');
   smallOrb.dataset.state = 'thinking';
-  await withButton($('setup-start'), async () => {
+  await withButton($(chatgpt ? 'setup-chatgpt-start' : 'setup-start'), async () => {
     setMessage('Starting', 'working');
     setupLog.start();
     try {
-      const result = await window.falcon.setup(key, true, setupKey.model());
-      if (result.ok) { $('setup-key').value = ''; return enterFalcon(); }
+      const result = await window.falcon.setup(chatgpt ? '' : key, true, setupKey.model(), chatgpt);
+      if (result.ok) { setupLog.finish(); $('setup-key').value = ''; return enterFalcon(); }
       setMessage(`${result.error || 'Something went wrong.'} Check the internet connection and the key, then press Start again.`, 'bad');
       setupLog.fail(result.detail);
       return;
@@ -454,7 +483,37 @@ $('setup-start').addEventListener('click', async () => {
     setupLog.stop();
   });
   smallOrb.dataset.state = 'idle';
-});
+}
+$('setup-start').addEventListener('click', () => runSetup(false));
+$('setup-chatgpt-start').addEventListener('click', () => runSetup(true));
+// Signing in with ChatGPT works on Windows for now: the button shows only where it does.
+window.falcon.chatgptStatus().then((s) => { $('setup-chatgpt').hidden = !s.available; showChatgpt(s); }).catch(() => {});
+
+// Settings > AI key: the ChatGPT sign-in, if any, and the buttons to sign in or out.
+function showChatgpt(s) {
+  $('chatgpt-box').hidden = !s?.available;
+  if (!s?.available) return;
+  $('chatgpt-state').textContent = s.signedIn ? 'Signed in with ChatGPT: Falcon thinks with your ChatGPT plan, within its usage limits.'
+    : 'Or use your ChatGPT Plus or Pro plan instead of a key.';
+  $('chatgpt-signin').hidden = s.signedIn;
+  $('chatgpt-signout').hidden = !s.signedIn;
+}
+$('chatgpt-signin').addEventListener('click', () => withButton($('chatgpt-signin'), async () => {
+  note('chatgpt-message', 'Sign in in the window that opens. Falcon pauses until you have finished.', 'working');
+  try {
+    const r = await window.falcon.chatgptSignIn();
+    note('chatgpt-message', r.ok ? 'Signed in. Falcon now thinks with your ChatGPT plan.' : r.error, r.ok ? 'ok' : 'bad');
+    showChatgpt(await window.falcon.chatgptStatus());
+  } catch { note('chatgpt-message', 'Falcon could not be reached.', 'bad'); }
+}));
+$('chatgpt-signout').addEventListener('click', () => withButton($('chatgpt-signout'), async () => {
+  note('chatgpt-message', 'Signing out', 'working');
+  try {
+    const r = await window.falcon.chatgptSignOut();
+    note('chatgpt-message', r.ok ? 'Signed out. Add an AI key above so Falcon can keep thinking.' : r.error, r.ok ? 'ok' : 'bad');
+    showChatgpt(await window.falcon.chatgptStatus());
+  } catch { note('chatgpt-message', 'Falcon could not be reached.', 'bad'); }
+}));
 
 // ---- Talking to Falcon ----
 let busy = false;
@@ -702,9 +761,11 @@ const SKILL_HELP = {
   repair: ['Tell Falcon what to fix or add. He works on a separate copy of himself and asks before anything changes.', null],
   addons: ['New tools Falcon makes for himself when a repair needs one. Ask for one in the Workshop.', null],
 };
-function openWorkshop() {
-  window.open(window.falcon.workshopUrl(), 'falcon-workshop', 'width=900,height=820');
+// Opened by the Repair tile, or by Falcon himself with the request from the conversation filled in.
+function openWorkshop(ask = '') {
+  window.open(window.falcon.workshopUrl(ask), 'falcon-workshop', 'width=900,height=820');
 }
+window.falconOpenWorkshop = openWorkshop;
 for (const [id, name, example] of SKILLS) {
   const tile = document.createElement('button');
   tile.type = 'button';
@@ -1138,6 +1199,7 @@ async function sendToFalcon(text, shown = text) {
       onScout: (progress) => { clearWaiting(); showScout(progress); },
       onDossier: (name) => { dossier = name; },
       onFile: (file) => { found = file; },
+      onWorkshop: (request) => openWorkshop(request),
       onPending: (waiting) => { pendingChats.set(waiting.id, { chatId: chats.id(), index: (chats.current()?.exchanges.length || 1) - 1 }); $('media').append(mediaWaiting(waiting, russian)); scrollTalk(); },
       onError: fail,
     }, stopper.signal);
@@ -1305,12 +1367,13 @@ async function saveIntro(skipped) {
         : { name, callMe: choice === 'name' ? name : choice, about: $('intro-about').value });
       applyProfile(saved);
       showScreen('main');
-      // Let him show that he took it in: his first words refer to what he was just told.
+      // His first words refer to what he was just told. Written here, at once: asking the AI for them made a new
+      // owner watch him "think" for a minute or more while the engine was still settling after setup.
       if (!skipped) {
-        sendToFalcon('I have just introduced myself to you in your window; what I told you is in your notes about me. ' +
-          'Welcome me in two or three sentences: address me the way I chose, show in your own words that you took in ' +
-          'what I mostly do on this computer, and offer one specific thing you could do for me right now that fits that work. ' +
-          'Do not look anything up and do not act yet.', '');
+        const about = $('intro-about').value.trim().replace(/\s+/g, ' ');
+        $('reply').textContent = `Pleased to meet you, ${address()}. ` +
+          (about ? `I have noted what you do here: “${about.length > 120 ? `${about.slice(0, 117)}…` : about}”. ` : '') +
+          'Ask me anything, or try one of the suggestions below.';
       }
     } catch { note('intro-message', 'That could not be saved. Please try again.', 'bad'); }
   });
@@ -1418,6 +1481,7 @@ window.falcon.listen({
   setup: (progress) => {
     if (progress.detail) return setupLog.add(progress.detail);
     setMessage(progress.text.replace(/…$/, ''), 'working');
+    if (progress.step) setupLog.step(progress.step);
     setupLog.eta(progress.left);
   },
 });
@@ -1454,17 +1518,21 @@ if (screens.includes(query.get('screen'))) {
   let failures = 0;
   let done = false;
   let updating = false;
+  let updateStep = '';
   const ticker = setInterval(() => {
     if (done) return;
     if (!updating) return showWaiting(Date.now() - startedWaiting, failures);
     $('loading-status').textContent = 'Learning my new skills';
     $('loading-status').classList.add('working');
-    $('loading-detail').textContent = 'I have just been updated. This takes about a minute, once; then I shall be quicker than before.';
+    const seconds = Math.round((Date.now() - startedWaiting) / 1000);
+    $('loading-detail').textContent = `I have just been updated. This takes a minute or two, once; then I shall be quicker than before.${updateStep ? ` Just learned: ${updateStep}.` : ''} ${seconds} s so far.`;
   }, 1000);
   const wake = () => window.falcon.state()
     .then((s) => {
       failures = 0;
       updating = Boolean(s.updating);
+      updateStep = String(s.step || '').replace(/.$/, '');
+      if (s.preview) document.body.classList.add('preview');
       if (s.ready) { done = true; clearInterval(ticker); return enterFalcon(); }
       if (!s.configured) { done = true; clearInterval(ticker); return showScreen('setup'); }
       setTimeout(wake, Date.now() - startedWaiting > WAKE_GIVE_UP_MS ? 10000 : 3000);

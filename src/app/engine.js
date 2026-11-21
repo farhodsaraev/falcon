@@ -127,6 +127,26 @@ export function runEngine(args, { input, timeoutMs = 180000, onLine, env } = {})
   return collect(child, timeoutMs, input, onLine);
 }
 
+/**
+ * Runs an engine command in a console window of its own, for the few that need a person at a keyboard (the
+ * engine refuses "models auth login" without one), and waits until that window closes. Windows only.
+ * @returns {Promise<{ code: number }>}
+ */
+export function runEngineInWindow(args, { title = 'Falcon', timeoutMs = 15 * 60000 } = {}) {
+  const engine = findEngine();
+  if (!engine || !WINDOWS) return Promise.resolve({ code: -1 });
+  if (!args.every((a) => SAFE_ARG.test(a) && !/\s/.test(a)) || !/^[\w .,:()-]{1,60}$/.test(title)) return Promise.resolve({ code: -1 });
+  const quote = (a) => `"${a}"`;
+  // "start /wait" opens a new console and returns when it closes; the title comes first, in quotes.
+  const line = ['/d', '/c', 'start', quote(title), '/wait', quote(engine.command), ...engine.prefix.map(quote), ...args].join(' ');
+  const child = spawn('cmd.exe', [line], { env: childEnv(engine.pathDirs), windowsVerbatimArguments: true, windowsHide: true });
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } resolve({ code: -1 }); }, timeoutMs);
+    child.on('error', () => { clearTimeout(timer); resolve({ code: -1 }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? -1 }); });
+  });
+}
+
 /** The engine version to install, as written in Falcon's package.json: only a plain version number. */
 export const ENGINE_VERSION = /^\d{4}\.\d{1,2}\.\d{1,3}(?:-[\w.]{1,20})?$/;
 

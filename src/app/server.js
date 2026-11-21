@@ -8,7 +8,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine } from './engine.js';
+import { engineDir, engineReady, findEngine, installEngine, readGateway, runEngine, runEngineInWindow } from './engine.js';
 import { engineHome, moveEngineHome, prepareEngineHome } from './enginehome.js';
 import { ensureGit, findGit } from './git.js';
 import { historyDir, openHistory, switchToWorkshop } from './workshop.js';
@@ -47,6 +47,10 @@ const BRIEFING_NAME = 'falcon-morning-briefing';
 // The window can show small cards of what Falcon did. He reports them on a last line the window
 // strips out; requests from Telegram or the scheduler do not carry this note, so they never see it.
 const ACTIONS_MARK = '[[did]]';
+// A request to change Falcon himself, handed to his Workshop (his rules, "Changing or extending yourself").
+const WORKSHOP_MARK = '[[workshop]]';
+// Where the hidden lines at the end of an answer begin: the earliest of the two marks, or -1.
+const firstMark = (text) => Math.min(...[ACTIONS_MARK, WORKSHOP_MARK].map((m) => { const i = text.indexOf(m); return i < 0 ? Infinity : i; }));
 const ACTIONS_NOTE = '[Note from your own window, not from the user: this window shows small cards of what you did. ' +
   'After your answer, add one final line that starts with [[did]] followed by up to three things you actually did on ' +
   'this computer or on the web for this request, each two to six words, separated by " | ", for example: ' +
@@ -69,11 +73,12 @@ const VOICE_NAME = 'cedar';
 const VOICE_INSTRUCTIONS = [
   'You are the voice of Falcon, a private assistant in the manner of a calm, impeccably competent British butler.',
   'Speak with a refined British accent, unhurried, with dry understated wit used sparingly. Never sound like a cheerful chatbot.',
-  'Address the user as "{{CALL_ME}}" (in Russian: the natural equivalent). Keep every reply to one or two short sentences.',
+  'Address the user as "{{CALL_ME}}" (in Russian: the natural equivalent), but only now and then, about one reply in three or four, never in two replies in a row. Keep every reply to one or two short sentences.',
   'Reply in the language the user just spoke: English or Russian. Keep the same character in both.',
   '',
   'You have one way to act: the ask_falcon function. It reaches your own hands and memory: files, presentations, the screen, the browser, calendar, mail, reminders, the weather, the news, and everything you remember about the user.',
   'For ANY request that needs doing something, looking something up, or recalling something about the user: first say a brief holding phrase such as "One moment, {{CALL_ME}}.", then call ask_falcon with the request in the user\'s own words and language, then say the result naturally in one or two sentences. Never invent a result and never claim to have done something without calling ask_falcon.',
+  'Pass on exactly what the user said, as a request from him: never rephrase it as an instruction about what Falcon can or cannot do, never add your own conclusions, and never decide yourself that something is impossible. Falcon can also change and extend himself through his Workshop, so pass such requests on too. If you did not hear clearly, ask the user to repeat instead of guessing.',
   'Only greetings, thanks and light small talk are answered without it.',
   'If the result says a confirmation is needed, ask the user for a clear yes or no and pass his answer on with ask_falcon.',
   '',
@@ -238,6 +243,9 @@ export function newerVersion(a, b) {
 
 const uninstallerPath = () => path.join(root, 'installer', process.platform === 'win32' ? 'uninstall.ps1' : 'uninstall.sh');
 
+// What a preview window may do: talk to Falcon, keep its own copy of the chats, open what he shows.
+const PREVIEW_ALLOWED = new Set(['/api/chats', '/api/file/open', '/api/summon']);
+
 export async function startServer({ port = 0, engine = {}, onIdle = () => {}, idleMs = 30000 } = {}) {
   // How long one request may take before the window gives up on it.
   const CHAT_LIMIT_MS = engine.chatLimitMs ?? 10 * 60000;
@@ -269,7 +277,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     child.unref();
   };
   const envFile = () => path.join(engineHome(), '.env');
-  const api = { fastLane, packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
+  const api = { fastLane, packStamp, engineReady, findEngine, installEngine, installFalcon, setupSearch, readGateway, runEngine, runEngineInWindow, fetch, workspaceDir, envFile, scoutProgressFile, scoutFolder, openPath, profileFile: () => PROFILE_FILE, voiceKey: createVoiceKeyStore(), ...engine };
   // What an update needs to know and do; stand-ins replace these in checks.
   if (!api.appInfo) {
     api.appInfo = () => { try { return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')); } catch { return {}; } };
@@ -328,6 +336,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   const fastMemory = {};           // a file just offered, so "yes" can open it
   const offeredFiles = new Set();  // files Falcon found and showed buttons for
   let refreshing = false;
+  let refreshLine = '';             // what he is learning right now, for the window's opening screen
   let refreshChecked = false;
   let updateRunning = false;
   const busy = () => Boolean(moving) || setupRunning || refreshing || updateRunning || chatsInFlight > 0 || Boolean(api.repairs?.busy());
@@ -428,7 +437,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     } catch { /* tried again at the next start */ }
   };
   async function refreshPack() {
-    if (refreshChecked || refreshing || setupRunning) return;
+    if (refreshChecked || refreshing || setupRunning || api.preview) return;   // a preview never changes the engine
     refreshChecked = true;
     const now = api.packStamp();
     let had = '';
@@ -436,7 +445,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     if (had === now) return;
     refreshing = true;
     try {
-      const result = await api.installFalcon({ runEngine: api.runEngine, log: () => {} });
+      refreshLine = '';
+      const result = await api.installFalcon({ runEngine: api.runEngine, log: (line) => { const text = progressLine(line); if (text) refreshLine = text.replace(/^ok\s+/i, '').slice(0, 120); } });
       if (result?.ok !== false) writeStamp(now);   // otherwise: try again at the next start
     } catch { /* try again at the next start */ } finally { refreshing = false; }
   }
@@ -544,7 +554,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       }
     }
     // His closing words go with a finished picture; an ordinary answer has already been shown.
-    const said = maker ? ownWords(words.split('\n').filter((line) => !line.trim().startsWith(ACTIONS_MARK)).join('\n').trim()) : '';
+    const said = maker ? ownWords(words.split('\n').filter((line) => !line.trim().startsWith(ACTIONS_MARK) && !line.trim().startsWith(WORKSHOP_MARK)).join('\n').trim()) : '';
     broadcast('media', { pending: waiting?.id, kind: kind || items[0].kind, text: said, items, failed: Boolean(maker) && !items.length });
   }
   function followConversation(sessionKey) {
@@ -617,11 +627,11 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   }
 
   // ---- First-time setup ----
-  async function setup({ key, accepted, model }) {
+  async function setup({ key, accepted, model, chatgpt = false }) {
     // Seconds each step usually takes, measured on clean machines by the install test; the window shows the time left.
     const USUAL = { engine: process.platform === 'win32' ? 360 : 90, key: 60, start: 10, manners: 45, wake: 15 };
     const ORDER = ['engine', 'key', 'start', 'manners', 'wake'];
-    const step = (text, name) => broadcast('setup', { text, left: ORDER.slice(ORDER.indexOf(name)).reduce((sum, n) => sum + USUAL[n], 0) });
+    const step = (text, name) => broadcast('setup', { text, step: name, left: ORDER.slice(ORDER.indexOf(name)).reduce((sum, n) => sum + USUAL[n], 0) });
     // The real lines the installers print, shown under the step so the wait is not a blank spinner.
     const detail = (line) => { const text = progressLine(line); if (text) broadcast('setup', { detail: text }); };
     if (!accepted) return { ok: false, error: 'Please tick the box to continue.' };
@@ -635,6 +645,16 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       if (!api.findEngine()) return { ok: false, error: 'The engine could not be installed.', detail: failureLines(install.out) };
     }
 
+    if (!api.readGateway() && chatgpt) {
+      // No key: the engine is set up without one, then the owner signs in with his ChatGPT account.
+      step('Setting up my engine…', 'key');
+      const onboard = await api.runEngine(['onboard', '--non-interactive', '--accept-risk', '--mode', 'local', '--auth-choice', 'skip',
+        '--gateway-bind', 'loopback', '--gateway-auth', 'token', '--install-daemon', '--agent-name', 'Falcon'], { timeoutMs: 600000, onLine: detail });
+      if (onboard.code !== 0 || !api.readGateway()) return { ok: false, error: 'The engine could not be set up.', detail: failureLines(onboard.out) };
+      broadcast('setup', { text: 'Sign in with ChatGPT in the window that opened. Falcon carries on by himself when you have finished.', step: 'key', left: 240 });
+      const signed = await signInWithChatGPT();
+      if (!signed.ok) return signed;
+    }
     if (!api.readGateway()) {
       if (!KEY_SHAPE.test(key || '')) return { ok: false, error: 'That does not look like an API key.' };
       step('Connecting your AI key…', 'key');
@@ -678,6 +698,50 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     return { ok: false, error: 'Falcon did not wake up. Please restart the computer and try again.' };
+  }
+
+  // ---- Sign in with ChatGPT: the owner's ChatGPT subscription instead of a key (engine "Codex login") ----
+  // The engine signs in only with a person at a keyboard and only while it is stopped, so Falcon stops it,
+  // opens the engine's own sign-in window (it opens ChatGPT's page in the browser), waits for that window to
+  // close, checks that a sign-in was saved, and starts the engine again. Windows only for now.
+  const chatgptFile = () => path.join(path.dirname(api.profileFile()), 'chatgpt.json');
+  const chatgptOn = () => fs.existsSync(chatgptFile());
+  async function chatgptProfiles() {
+    const listed = await api.runEngine(['models', 'auth', 'list', '--provider', 'openai', '--json'], { timeoutMs: 120000 });
+    const doc = engineJson(listed.out);
+    const all = Array.isArray(doc) ? doc : Array.isArray(doc?.profiles) ? doc.profiles : [];
+    // A subscription sign-in, not a saved API key.
+    return all.filter((p) => /oauth|codex|chatgpt|subscription/i.test(`${p.type || ''} ${p.mode || ''} ${p.kind || ''} ${p.method || ''}`) || p.expires || p.accountId)
+      .map((p) => String(p.id || p.profileId || p.name || '')).filter(Boolean);
+  }
+  async function signInWithChatGPT() {
+    if (process.platform !== 'win32' || !api.runEngineInWindow) return { ok: false, error: 'Signing in with ChatGPT works on Windows for now. Please use an AI key.' };
+    await api.runEngine(['gateway', 'stop', '--force'], { timeoutMs: 60000 });
+    try {
+      await api.runEngineInWindow(['models', 'auth', 'login', '--provider', 'openai', '--set-default'], { title: 'Falcon - Sign in with ChatGPT' });
+      const profiles = await chatgptProfiles();
+      if (!profiles.length) return { ok: false, error: 'The ChatGPT sign-in was not finished. Press the button again and complete it in the window that opens.' };
+      // The engine runs a ChatGPT sign-in through its "codex" part: keep it on (Falcon switches it off for keys).
+      await api.runEngine(['config', 'set', 'plugins.entries.codex.enabled', 'true'], { timeoutMs: 120000 });
+      fs.mkdirSync(path.dirname(chatgptFile()), { recursive: true });
+      fs.writeFileSync(chatgptFile(), JSON.stringify({ at: new Date().toISOString(), profiles }, null, 2));
+      return { ok: true };
+    } finally {
+      await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+    }
+  }
+  async function signOutOfChatGPT() {
+    let profiles = [];
+    try { profiles = JSON.parse(fs.readFileSync(chatgptFile(), 'utf8')).profiles || []; } catch { /* not signed in */ }
+    await api.runEngine(['gateway', 'stop', '--force'], { timeoutMs: 60000 });
+    try {
+      for (const id of [...new Set([...profiles, ...(await chatgptProfiles())])]) await api.runEngine(['models', 'auth', 'logout', id], { timeoutMs: 60000 });
+      await api.runEngine(['config', 'set', 'plugins.entries.codex.enabled', 'false'], { timeoutMs: 120000 });
+      fs.rmSync(chatgptFile(), { force: true });
+      return { ok: true };
+    } finally {
+      await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+    }
   }
 
   // ---- Chat: relay to the engine and stream the answer back ----
@@ -756,12 +820,13 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       // Pass the answer on as it arrives, but hold back the trailing "what I did" line and anything
       // that might be the start of it.
       const flush = (final) => {
-        const marker = full.indexOf(ACTIONS_MARK);
-        let safe = marker >= 0 ? marker : full.length;
-        if (marker < 0 && !final) {
-          // The ending may be the first few characters of the marker, still arriving.
-          for (let start = Math.max(0, full.length - ACTIONS_MARK.length + 1); start < full.length; start++) {
-            if (ACTIONS_MARK.startsWith(full.slice(start))) { safe = start; break; }
+        const marker = firstMark(full);
+        let safe = Number.isFinite(marker) ? marker : full.length;
+        if (!Number.isFinite(marker) && !final) {
+          // The ending may be the first few characters of a marker, still arriving.
+          for (let start = Math.max(0, full.length - WORKSHOP_MARK.length + 1); start < full.length; start++) {
+            const tail = full.slice(start);
+            if (ACTIONS_MARK.startsWith(tail) || WORKSHOP_MARK.startsWith(tail)) { safe = start; break; }
           }
         }
         // Hold back a word that is still arriving, so a name split across two pieces is still caught below.
@@ -856,6 +921,12 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
           .map((item) => ownWords(item).replace(/[*_`[\]]/g, '').trim()).filter((item) => item.length > 2 && item.length <= 60).slice(0, 3);
         if (items.length) send('actions', { items });
       }
+      // He handed a change to himself to his Workshop: the window opens it with the request filled in.
+      const asked4 = full.indexOf(WORKSHOP_MARK);
+      if (asked4 >= 0) {
+        const request = full.slice(asked4 + WORKSHOP_MARK.length).split(ACTIONS_MARK)[0].replace(/\s+/g, ' ').trim().slice(0, 1900);
+        if (request.length > 5) send('workshop', { request });
+      }
       // The line under the answer: how many steps and how long. (The engine does not say what it cost.)
       send('summary', { fast: false, steps: stepsTaken, ms: Date.now() - asked });
       send('done', {});
@@ -896,6 +967,16 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     if (readEnvKey(api.envFile(), 'OPENROUTER_API_KEY')) keys.push('openrouter');
     return keys;
   }
+  // A preview of a finished repair runs on its own (preview.mjs); it ends when its window closes, or here,
+  // when the owner decides or asks for a new one.
+  const previewDir = () => path.join(path.dirname(api.profileFile()), 'preview');
+  function endPreview() {
+    try {
+      const { pid } = JSON.parse(fs.readFileSync(path.join(previewDir(), 'preview.json'), 'utf8'));
+      if (Number.isInteger(pid) && pid !== process.pid) process.kill(pid);
+    } catch { /* none running */ }
+  }
+
   // Codex (about 500 MB) is not in Falcon's download: it is installed in the background as soon as an
   // OpenAI key is there, so the first repair does not wait for it. Never during a test run.
   async function prepareCodex() {
@@ -1127,8 +1208,8 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       // so. Seen on a real install: a "Hi!" typed meanwhile took over 50 seconds. So the window waits on
       // its opening screen, and says why, until that is done.
       if (ready) refreshPack().catch(() => {});
-      if (ready && refreshing) return { configured, ready: false, updating: true };
-      return { configured, ready };
+      if (ready && refreshing) return { configured, ready: false, updating: true, step: refreshLine };
+      return { configured, ready, ...(api.preview ? { preview: true } : {}) };
     },
     // ---- Update: one button for Falcon and the engine he runs on, under Falcon's name ----
     'GET /api/update': async () => {
@@ -1196,6 +1277,18 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       try { shortcut = fs.readFileSync(path.join(path.dirname(api.profileFile()), 'shortcut.txt'), 'utf8').trim().slice(0, 30); } catch { /* none */ }
       if (!/^[A-Za-z+]+$/.test(shortcut)) shortcut = '';
       return { version, build: api.packStamp().slice(0, 7), shortcut };
+    },
+    // ---- ChatGPT sign-in, from Settings ----
+    'GET /api/chatgpt': async () => ({ available: process.platform === 'win32', signedIn: chatgptOn() }),
+    'POST /api/chatgpt/signin': async () => {
+      if (setupRunning || updateRunning || busy()) return { ok: false, error: 'Falcon is busy. Please try again in a moment.' };
+      setupRunning = true;
+      try { return await signInWithChatGPT(); } finally { setupRunning = false; }
+    },
+    'POST /api/chatgpt/signout': async () => {
+      if (setupRunning || updateRunning || busy()) return { ok: false, error: 'Falcon is busy. Please try again in a moment.' };
+      setupRunning = true;
+      try { return await signOutOfChatGPT(); } finally { setupRunning = false; }
     },
     'POST /api/setup': async (body) => {
       if (setupRunning) return { ok: false, error: 'Setup is already running.' };
@@ -1427,9 +1520,23 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       return api.repairs.start(body.request, await codingChoice(), { agreed: body.agreed === true });
     },
     'POST /api/repair/stop': async () => api.repairs.stop(),
-    'POST /api/repair/refuse': async () => api.repairs.refuse(),
+    'POST /api/repair/refuse': async () => { endPreview(); return api.repairs.refuse(); },
+    // Before he decides: the changed copy in a window of its own, to look at and try (preview.mjs).
+    'POST /api/repair/preview': async () => {
+      const status = api.repairs.status();
+      if (status?.phase !== 'ready' || !status.dir || !fs.existsSync(path.join(status.dir, 'src', 'app', 'server.js'))) {
+        return { ok: false, error: 'There is no finished change to preview.' };
+      }
+      endPreview();
+      const child = spawn(process.execPath, [path.join(root, 'src', 'app', 'preview.mjs'), status.dir, previewDir()],
+        { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, FALCON_NO_WINDOW: '' } });
+      child.on('error', () => {});
+      child.unref();
+      return { ok: true };
+    },
     // The owner's yes: the change is switched in and Falcon starts again; the watchdog goes back if he does not.
     'POST /api/repair/approve': async () => {
+      endPreview();
       const r = await api.repairs.approve({ oldPid: process.pid });
       if (r.ok) setTimeout(() => onIdle('switch'), 1500).unref?.();
       return r;
@@ -1761,7 +1868,14 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         let lastStatus = 0;
         let lastText = '';
         for (const attempt of attempts) {
-          const session = { type: 'realtime', model: attempt.model, audio: { output: { voice: VOICE_NAME } } };
+          // On a laptop his own voice from the speakers reaches the microphone, and with the service's default
+          // turn detection he took it for the user starting to speak and cut himself off (seen 2026-11-21).
+          // Far-field noise reduction is meant for that, and semantic detection with low eagerness waits for
+          // real words before it counts as the user's turn; he can still be interrupted by speaking to him.
+          const session = { type: 'realtime', model: attempt.model, audio: {
+            input: { noise_reduction: { type: 'far_field' }, turn_detection: { type: 'semantic_vad', eagerness: 'low', interrupt_response: true, create_response: true } },
+            output: { voice: VOICE_NAME },
+          } };
           if (attempt.full) Object.assign(session, { instructions, tools: VOICE_TOOLS, tool_choice: 'auto' });
           const form = new FormData();
           form.set('sdp', offer);
@@ -1809,6 +1923,10 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
         if (!text) return send(400, { error: 'Empty message' });
         const conversation = /^[a-f0-9-]{36}$/.test(body.conversation || '') ? body.conversation : '';
         return chat(text, res, conversation);
+      }
+      // A preview of a repair (preview.mjs): it may talk and keep its own copy of the chats, nothing else.
+      if (api.preview && req.method === 'POST' && !PREVIEW_ALLOWED.has(url.pathname)) {
+        return send(200, { ok: false, error: 'This is only a preview of the change. Approve it in the Workshop to use this.' });
       }
       const handler = routes[`${req.method} ${url.pathname}`];
       if (!handler) return send(404, { error: 'Not found' });

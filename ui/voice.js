@@ -73,6 +73,7 @@
         await window.falcon.chat(request, {
           onDelta: (piece) => { result += piece; },
           onActions: (items) => listeners.actions(items),
+          onWorkshop: (request) => window.falconOpenWorkshop?.(request),
           onError: (message) => { result = message; },
         });
       } catch {

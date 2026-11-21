@@ -10,6 +10,8 @@ const PHASES = {
 };
 let current = null;
 let ticker = null;
+let shownSteps = '';   // what the step list and the changed files show now, so they are redrawn only when they change
+let shownDiff = '';
 
 function note(id, text, kind = '') { $(id).textContent = text; $(id).className = `message ${kind}`; }
 const seconds = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`; };
@@ -30,8 +32,14 @@ async function showAsk() {
   const ready = () => { $('start').disabled = !($('agree').checked && $('request').value.trim()); };
   $('agree').onchange = ready;
   $('request').oninput = ready;
+  // Handed over from a conversation with Falcon: the request is filled in; he only has to agree to the cost.
+  if (window.falconAsk && !$('request').value) {
+    $('request').value = window.falconAsk;
+    note('ask-message', 'Falcon filled this in from your conversation. Check it, agree to the cost, and press Start.', 'ok');
+    window.falconAsk = '';
+  }
   ready();
-  $('request').focus();
+  ($('request').value ? $('agree') : $('request')).focus();
 }
 
 $('start').addEventListener('click', async () => {
@@ -54,23 +62,32 @@ function render(s) {
   $('w-request').textContent = `“${s.request}”`;
   const busy = BUSY.includes(s.phase);
   const took = (s.endedAt || Date.now()) - s.startedAt;
-  // The real cost when the tool reports it (Falcon's engine does); otherwise the estimate.
-  const cost = s.cost > 0 ? `cost so far: ${s.cost < 1 ? `${Math.max(1, Math.round(s.cost * 100))} cents` : `${s.cost.toFixed(2)} US dollars`}, as billed`
-    : `estimate: ${s.estimate}. The exact cost is on your key's page with the AI company`;
+  // The real cost: as billed when the AI company reports it, otherwise worked out from the text each step used
+  // and the published prices (your own key through OpenRouter, and Codex, report none). Else the estimate.
+  const amount = (usd) => (usd < 1 ? `${Math.max(1, Math.round(usd * 100))} cents` : `${usd.toFixed(2)} US dollars`);
+  const cost = !(s.cost > 0) ? `estimate: ${s.estimate}. The exact cost is on your key's page with the AI company`
+    : s.costEstimated ? `cost so far: about ${amount(s.cost)}, worked out from the text used and the published prices`
+      : `cost so far: ${amount(s.cost)}, as billed`;
   $('w-meta').textContent = `${s.model}, done by ${s.tool} · ${seconds(took)} · ${cost}.`;
   $('w-phase').textContent = PHASES[s.phase] || s.phase;
   $('w-phase').className = `phase ${busy ? 'working' : s.phase}`;
-  $('w-steps').replaceChildren(...s.steps.map((step, i) => {
-    const li = document.createElement('li');
-    const last = i === s.steps.length - 1;
-    li.className = `step ${step.done || !busy || !last ? 'done' : 'now'}`;
-    const text = document.createElement('span');
-    text.textContent = step.text;
-    const time = document.createElement('small');
-    time.textContent = seconds((step.done || (busy && last ? Date.now() : step.at)) - step.at);
-    li.append(text, time);
-    return li;
-  }));
+  // Redrawn only when the steps change; the clock of the step under way is updated in place (tick below).
+  // Redrawing every second replayed each step's fade-in and reset the scrolling: the window "blinked".
+  const stepsKey = JSON.stringify([busy, s.steps.map((step) => [step.text, Boolean(step.done)])]);
+  if (stepsKey !== shownSteps) {
+    shownSteps = stepsKey;
+    $('w-steps').replaceChildren(...s.steps.map((step, i) => {
+      const li = document.createElement('li');
+      const last = i === s.steps.length - 1;
+      li.className = `step ${step.done || !busy || !last ? 'done' : 'now'}`;
+      const text = document.createElement('span');
+      text.textContent = step.text;
+      const time = document.createElement('small');
+      time.textContent = seconds((step.done || (busy && last ? Date.now() : step.at)) - step.at);
+      li.append(text, time);
+      return li;
+    }));
+  }
   $('w-said').textContent = s.said ? `${s.tool === 'Codex' ? 'Codex' : 'Falcon'} says: ${s.said}` : '';
   $('w-tests').textContent = !s.tests ? '' : s.tests.ok ? `All ${s.tests.pass} of Falcon's tests pass${s.starts ? ', and this copy of him starts.' : '.'}`
     : `${s.tests.fail} of ${s.tests.tests} tests fail: ${(s.tests.failing || []).slice(0, 5).join('; ')}`;
@@ -82,13 +99,25 @@ function render(s) {
   if (s.error) note('w-message', s.error, s.phase === 'ready' ? 'warn' : 'bad');
   else if (s.phase === 'ready') note('w-message', 'Approve to switch Falcon to this version. He closes and starts again; if he does not start within a minute, he goes back by himself.', 'ok');
   else note('w-message', '');
-  showDiff(s.diff || []);
+  const diffKey = JSON.stringify((s.diff || []).map((d) => [d.file, d.added, d.removed]));
+  if (diffKey !== shownDiff) { shownDiff = diffKey; showDiff(s.diff || []); }
   $('w-stop').hidden = !busy || s.phase === 'switching';
   $('w-approve').hidden = s.phase !== 'ready';
+  $('w-preview').hidden = s.phase !== 'ready';
   $('w-refuse').hidden = !['ready', 'failed'].includes(s.phase);
   $('w-new').hidden = !['stopped', 'refused', 'approved'].includes(s.phase);
   clearInterval(ticker);
-  if (busy) ticker = setInterval(() => render(current), 1000);
+  if (busy) ticker = setInterval(tick, 1000);
+}
+
+// Once a second while he works: only the clocks change.
+function tick() {
+  const s = current;
+  if (!s || !BUSY.includes(s.phase)) return;
+  $('w-meta').textContent = $('w-meta').textContent.replace(/· [^·]+ ·/, `· ${seconds(Date.now() - s.startedAt)} ·`);
+  const last = s.steps.at(-1);
+  const time = $('w-steps').lastElementChild?.querySelector('small');
+  if (last && !last.done && time) time.textContent = seconds(Date.now() - last.at);
 }
 
 function showDiff(files) {
@@ -120,6 +149,8 @@ async function act(button, work, done) {
 }
 $('w-stop').addEventListener('click', () => act($('w-stop'), () => window.falcon.repairStop()));
 $('w-refuse').addEventListener('click', () => act($('w-refuse'), () => window.falcon.repairRefuse()));
+// The changed Falcon in a window of its own, before deciding: a copy of the chats, and nothing that changes anything.
+$('w-preview').addEventListener('click', () => act($('w-preview'), () => window.falcon.repairPreview(), 'The preview opens in its own window in a few seconds. Close it when you have seen enough; nothing changes until you approve.'));
 $('w-approve').addEventListener('click', () => act($('w-approve'), () => window.falcon.repairApprove(), 'Falcon is switching to the new version and will open again in a moment.'));
 $('w-new').addEventListener('click', () => { current = null; $('request').value = ''; showAsk(); });
 $('w-details').addEventListener('click', async () => {

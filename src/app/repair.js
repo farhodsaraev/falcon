@@ -32,6 +32,33 @@ const falconDir = (home) => path.join(home, '.falcon');
 export const toolsDir = (home = os.homedir()) => path.join(falconDir(home), 'tools');
 const codexJs = (home) => path.join(toolsDir(home), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
 
+// ---- What a repair really cost ----
+// The provider reports what it billed when it can. It reports 0 when the owner's own OpenAI key pays through
+// OpenRouter (BYOK), and Codex reports nothing at all. Then the cost is worked out from the text each step
+// used and the prices OpenRouter publishes for every model (OpenAI's own prices too). Tried on a real repair:
+// 13.0 cents worked out against 13.01 cents billed.
+const PRICES_URL = 'https://openrouter.ai/api/v1/models';
+let priceList = null;
+export async function priceFor(model, { fetchFn = fetch } = {}) {
+  const id = String(model || '').replace(/^openrouter\//, '');
+  const wanted = id.includes('/') ? id : `openai/${id}`;
+  try {
+    priceList ??= fetchFn(PRICES_URL, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).then((j) => j.data || []);
+    const found = (await priceList).find((m) => m.id === wanted);
+    if (!found?.pricing) return null;
+    const p = found.pricing;
+    return { input: Number(p.prompt) || 0, output: Number(p.completion) || 0, cacheRead: Number(p.input_cache_read ?? p.prompt) || 0, cacheWrite: Number(p.input_cache_write ?? p.prompt) || 0 };
+  } catch { priceList = null; return null; }
+}
+/** US dollars for some use of a model: { input (fresh), output, cacheRead, cacheWrite } tokens at those prices. */
+export function costOf(use, price) {
+  if (!price) return 0;
+  return (use.input || 0) * price.input + (use.output || 0) * price.output + (use.cacheRead || 0) * price.cacheRead + (use.cacheWrite || 0) * price.cacheWrite;
+}
+
+// What Codex says when its commands could not run (the protected command runner was blocked).
+const CODEX_BLOCKED = /command (service|runner)[^.]{0,40}(did not|didn.t) respond|could(n.t| not) (inspect|run|execute)[^.]{0,60}(command|shell|test)/i;
+
 /** What a repair usually costs with this model, said plainly. */
 export function estimate(choice) {
   const strong = /sol|sonnet|opus/i.test(String(choice?.model || ''));
@@ -210,12 +237,16 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
   };
 
   // ---- The writers ----
-  function runStreaming(command, args, { cwd, env, onLine, timeoutMs = 25 * 60000 }) {
+  function runStreaming(command, args, { cwd, env, onLine, timeoutMs = 25 * 60000, idleMs = 0 }) {
     return new Promise((resolve) => {
       child = spawn(command, args, { cwd, env, windowsHide: true, detached: !WINDOWS });
       let out = '';
       let tail = '';
+      let heard = Date.now();
+      let silent = false;
+      const quiet = idleMs ? setInterval(() => { if (Date.now() - heard > idleMs) { silent = true; killTree(child); } }, 5000) : null;
       const take = (chunk) => {
+        heard = Date.now();
         out += chunk;
         if (out.length > 4e6) out = out.slice(-2e6);
         const lines = (tail + chunk).split(/\r?\n/);
@@ -225,8 +256,8 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
       const timer = setTimeout(() => killTree(child), timeoutMs);
       child.stdout.on('data', (c) => take(String(c)));
       child.stderr.on('data', (c) => take(String(c)));
-      child.on('error', (err) => { clearTimeout(timer); child = null; resolve({ code: -1, out: err.message }); });
-      child.on('close', (code) => { clearTimeout(timer); child = null; resolve({ code: code ?? -1, out }); });
+      child.on('error', (err) => { clearTimeout(timer); clearInterval(quiet); child = null; resolve({ code: -1, out: err.message }); });
+      child.on('close', (code) => { clearTimeout(timer); clearInterval(quiet); child = null; resolve({ code: code ?? -1, out, silent }); });
       child.stdin.end();
     });
   }
@@ -241,20 +272,38 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
     const env = { ...process.env, CODEX_HOME: codexHome, CODEX_API_KEY: k.openai, OPENAI_API_KEY: k.openai, NODE_NO_WARNINGS: '1' };
     delete env.NODE_TEST_CONTEXT;
     let said = '';
-    const tokens = { input: 0, output: 0 };
+    const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     const result = await runStreaming(node, [codex.codex, 'exec', '--json', '--skip-git-repo-check', '-s', 'workspace-write', '-c', 'windows.sandbox="unelevated"', '-m', choice.model, '-C', dir, WRITER_PROMPT(request, extra)], {
-      cwd: dir, env,
+      cwd: dir, env, idleMs: 4 * 60000,   // blocked commands left Codex silent for 12 minutes
       onLine: (line) => {
         if (!line.startsWith('{')) { if (line.trim()) log(line.split(k.openai).join('***')); return; }
         let e; try { e = JSON.parse(line); } catch { return; }
         log(line.split(k.openai).join('***').slice(0, 2000));
         if (e.type === 'item.started' && e.item?.type === 'command_execution') step(codexStep(e.item.command));
-        if (e.type === 'item.completed' && e.item?.type === 'agent_message') said = String(e.item.text || '');
-        if (e.type === 'turn.completed' && e.usage) { tokens.input += Number(e.usage.input_tokens || 0); tokens.output += Number(e.usage.output_tokens || 0); }
+        if (e.type === 'item.completed' && e.item?.type === 'agent_message') {
+          said = String(e.item.text || '');
+          // What Codex says it is doing, as a step, so a stall shows at once instead of a clock that runs on.
+          const words = said.replace(/\s+/g, ' ').trim();
+          if (words) step(`Codex: ${words.length > 110 ? `${words.slice(0, 107)}…` : words}`);
+        }
+        if (e.type === 'turn.completed' && e.usage) {
+          // input_tokens counts the cached and newly cached parts too; they are billed at their own prices.
+          const read = Number(e.usage.cached_input_tokens || 0);
+          const write = Number(e.usage.cache_write_input_tokens || 0);
+          tokens.input += Math.max(0, Number(e.usage.input_tokens || 0) - read - write);
+          tokens.cacheRead += read;
+          tokens.cacheWrite += write;
+          tokens.output += Number(e.usage.output_tokens || 0);
+        }
       },
     });
-    if (stopped) return { ok: false, error: 'Stopped.' };
-    return result.code === 0 ? { ok: true, said, tokens } : { ok: false, error: `Codex stopped with an error. ${result.out.split(k.openai).join('***').trim().split('\n').slice(-2).join(' ')}`.slice(0, 600), tokens };
+    // Codex does not say what it cost: worked out from its use of text and the published prices.
+    const cost = costOf(tokens, await priceFor(choice.model));
+    // Seen on a real PC (2026-11-21): Codex's protected commands hung and failed, so it could not read or
+    // change anything. Then Falcon's engine does the work instead, with the same OpenAI key.
+    if (!stopped && (result.silent || CODEX_BLOCKED.test(said))) return { ok: false, blocked: true, cost, estimated: true, said };
+    if (stopped) return { ok: false, error: 'Stopped.', cost, estimated: true };
+    return result.code === 0 ? { ok: true, said, tokens, cost, estimated: true } : { ok: false, cost, estimated: true, error: `Codex stopped with an error. ${result.out.split(k.openai).join('***').trim().split('\n').slice(-2).join(' ')}`.slice(0, 600), tokens };
   }
 
   // The engine's own coding part, in a private settings folder of its own, with the key given only to it.
@@ -280,14 +329,20 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
     if (stopped) return { ok: false, error: 'Stopped.' };
     const doc = lastJson(result.out);
     const said = String(doc?.final || (doc?.payloads || []).map((p) => p.text).join(' ') || '').trim();
-    // The engine reports what the provider billed for this turn.
-    const cost = Number(doc?.usage?.cost?.total) || 0;
+    // The engine reports what the provider billed for this turn; 0 when the owner's own key paid (BYOK).
+    let cost = Number(doc?.usage?.cost?.total) || 0;
+    let estimated = false;
+    const use = doc?.usage;
+    if (!cost && use && (use.input || use.output || use.cacheRead)) {
+      cost = costOf({ input: use.input, output: use.output, cacheRead: use.cacheRead, cacheWrite: use.cacheWrite }, await priceFor(model));
+      estimated = cost > 0;
+    }
     // OpenRouter checks the most a request could cost against the key's own spending limit, even when the
     // owner's OpenAI key pays (BYOK). Coding sends large requests, so a nearly used-up limit refuses them.
     if (provider === 'openrouter' && /status=402|billing error|can only afford|key's total limit/i.test(result.out)) {
-      return { ok: false, cost, error: 'OpenRouter refused the work: your OpenRouter account or this key\'s spending limit is too low for coding. On openrouter.ai, add credit or raise the key\'s limit (with your own OpenAI key connected there, OpenAI still pays for the work), then try again.' };
+      return { ok: false, cost, estimated, error: 'OpenRouter refused the work: your OpenRouter account or this key\'s spending limit is too low for coding. On openrouter.ai, add credit or raise the key\'s limit (with your own OpenAI key connected there, OpenAI still pays for the work), then try again.' };
     }
-    return doc?.ok !== false && result.code === 0 ? { ok: true, said, cost } : { ok: false, cost, error: `The engine stopped with an error. ${String(doc?.error?.message || result.out.split(key).join('***').trim().split('\n').pop())}`.slice(0, 600) };
+    return doc?.ok !== false && result.code === 0 ? { ok: true, said, cost, estimated } : { ok: false, cost, estimated, error: `The engine stopped with an error. ${String(doc?.error?.message || result.out.split(key).join('***').trim().split('\n').pop())}`.slice(0, 600) };
   }
 
   async function writeWithEngine({ dir, request, choice, extra }) {
@@ -313,7 +368,21 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
     } finally { fs.rmSync(empty, { recursive: true, force: true }); }
   }
 
-  const writer = write || ((args) => (args.choice.provider === 'openai' ? writeWithCodex(args) : writeWithEngine(args)));
+  // Codex for an OpenAI key, unless its commands are blocked on this computer; then Falcon's engine, which
+  // takes the same key. Remembered until Falcon installs another Codex version.
+  const blockedFile = path.join(falconDir(home), 'codex-blocked.json');
+  const codexBlocked = () => { try { return JSON.parse(fs.readFileSync(blockedFile, 'utf8')).version === CODEX_VERSION; } catch { return false; } };
+  const useEngine = (args) => { status.tool = 'Falcon\'s engine'; save(); return writeWithEngine({ ...args, choice: { ...args.choice, tool: 'Falcon\'s engine' } }); };
+  const writer = write || (async (args) => {
+    if (args.choice.provider !== 'openai') return writeWithEngine(args);
+    if (codexBlocked()) return useEngine(args);
+    const r = await writeWithCodex(args);
+    if (!r.blocked) return r;
+    try { fs.writeFileSync(blockedFile, JSON.stringify({ version: CODEX_VERSION, at: new Date().toISOString(), said: String(r.said || '').slice(0, 300) })); } catch { /* tried again next time */ }
+    addCost(r);
+    step('Codex could not run commands on this computer, so Falcon\'s engine is doing the work with the same OpenAI key');
+    return useEngine(args);
+  });
   const reviewer = review || reviewWithEngine;
 
   async function checkCopy(dir) {
@@ -375,7 +444,8 @@ export function createRepairs({ home = os.homedir(), node = process.execPath, hi
   }
 
   // What the AI companies billed so far, where the tool reports it (Falcon's engine does; Codex does not).
-  const addCost = (r) => { if (Number(r?.cost) > 0) { status.cost = (status.cost || 0) + Number(r.cost); save(); } };
+  // A cost worked out from prices (not billed) makes the total "about".
+  const addCost = (r) => { if (Number(r?.cost) > 0) { status.cost = (status.cost || 0) + Number(r.cost); if (r.estimated) status.costEstimated = true; save(); } };
 
   async function run(request, choice, context = '') {
     const id = status.id;

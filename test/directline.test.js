@@ -204,3 +204,24 @@ test('the step of saving something learned is named in the user\'s words', () =>
   assert.equal(stepText({ name: 'exec', meta: 'Run C drive free-space script from learned-skills folder' }), 'Using something I learned');
   assert.equal(stepSkill({ name: 'read', args: { path: 'C:\\Users\\a\\.falcon\\engine\\agents\\falcon\\agent\\workshop-skills\\x\\SKILL.md' } }), 'learned');
 });
+
+test('a change to Falcon himself is handed to his Workshop: the request line never shows in the answer', async () => {
+  const s = await startServer({ engine: {
+    readGateway: () => ({ port: 1, token: 'gw' }),
+    profileFile: () => 'Z:\none\profile.json',
+    fastLane: async () => null,
+    directLine: { close() {}, watch: () => () => {}, stop: () => Promise.resolve(true) },
+    runEngine: async () => ({ code: 0, out: '{"approvals":[]}' }),
+    // The answer arrives in pieces, the mark split across two of them.
+    fetch: async () => new Response(['I shall open my Workshop for it.\n\n[[work', 'shop]] Add a dark/light switch to the window\'s top bar.\n[[did]] Opened the Workshop']
+      .map((piece) => `data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`).join('') + 'data: [DONE]\n\n', { status: 200 }),
+  } });
+  try {
+    const text = await fetch(`http://127.0.0.1:${s.port}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify({ text: 'Add a dark mode switch to your window' }) }).then((r) => r.text());
+    const said = [...text.matchAll(/event: delta\ndata: (.+)/g)].map((m) => JSON.parse(m[1]).text).join('');
+    assert.match(said, /I shall open my Workshop for it\./);
+    assert.doesNotMatch(said, /\[\[|workshop\]\]|dark\/light/);
+    assert.match(text, /event: workshop\ndata: {"request":"Add a dark\/light switch to the window's top bar\."}/);
+    assert.match(text, /event: actions\ndata: {"items":\["Opened the Workshop"\]}/);
+  } finally { await s.close(); }
+});

@@ -404,7 +404,7 @@ test('right after an update the window is told to wait while Falcon re-learns hi
     packStamp: () => 'new', installFalcon: () => new Promise((resolve) => { finish = () => resolve({ ok: true }); }) } });
   const state = () => fetch(`http://127.0.0.1:${s.port}/api/state`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
   try {
-    assert.deepEqual(await state(), { configured: true, ready: false, updating: true });
+    assert.deepEqual(await state(), { configured: true, ready: false, updating: true, step: '' });
     finish();
     await new Promise((r) => setTimeout(r, 50));
     assert.deepEqual(await state(), { configured: true, ready: true });
@@ -630,4 +630,56 @@ test('the owner\'s own changes: listed, switched by id only, adapted as a paid r
     await reader.cancel();
     assert.ok(!fs.existsSync(path.join(home, '.falcon', 'personal', 'notice.json')));
   } finally { await s.close(); process.env.USERPROFILE = before; process.env.HOME = beforeHome; }
+});
+
+test('signing in with ChatGPT instead of a key: the engine is set up without one, stopped for the sign-in window, and started again', { skip: process.platform !== 'win32' && 'Windows only for now' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-chatgpt-'));
+  let ready = false;
+  let signedIn = false;
+  const asked = [];
+  const windows = [];
+  const s = await startServer({ engine: { ...engine,
+    profileFile: () => path.join(dir, 'profile.json'),
+    readGateway: () => (ready ? { port: 1, token: 'gw' } : null),
+    engineReady: async () => ready,
+    runEngine: async (args) => {
+      asked.push(args.join(' '));
+      if (args[0] === 'onboard') ready = true;
+      if (args.join(' ') === 'models auth list --provider openai --json') {
+        return { code: 0, out: `[log]\n${JSON.stringify({ profiles: signedIn ? [{ id: 'openai:default', type: 'oauth', expires: 1 }, { id: 'openai:key', type: 'api_key' }] : [{ id: 'openai:key', type: 'api_key' }] })}` };
+      }
+      return { code: 0, out: '{}' };
+    },
+    runEngineInWindow: async (args, { title }) => { windows.push([args.join(' '), title]); return { code: 0 }; },
+  } });
+  const post = (route, body) => fetch(`http://127.0.0.1:${s.port}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token }, body: JSON.stringify(body) }).then((x) => x.json());
+  try {
+    // The window closed without a sign-in: said plainly, and the engine is started again.
+    let r = await post('/api/setup', { accepted: true, chatgpt: true });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /sign-in was not finished/);
+    assert.ok(asked.some((a) => a.startsWith('onboard') && a.includes('--auth-choice skip')), 'set up without a key');
+    assert.deepEqual(windows[0], ['models auth login --provider openai --set-default', 'Falcon - Sign in with ChatGPT']);
+    const stop = asked.indexOf('gateway stop --force');
+    const start = asked.lastIndexOf('gateway start');
+    assert.ok(stop >= 0 && start > stop, 'stopped for the sign-in, started again after');
+    assert.equal((await fetch(`http://127.0.0.1:${s.port}/api/chatgpt`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json())).signedIn, false);
+
+    // From Settings, signed in this time: remembered, and the engine's ChatGPT part is kept on.
+    signedIn = true;
+    asked.length = 0;
+    r = await post('/api/chatgpt/signin', {});
+    assert.equal(r.ok, true);
+    assert.ok(asked.includes('config set plugins.entries.codex.enabled true'));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'chatgpt.json'), 'utf8')).profiles, ['openai:default'], 'the subscription sign-in, not the saved key');
+    assert.equal((await fetch(`http://127.0.0.1:${s.port}/api/chatgpt`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json())).signedIn, true);
+
+    // Signing out removes only that sign-in.
+    asked.length = 0;
+    r = await post('/api/chatgpt/signout', {});
+    assert.equal(r.ok, true);
+    assert.ok(asked.includes('models auth logout openai:default'));
+    assert.ok(!asked.includes('models auth logout openai:key'), 'the API key stays');
+    assert.ok(!fs.existsSync(path.join(dir, 'chatgpt.json')));
+  } finally { await s.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

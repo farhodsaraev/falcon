@@ -248,3 +248,17 @@ test('Codex is installed once: a repair started during the background install wa
   assert.equal(installs, 1, 'not again once it is there');
   fs.rmSync(home, { recursive: true, force: true });
 });
+
+test('the real cost: worked out from the text used and the published prices when nothing is billed', async () => {
+  const { costOf, priceFor } = await import('../src/app/repair.js');
+  const published = { data: [{ id: 'openai/gpt-6.1-terra', pricing: { prompt: '0.000001', completion: '0.000005', input_cache_read: '0.00000005', input_cache_write: '0.00000125' } }] };
+  const fetchFn = async () => ({ json: async () => published });
+  const price = await priceFor('gpt-6.1-terra', { fetchFn });
+  assert.deepEqual(price, { input: 0.000001, output: 0.000005, cacheRead: 0.00000005, cacheWrite: 0.00000125 });
+  assert.deepEqual(await priceFor('openrouter/openai/gpt-6.1-terra', { fetchFn }), price, 'the same model through OpenRouter');
+  assert.equal(await priceFor('openai/unknown-model', { fetchFn }), null);
+  // A real step of the engine: billed 0.13011505 US dollars.
+  const cost = costOf({ input: 99, output: 4958, cacheRead: 1040471, cacheWrite: 42562 }, price);
+  assert.ok(Math.abs(cost - 0.13011505) < 0.0002, String(cost));
+  assert.equal(costOf({ input: 5 }, null), 0, 'no price, no guess');
+});

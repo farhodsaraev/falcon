@@ -39,9 +39,16 @@ if (-not $Relaunched -and $PSCommandPath -like "$InstallDir*") {
   exit 0
 }
 
+# What happened, step by step, in case the removal stops part way (seen once: "nothing happened").
+try { Start-Transcript -Path (Join-Path $env:TEMP "falcon-uninstall.log") -Force | Out-Null } catch { }
+
 Add-Type -AssemblyName System.Windows.Forms
+# The questions come from a hidden window, so Windows may put them behind Falcon's window, where the user never
+# sees them and the removal seems to do nothing. An invisible top-most owner keeps them in front.
 function Ask([string]$text, [string]$buttons, [string]$default = "Button1") {
-  return [System.Windows.Forms.MessageBox]::Show($text, "Falcon", $buttons, "Question", $default).ToString()
+  $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false; WindowState = "Minimized" }
+  try { return [System.Windows.Forms.MessageBox]::Show($owner, $text, "Falcon", $buttons, "Question", $default).ToString() }
+  finally { $owner.Dispose() }
 }
 
 # ---- Ask first (unless told exactly what to do) ----
@@ -157,7 +164,10 @@ $left = @((Join-Path $InstallDir "app")) | Where-Object { Test-Path $_ }
 if (-not $NoMessage) {
   $done = if ($left) { "Falcon has been removed, but some files were still in use. You can delete this folder by hand:`n$($left -join "`n")" }
     else { "Falcon has been removed." + $(if ($KeepData) { " What he remembers about you was kept." } else { "" }) }
-  [void][System.Windows.Forms.MessageBox]::Show($done, "Falcon", "OK", "Information")
+  $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false; WindowState = "Minimized" }
+  [void][System.Windows.Forms.MessageBox]::Show($owner, $done, "Falcon", "OK", "Information")
+  $owner.Dispose()
 }
+try { Stop-Transcript | Out-Null } catch { }
 if ($Relaunched) { Remove-Item $PSCommandPath -Force -ErrorAction SilentlyContinue }
 exit 0

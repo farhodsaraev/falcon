@@ -41,12 +41,31 @@
     <p id="setup-key-kind" class="message" role="status"></p>
     <div id="setup-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
     <p class="hint left-hint">An <b>OpenAI</b> key gives Falcon both his mind and his voice, so one key is enough. No key yet? Create one at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>: sign in, add a payment method, press “Create new secret key”, and copy the line that starts with sk-. Anthropic and OpenRouter keys also work.</p>
+    <!-- Instead of a key: the owner's ChatGPT subscription (Windows only for now) -->
+    <div id="setup-chatgpt" class="chatgpt-option" hidden>
+      <span class="or">or</span>
+      <button id="setup-chatgpt-start" type="button" class="ghost wide">Sign in with ChatGPT</button>
+      <p class="hint left-hint">Uses your ChatGPT Plus or Pro plan instead of a key, within its usage limits. A window opens where you sign in once. Falcon's live voice needs an OpenAI key; without one he speaks with this window's own voice.</p>
+    </div>
     <label class="check">
       <input id="setup-accept" type="checkbox">
       <span>I understand Falcon can open apps, read files, use the browser and run commands on this computer, and that he asks before sending, deleting or running anything unfamiliar.</span>
     </label>
     <p id="setup-message" class="message" role="status"></p>
-    <div id="setup-log" class="setup-log" aria-hidden="true" hidden><pre id="setup-log-lines"></pre><p id="setup-log-time"></p></div>
+    <!-- While setup runs: each step ticked off as it finishes, a bar towards the usual end, the real lines on request -->
+    <div id="setup-progress" class="setup-progress" hidden>
+      <ol id="setup-steps" class="setup-steps" aria-live="polite">
+        <li data-step="engine"><i aria-hidden="true"></i><span>Installing my engine</span><small>the longest part, once</small></li>
+        <li data-step="key"><i aria-hidden="true"></i><span>Connecting your AI key</span></li>
+        <li data-step="start"><i aria-hidden="true"></i><span>Starting my engine</span></li>
+        <li data-step="manners"><i aria-hidden="true"></i><span>Learning my skills and manners</span></li>
+        <li data-step="wake"><i aria-hidden="true"></i><span>Waking up</span></li>
+      </ol>
+      <div class="setup-bar" aria-hidden="true"><b id="setup-bar-fill"></b></div>
+      <p id="setup-log-time" class="setup-time"></p>
+      <button id="setup-log-toggle" type="button" class="link">Show details</button>
+    </div>
+    <div id="setup-log" class="setup-log" aria-hidden="true" hidden><pre id="setup-log-lines"></pre></div>
     <button id="setup-start" class="primary wide">Start</button>
   </section>
 
@@ -196,6 +215,14 @@
         <p id="key-kind" class="message" role="status"></p>
         <div id="key-models" class="models" role="radiogroup" aria-label="Model Falcon thinks with" hidden></div>
         <p id="key-message" class="message" role="status"></p>
+        <div id="chatgpt-box" hidden>
+          <p class="panel-text" id="chatgpt-state"></p>
+          <div class="row tight">
+            <button id="chatgpt-signin" type="button" class="ghost">Sign in with ChatGPT</button>
+            <button id="chatgpt-signout" type="button" class="ghost" hidden>Sign out of ChatGPT</button>
+          </div>
+          <p id="chatgpt-message" class="message" role="status"></p>
+        </div>
       </div>
       <div class="panel">
         <p class="panel-title">Google search <span id="search-state" class="state"></span></p>

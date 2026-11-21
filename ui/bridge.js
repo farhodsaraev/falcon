@@ -3,6 +3,8 @@
   const params = new URLSearchParams(location.hash.slice(1));
   // The token arrives in the address once; keep it for this window so a refresh does not lose it.
   let token = params.get('token') || '';
+  // The Workshop opened from a conversation: the request Falcon handed over, to fill in.
+  window.falconAsk = params.get('ask') || '';
   try {
     if (token) sessionStorage.setItem('falcon-token', token); else token = sessionStorage.getItem('falcon-token') || '';
   } catch { /* storage unavailable */ }
@@ -20,7 +22,10 @@
     loadChats: () => call('GET', '/api/chats'),
     saveChats: (chats) => call('POST', '/api/chats', { chats }),
     forgetChat: (id) => call('POST', '/api/chats/forget', { id }),
-    setup: (key, accepted, model) => call('POST', '/api/setup', { key, accepted, model }),
+    setup: (key, accepted, model, chatgpt = false) => call('POST', '/api/setup', { key, accepted, model, chatgpt }),
+    chatgptStatus: () => call('GET', '/api/chatgpt'),
+    chatgptSignIn: () => call('POST', '/api/chatgpt/signin'),
+    chatgptSignOut: () => call('POST', '/api/chatgpt/signout'),
     inspectKey: (key) => call('POST', '/api/key/inspect', { key }),
     voiceStatus: () => call('GET', '/api/voice'),
     voiceSetup: () => call('GET', '/api/voice/setup'),
@@ -55,13 +60,14 @@
     repairStop: () => call('POST', '/api/repair/stop'),
     repairApprove: () => call('POST', '/api/repair/approve'),
     repairRefuse: () => call('POST', '/api/repair/refuse'),
+    repairPreview: () => call('POST', '/api/repair/preview'),
     repairLog: () => call('GET', '/api/repair/log'),
     personal: () => call('GET', '/api/personal'),
     addons: () => call('GET', '/api/addons'),
     setPersonal: (id, on) => call('POST', '/api/personal/set', { id, on }),
     adaptPersonal: (id, agreed) => call('POST', '/api/personal/adapt', { id, agreed }),
     // The Workshop window: a second window, opened with this one's access.
-    workshopUrl: () => `/workshop#token=${encodeURIComponent(token)}`,
+    workshopUrl: (ask = '') => `/workshop#token=${encodeURIComponent(token)}${ask ? `&ask=${encodeURIComponent(ask)}` : ''}`,
     setCodingAi: (provider, model) => call('POST', '/api/ai-jobs', { coding: { provider, model } }),
     removeLearned: (name) => call('POST', '/api/learned/remove', { name }),
     restoreLearned: (name) => call('POST', '/api/learned/restore', { name }),
@@ -84,7 +90,7 @@
     openFile: (path, reveal) => call('POST', '/api/file/open', { path, reveal }),
     // Where the window loads a picture or video Falcon made (only one he offered here).
     mediaUrl: (id) => `/api/media?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`,
-    async chat(text, { onDelta, onError, onActions, onScout, onDossier, onStep, onFile, onPending, onSummary }, signal) {
+    async chat(text, { onDelta, onError, onActions, onScout, onDossier, onStep, onFile, onPending, onSummary, onWorkshop }, signal) {
       const response = await fetch('/api/chat', { method: 'POST', headers, body: JSON.stringify({ text, conversation: window.falconChatId?.() }), signal });
       if (!response.ok || !response.body) return onError(`I have lost my connection, ${window.falconAddress ? window.falconAddress() : 'sir'}.`);
       const reader = response.body.getReader();
@@ -104,6 +110,7 @@
           const payload = JSON.parse(data);
           if (event === 'delta') onDelta(payload.text);
           if (event === 'actions' && onActions) onActions(payload.items);
+          if (event === 'workshop' && onWorkshop) onWorkshop(payload.request);
           if (event === 'step' && onStep) onStep(payload.text, payload.skill || '');
           if (event === 'summary' && onSummary) onSummary(payload);
           if (event === 'file' && onFile) onFile(payload);

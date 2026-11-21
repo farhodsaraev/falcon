@@ -113,8 +113,8 @@ export async function installFalcon({
   try { callMe = String(profile.callMe || 'sir').replace(/[\r\n"<>`]/g, '').trim().slice(0, 30) || 'sir'; } catch { /* no profile yet */ }
   const custom = callMe.toLowerCase() !== 'sir';
   const addressRule = custom
-    ? `The user has asked to be addressed as "${callMe}". Use "${callMe}" in every reply and in every language. Never call him "sir" or «сэр».`
-    : 'Address the user as "sir" (in Russian: «сэр») unless your notes about him give another form of address.';
+    ? `The user has asked to be addressed as "${callMe}". When you address him, use "${callMe}", in every language; never call him "sir" or «сэр». Do not put it in every reply: about one reply in three or four, never in two replies in a row, and at most once in a reply. A name in every sentence sounds mechanical.`
+    : 'Address the user as "sir" (in Russian: «сэр») unless your notes about him give another form of address. Do not put it in every reply: about one reply in three or four, never in two replies in a row, and at most once in a reply.';
   // What the user said about himself when they first met. It goes into the rules themselves because the
   // notes file is not reliably in front of Falcon in every conversation.
   const tidy = (value, max) => String(value || '').replace(/[\r\n]+/g, ' ').replace(/[<>`{}]/g, '').trim().slice(0, max);
@@ -252,6 +252,13 @@ export async function installFalcon({
   // in the background, which would change his skills unseen and cost the user an AI call each time.
   // Optional: an engine older than this setting refuses it, and that must not fail the setup.
   set('learn only when asked', 'skills.workshop.autonomous.mode', 'off', { optional: true });
+  // Engine parts Falcon never uses, which made each engine start about a minute longer on a real PC:
+  // "codex" (the ChatGPT-subscription connection the engine adds when it sees an OpenAI key; Falcon uses the
+  // ordinary OpenAI connection, tried without it) and "xai" (Grok models). Optional, like the setting above.
+  // A ChatGPT sign-in runs through "codex", so it stays on for an owner who signed in that way (Falcon's window
+  // leaves chatgpt.json beside his profile).
+  if (!fs.existsSync(path.join(path.dirname(profileFile), 'chatgpt.json'))) set('a quicker engine start', 'plugins.entries.codex.enabled', false, { optional: true });
+  set('a quicker engine start (2)', 'plugins.entries.xai.enabled', false, { optional: true });
   // His own Telegram chat (saved by Falcon's window at pairing) as the default, so "send it to me on
   // Telegram" works from his window and by voice too, not only from inside Telegram.
   try {
