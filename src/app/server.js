@@ -251,6 +251,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   const CHAT_LIMIT_MS = engine.chatLimitMs ?? 10 * 60000;
   const APPROVAL_POLL_MS = engine.approvalPollMs ?? 8000;
   const UPDATE_WAKE_MS = engine.updateWakeMs ?? 2000;
+  const SETUP_WAKE_MS = engine.setupWakeMs ?? 2000;
   // `engine` lets tests replace the real engine with stand-ins.
   // The engine's real folder (Falcon's own once moved): paths written into its settings must never name
   // the link, or the engine refuses new conversations (see enginehome.js).
@@ -447,7 +448,11 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     try {
       refreshLine = '';
       const result = await api.installFalcon({ runEngine: api.runEngine, log: (line) => { const text = progressLine(line); if (text) refreshLine = text.replace(/^ok\s+/i, '').slice(0, 120); } });
-      if (result?.ok !== false) writeStamp(now);   // otherwise: try again at the next start
+      if (result?.ok !== false) {
+        refreshLine = 'Restarting my engine to apply my new settings';
+        const restarted = await restartEngineAfterSettings();
+        if (restarted.ok && await waitForEngineReady()) writeStamp(now);   // otherwise: try again at the next start
+      }
     } catch { /* try again at the next start */ } finally { refreshing = false; }
   }
   function watchForGoodbye() {
@@ -467,6 +472,32 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
 
   const broadcast = (event, data) => {
     for (const res of clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Changes to the engine's add-ons and local-chat setting are persisted while it is running, but some
+  // Windows installations do not apply them to that running process. First-time setup crosses this
+  // boundary deliberately: restart once, then wait for the newly-started engine to answer.
+  const waitForEngineReady = async (patienceMs = WAKE_PATIENCE_MS) => {
+    const until = Date.now() + patienceMs;
+    do {
+      if (await api.engineReady()) return true;
+      const left = until - Date.now();
+      if (left <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(SETUP_WAKE_MS, left)));
+    } while (true);
+    return false;
+  };
+
+  const restartEngineAfterSettings = async () => {
+    const stopped = await api.runEngine(['gateway', 'stop', '--force'], { timeoutMs: 120000 });
+    if (stopped.code !== 0) {
+      return { ok: false, error: 'Falcon could not stop its engine to apply the new settings.', detail: failureLines(stopped.out) };
+    }
+    const started = await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
+    if (started.code !== 0) {
+      return { ok: false, error: 'Falcon could not start its engine after applying the new settings.', detail: failureLines(started.out) };
+    }
+    return { ok: true };
   };
 
   // ---- Pictures and videos Falcon makes ----
@@ -629,7 +660,7 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
   // ---- First-time setup ----
   async function setup({ key, accepted, model, chatgpt = false }) {
     // Seconds each step usually takes, measured on clean machines by the install test; the window shows the time left.
-    const USUAL = { engine: process.platform === 'win32' ? 360 : 90, key: 60, start: 10, manners: 45, wake: 15 };
+    const USUAL = { engine: process.platform === 'win32' ? 360 : 90, key: 60, start: 10, manners: 45, wake: 300 };
     const ORDER = ['engine', 'key', 'start', 'manners', 'wake'];
     const step = (text, name) => broadcast('setup', { text, step: name, left: ORDER.slice(ORDER.indexOf(name)).reduce((sum, n) => sum + USUAL[n], 0) });
     // The real lines the installers print, shown under the step so the wait is not a blank spinner.
@@ -693,11 +724,11 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
     }
 
     step('Waking Falcon…', 'wake');
-    for (let i = 0; i < 30; i++) {
-      if (await api.engineReady()) { writeStamp(api.packStamp()); return { ok: true }; }
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-    return { ok: false, error: 'Falcon did not wake up. Please restart the computer and try again.' };
+    broadcast('setup', { text: 'Restarting my engine to apply my new settings…', step: 'wake', left: Math.ceil(WAKE_PATIENCE_MS / 1000) });
+    const restarted = await restartEngineAfterSettings();
+    if (!restarted.ok) return restarted;
+    if (await waitForEngineReady()) { writeStamp(api.packStamp()); return { ok: true }; }
+    return { ok: false, error: 'Falcon applied its settings, but its engine did not become ready. Please close Falcon, open it again, and press Start.', detail: 'Falcon waited five minutes for its local engine after restarting it.' };
   }
 
   // ---- Sign in with ChatGPT: the owner's ChatGPT subscription instead of a key (engine "Codex login") ----
@@ -1193,12 +1224,11 @@ export async function startServer({ port = 0, engine = {}, onIdle = () => {}, id
       // Set up before but asleep (for example after a restart): wake it quietly, once. The engine can take
       // minutes to start on a busy computer; starting it again meanwhile ran several copies that blocked
       // each other, so none of them ever answered.
-      if (configured && !ready && !setupRunning && !waking && Date.now() - lastWake > WAKE_PATIENCE_MS) {
+      if (configured && !ready && !setupRunning && !refreshing && !waking && Date.now() - lastWake > WAKE_PATIENCE_MS) {
         waking = true;
         lastWake = Date.now();
         try {
           await api.runEngine(['gateway', 'start'], { timeoutMs: 120000 });
-          await api.runEngine(['config', 'set', 'gateway.http.endpoints.chatCompletions.enabled', 'true']);
           ready = await api.engineReady();
         } finally {
           waking = false;

@@ -97,6 +97,80 @@ test('setup connects the key with the right provider and installs Falcon', async
   assert.equal((await (await call('GET', '/api/state')).json()).ready, true);
 });
 
+test('setup restarts the engine after writing Falcon settings, then stamps only the ready install', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-setup-restart-'));
+  const asked = [];
+  let configured = false;
+  let starts = 0;
+  const s = await startServer({ engine: { ...engine,
+    profileFile: () => path.join(dir, 'profile.json'),
+    packStamp: () => 'ready-after-restart',
+    setupWakeMs: 1,
+    wakePatienceMs: 50,
+    readGateway: () => (configured ? { port: 1, token: 'gw' } : null),
+    engineReady: async () => starts >= 2,
+    installFalcon: async () => ({ ok: true }),
+    setupSearch: async () => {},
+    runEngine: async (args) => {
+      asked.push(args.join(' '));
+      if (args[0] === 'onboard') configured = true;
+      if (args[0] === 'models' && args[1] === 'status') return { code: 0, out: 'engine/default-model\n' };
+      if (args[0] === 'gateway' && args[1] === 'start') starts += 1;
+      return { code: 0, out: '' };
+    },
+  } });
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.port}/api/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token },
+      body: JSON.stringify({ key: 'sk-or-v1-12345678901234567890', accepted: true }) }).then((x) => x.json());
+    assert.equal(r.ok, true);
+    assert.deepEqual(asked.filter((line) => line.startsWith('gateway ')), ['gateway start', 'gateway stop --force', 'gateway start']);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'pack.json'), 'utf8')).stamp, 'ready-after-restart');
+  } finally { await s.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('setup reports a failed engine restart and leaves the install unstamped', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-setup-restart-fail-'));
+  let configured = false;
+  const s = await startServer({ engine: { ...engine,
+    profileFile: () => path.join(dir, 'profile.json'),
+    readGateway: () => (configured ? { port: 1, token: 'gw' } : null),
+    engineReady: async () => false,
+    installFalcon: async () => ({ ok: true }),
+    setupSearch: async () => {},
+    runEngine: async (args) => {
+      if (args[0] === 'onboard') configured = true;
+      if (args[0] === 'models' && args[1] === 'status') return { code: 0, out: 'engine/default-model\n' };
+      if (args.join(' ') === 'gateway stop --force') return { code: 1, out: 'The gateway service could not be stopped.' };
+      return { code: 0, out: '' };
+    },
+  } });
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.port}/api/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Falcon-Token': s.token },
+      body: JSON.stringify({ key: 'sk-or-v1-12345678901234567890', accepted: true }) }).then((x) => x.json());
+    assert.equal(r.ok, false);
+    assert.match(r.error, /could not stop its engine/);
+    assert.match(r.detail, /gateway service could not be stopped/i);
+    assert.equal(fs.existsSync(path.join(dir, 'pack.json')), false);
+  } finally { await s.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('checking Falcon state does not change engine configuration', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-state-readonly-'));
+  const asked = [];
+  const s = await startServer({ engine: { ...engine,
+    profileFile: () => path.join(dir, 'profile.json'),
+    readGateway: () => ({ port: 1, token: 'gw' }),
+    engineReady: async () => false,
+    runEngine: async (args) => { asked.push(args.join(' ')); return { code: 0, out: '' }; },
+  } });
+  try {
+    const state = await fetch(`http://127.0.0.1:${s.port}/api/state`, { headers: { 'X-Falcon-Token': s.token } }).then((x) => x.json());
+    assert.equal(state.ready, false);
+    assert.ok(asked.includes('gateway start'), 'an already-configured engine may be woken once');
+    assert.ok(!asked.some((line) => line.startsWith('config set ')), 'reading state must not change engine settings');
+  } finally { await s.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('chat is relayed to the engine and streamed back; approvals show up meanwhile', async () => {
   pending = [{ id: 'abcd1234-aaaa', kind: 'exec', summary: 'whoami' }];
   const events = await fetch(`${base}/api/events?token=${server.token}`);
@@ -319,6 +393,7 @@ test('Falcon stops by himself once his window is gone, and when Quit is pressed'
 test('an update re-teaches Falcon once: an older install gets the new rules and skills, an up-to-date one is left alone', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'falcon-update-'));
   const taught = [];
+  const restarts = [];
   const s = (stamp) => startServer({ engine: {
     ...engine,
     profileFile: () => path.join(dir, 'profile.json'),
@@ -326,6 +401,7 @@ test('an update re-teaches Falcon once: an older install gets the new rules and 
     engineReady: async () => true,
     packStamp: () => stamp,
     installFalcon: async (options) => { taught.push(typeof options.runEngine); return { ok: true }; },
+    runEngine: async (args) => { if (args[0] === 'gateway') restarts.push(args.join(' ')); return { code: 0, out: '' }; },
   } });
   const state = (srv) => fetch(`http://127.0.0.1:${srv.port}/api/state`, { headers: { 'X-Falcon-Token': srv.token } }).then((r) => r.json());
   const settle = () => new Promise((r) => setTimeout(r, 100));
@@ -333,6 +409,7 @@ test('an update re-teaches Falcon once: an older install gets the new rules and 
   let srv = await s('aaaa');                 // installed before stamps existed
   try { await state(srv); await state(srv); await settle(); } finally { await srv.close(); }
   assert.deepEqual(taught, ['function'], 'taught once, with the settings step');
+  assert.deepEqual(restarts, ['gateway stop --force', 'gateway start'], 'the updated settings are loaded by a fresh engine');
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'pack.json'), 'utf8')).stamp, 'aaaa');
 
   srv = await s('aaaa');                     // same version started again
@@ -342,6 +419,7 @@ test('an update re-teaches Falcon once: an older install gets the new rules and 
   srv = await s('bbbb');                     // a newer copy installed over it
   try { await state(srv); await settle(); } finally { await srv.close(); }
   assert.equal(taught.length, 2);
+  assert.deepEqual(restarts, ['gateway stop --force', 'gateway start', 'gateway stop --force', 'gateway start']);
 });
 
 test('web search is reported as on when it works without an extra key', async () => {
